@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Schema name="kentan" id="kentan">
+	<SimpleField name="OBJECTID" type="float"></SimpleField>
+	<SimpleField name="KEY1" type="string"></SimpleField>
+	<SimpleField name="KEY2" type="string"></SimpleField>
+	<SimpleField name="KEY3" type="string"></SimpleField>
+	<SimpleField name="KEY4" type="string"></SimpleField>
+	<SimpleField name="KEY5" type="string"></SimpleField>
+	<SimpleField name="EDITFLG" type="float"></SimpleField>
+	<SimpleField name="KEIKU" type="float"></SimpleField>
+	<SimpleField name="CITY" type="float"></SimpleField>
+	<SimpleField name="RIN" type="float"></SimpleField>
+	<SimpleField name="JUN" type="float"></SimpleField>
+	<SimpleField name="SHO" type="float"></SimpleField>
+	<SimpleField name="EDA" type="float"></SimpleField>
+	<SimpleField name="MGN" type="float"></SimpleField>
+	<SimpleField name="KEY1_1" type="string"></SimpleField>
+	<SimpleField name="計画区" type="float"></SimpleField>
+	<SimpleField name="農林事務所" type="float"></SimpleField>
+	<SimpleField name="市町村CD" type="float"></SimpleField>
+	<SimpleField name="市町村名" type="string"></SimpleField>
+	<SimpleField name="林班" type="float"></SimpleField>
+	<SimpleField name="準林班CD" type="float"></SimpleField>
+	<SimpleField name="準林班名" type="string"></SimpleField>
+	<SimpleField name="小班_親番" type="float"></SimpleField>
+	<SimpleField name="小班_枝番" type="float"></SimpleField>
+	<SimpleField name="対象外" type="string"></SimpleField>
+	<SimpleField name="行数" type="float"></SimpleField>
+	<SimpleField name="森林簿面積" type="float"></SimpleField>
+	<SimpleField name="森林簿材積" type="float"></SimpleField>
+	<SimpleField name="林種CD_1" type="float"></SimpleField>
+	<SimpleField name="樹種CD_1" type="float"></SimpleField>
+	<SimpleField name="樹種名_1" type="string"></SimpleField>
+	<SimpleField name="林齢_1" type="float"></SimpleField>
+	<SimpleField name="面積_1" type="float"></SimpleField>
+	<SimpleField name="林種CD_2" type="float"></SimpleField>
+	<SimpleField name="樹種CD_2" type="float"></SimpleField>
+	<SimpleField name="樹種名_2" type="string"></SimpleField>
+	<SimpleField name="林齢_2" type="float"></SimpleField>
+	<SimpleField name="面積_2" type="float"></SimpleField>
+	<SimpleField name="林種CD_3" type="float"></SimpleField>
+	<SimpleField name="樹種CD_3" type="float"></SimpleField>
+	<SimpleField name="樹種名_3" type="string"></SimpleField>
+	<SimpleField name="林齢_3" type="float"></SimpleField>
+	<SimpleField name="面積_3" type="float"></SimpleField>
+</Schema>
+<Folder><name>kentan</name>
+  <Placemark>
+	<name>い</name>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+	<ExtendedData><SchemaData schemaUrl="#kentan">
+		<SimpleData name="OBJECTID">2490027</SimpleData>
+		<SimpleData name="KEY1">002021042001003001</SimpleData>
+		<SimpleData name="KEY2">002021042001003</SimpleData>
+		<SimpleData name="KEY3">002021042001</SimpleData>
+		<SimpleData name="KEY4">002021042</SimpleData>
+		<SimpleData name="KEY5">002021</SimpleData>
+		<SimpleData name="EDITFLG">0</SimpleData>
+		<SimpleData name="KEIKU">2</SimpleData>
+		<SimpleData name="CITY">21</SimpleData>
+		<SimpleData name="RIN">42</SimpleData>
+		<SimpleData name="JUN">1</SimpleData>
+		<SimpleData name="SHO">3</SimpleData>
+		<SimpleData name="EDA">1</SimpleData>
+		<SimpleData name="MGN">0</SimpleData>
+		<SimpleData name="KEY1_1">002021042001003001</SimpleData>
+		<SimpleData name="計画区">2</SimpleData>
+		<SimpleData name="農林事務所">2</SimpleData>
+		<SimpleData name="市町村CD">21</SimpleData>
+		<SimpleData name="市町村名">裾野市</SimpleData>
+		<SimpleData name="林班">42</SimpleData>
+		<SimpleData name="準林班CD">1</SimpleData>
+		<SimpleData name="準林班名">い</SimpleData>
+		<SimpleData name="小班_親番">3</SimpleData>
+		<SimpleData name="小班_枝番">1</SimpleData>
+		<SimpleData name="行数">1</SimpleData>
+		<SimpleData name="森林簿面積">3.79000000000</SimpleData>
+		<SimpleData name="森林簿材積">221</SimpleData>
+		<SimpleData name="林種CD_1">1</SimpleData>
+		<SimpleData name="樹種CD_1">1</SimpleData>
+		<SimpleData name="樹種名_1">スギ</SimpleData>
+		<SimpleData name="林齢_1">58</SimpleData>
+		<SimpleData name="面積_1">3.79000000000</SimpleData>
+		<SimpleData name="林種CD_2">0</SimpleData>
+		<SimpleData name="樹種CD_2">0</SimpleData>
+		<SimpleData name="林齢_2">0</SimpleData>
+		<SimpleData name="面積_2">0.00000000000</SimpleData>
+		<SimpleData name="林種CD_3">0</SimpleData>
+		<SimpleData name="樹種CD_3">0</SimpleData>
+		<SimpleData name="林齢_3">0</SimpleData>
+		<SimpleData name="面積_3">0.00000000000</SimpleData>
+	</SchemaData></ExtendedData>
+      <MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>138.812858846381,35.2496472924724 138.812623953313,35.2497627612367 138.812378824451,35.2498897342946 138.812206878032,35.2500046912943 138.812011813705,35.2501639963702 138.811856823474,35.2503522882986 138.811780182435,35.2504531899846 138.811747388818,35.2505882775067 138.811745898871,35.2508391314871 138.811761668501,35.2512069857709 138.811757637403,35.2513870701854 138.81188971236,35.2513850406582 138.811985504664,35.2513916244294 138.812160550224,35.2514406816756 138.812248061514,35.251459258765 138.812312595871,35.2514693728837 138.812429169199,35.2514656220237 138.812547742836,35.2514465129903 138.812630946605,35.2514275644491 138.812766154394,35.251403270751 138.812803654955,35.2514100045141 138.812818299458,35.2514287741297 138.812861936616,35.2515631681894 138.81288106286,35.2516647390721 138.81286030952,35.2517766983181 138.812852366136,35.2518765784327 138.812893375087,35.2518862615232 138.812964226422,35.251903191955 138.813138389501,35.2520237299751 138.81341992496,35.2521528626747 138.813588803631,35.2522274958146 138.81369935379,35.2522870008843 138.813743113177,35.2522970988581 138.813788895307,35.2522969801556 138.813830494371,35.2522815886214 138.813861506353,35.2522250996413 138.813880045072,35.2521789951888 138.813977542278,35.2520933886795 138.814132795708,35.2519905185406 138.8142470705,35.2519304325697 138.814371771386,35.2518806692827 138.814431993575,35.2518412179107 138.814450531608,35.2517950418332 138.814389557663,35.2517344948252 138.814331087817,35.2516885880297 138.814203804909,35.2516086372202 138.814093281933,35.2515560347582 138.814047427843,35.2515424923858 138.814003701277,35.2515357036259 138.81385385923,35.2515497537057 138.813828759455,35.251513902303 138.813843160741,35.2514695000989 138.813859663419,35.2514353015523 138.813853246891,35.2513908794907 138.813811407961,35.2513329594494 138.813740307054,35.2512511686195 138.813717170998,35.2511897500956 138.813721156779,35.2511436118475 138.813756021814,35.2510796475999 138.81383903424,35.2510163315568 138.813884598096,35.2509546633438 138.813894802654,35.25090167827 138.81389661483,35.2508317420866 138.813872955109,35.2507351815141 138.813822736656,35.250663550287 138.81376202544,35.2505766625761 138.813572027165,35.2504285621586 138.813343881199,35.2502229516579 138.813151307917,35.2499468948762 138.81300510616,35.2497904395365 138.812929896774,35.2497223917482 138.812858846381,35.2496472924724</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+  </Placemark>
+  <Placemark>
+	<name>い</name>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+	<ExtendedData><SchemaData schemaUrl="#kentan">
+		<SimpleData name="OBJECTID">2498334</SimpleData>
+		<SimpleData name="KEY1">002021042001002000</SimpleData>
+		<SimpleData name="KEY2">002021042001002</SimpleData>
+		<SimpleData name="KEY3">002021042001</SimpleData>
+		<SimpleData name="KEY4">002021042</SimpleData>
+		<SimpleData name="KEY5">002021</SimpleData>
+		<SimpleData name="EDITFLG">0</SimpleData>
+		<SimpleData name="KEIKU">2</SimpleData>
+		<SimpleData name="CITY">21</SimpleData>
+		<SimpleData name="RIN">42</SimpleData>
+		<SimpleData name="JUN">1</SimpleData>
+		<SimpleData name="SHO">2</SimpleData>
+		<SimpleData name="EDA">0</SimpleData>
+		<SimpleData name="MGN">0</SimpleData>
+		<SimpleData name="KEY1_1">002021042001002000</SimpleData>
+		<SimpleData name="計画区">2</SimpleData>
+		<SimpleData name="農林事務所">2</SimpleData>
+		<SimpleData name="市町村CD">21</SimpleData>
+		<SimpleData name="市町村名">裾野市</SimpleData>
+		<SimpleData name="林班">42</SimpleData>
+		<SimpleData name="準林班CD">1</SimpleData>
+		<SimpleData name="準林班名">い</SimpleData>
+		<SimpleData name="小班_親番">2</SimpleData>
+		<SimpleData name="小班_枝番">0</SimpleData>
+		<SimpleData name="行数">3</SimpleData>
+		<SimpleData name="森林簿面積">5.31000000000</SimpleData>
+		<SimpleData name="森林簿材積">562</SimpleData>
+		<SimpleData name="林種CD_1">1</SimpleData>
+		<SimpleData name="樹種CD_1">1</SimpleData>
+		<SimpleData name="樹種名_1">スギ</SimpleData>
+		<SimpleData name="林齢_1">59</SimpleData>
+		<SimpleData name="面積_1">3.19000000000</SimpleData>
+		<SimpleData name="林種CD_2">1</SimpleData>
+		<SimpleData name="樹種CD_2">15</SimpleData>
+		<SimpleData name="樹種名_2">モミ</SimpleData>
+		<SimpleData name="林齢_2">59</SimpleData>
+		<SimpleData name="面積_2">0.53000000000</SimpleData>
+		<SimpleData name="林種CD_3">5</SimpleData>
+		<SimpleData name="樹種CD_3">29</SimpleData>
+		<SimpleData name="樹種名_3">その他広</SimpleData>
+		<SimpleData name="林齢_3">59</SimpleData>
+		<SimpleData name="面積_3">1.59000000000</SimpleData>
+	</SchemaData></ExtendedData>
+      <MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>138.814459725037,35.2552486056394 138.814280453478,35.2551858990753 138.814047371643,35.2551064328843 138.813988978185,35.2550758094118 138.813938866114,35.255038333743 138.813796765945,35.2548970094591 138.813355145907,35.2544727221762 138.812979176019,35.2541458014964 138.812784421599,35.253991020023 138.812661805354,35.2540426062593 138.812527042905,35.254083659255 138.812265132022,35.2541867310452 138.81186861289,35.2543443055066 138.811781333999,35.2543872083429 138.811727428943,35.2544403057927 138.811704794271,35.254510436311 138.811711349653,35.2545906315133 138.811791211892,35.2547634567118 138.811920416067,35.2550306650437 138.811967844892,35.2550568109169 138.812026322586,35.2551044772454 138.812055707132,35.2551659514779 138.812066401556,35.2552410660408 138.812041674438,35.2553128219885 138.811971320715,35.255420612041 138.811902755069,35.2554796642052 138.81197768362,35.2555239074234 138.812175717097,35.2555985388491 138.812384202193,35.2556782129053 138.81256190819,35.2557743758982 138.812751799247,35.2558917745605 138.812818680532,35.2559582239251 138.812858524472,35.2560331915117 138.812888172031,35.2561679770012 138.812941696372,35.2564285468328 138.812994778721,35.2566018650355 138.813051570507,35.2567520715997 138.81306039686,35.2568817694194 138.813023738449,35.2570222901514 138.812936932681,35.2571830103075 138.812686320956,35.2575201430637 138.812511278902,35.2578001778037 138.812719749163,35.257874432884 138.81290666996,35.257987752055 138.813063150795,35.258072770058 138.813163458348,35.2582183593836 138.813241976593,35.2583355515521 138.813368106301,35.2584313552702 138.813449040211,35.2585846698023 138.813550693768,35.2584665172101 138.813625224761,35.2583569547193 138.813863547263,35.257911398735 138.813952252157,35.2576977144629 138.813970656213,35.257610552453 138.81396196004,35.2575150100951 138.813948161297,35.2574211701824 138.813978774596,35.2571667194092 138.814036286731,35.2569684711712 138.814152493359,35.2567459093074 138.814193171986,35.2563959389227 138.814219100049,35.2560846670873 138.814254095568,35.2559753499019 138.814343029864,35.2556389846954 138.814459725037,35.2552486056394</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+  </Placemark>
+</Folder>
+</Document></kml>
