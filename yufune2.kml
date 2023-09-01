@@ -11,7 +11,7 @@
 				<color>FF00CCFF</color>
 				<width>3</width></LineStyle></Style>
 		<Style id="StyleC2G_Poly">
-			
+			<PolyStyle><fill>0</fill></PolyStyle>
 			<LineStyle>
 				<color>FF00FFFF</color>
 				<width>3</width></LineStyle></Style>
