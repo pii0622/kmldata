@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>地図アプリ</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
@@ -14,15 +14,11 @@
     .header-bar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
       background: white;
-      padding-top: env(safe-area-inset-top, 0px);
+      padding-top: max(env(safe-area-inset-top, 47px), 47px);
       box-shadow: 0 2px 6px rgba(0,0,0,0.15);
       display: flex; align-items: center; gap: 8px;
       padding-left: 10px; padding-right: 10px;
       padding-bottom: 8px;
-    }
-    .header-bar::before {
-      content: ''; display: block;
-      padding-top: 8px;
     }
 
     #map { width: 100vw; height: 100vh; z-index: 1; position: absolute; top: 0; left: 0; }
