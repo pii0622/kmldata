@@ -14,11 +14,15 @@
     .header-bar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
       background: white;
-      padding-top: max(env(safe-area-inset-top, 47px), 47px);
       box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .header-spacer {
+      height: max(env(safe-area-inset-top, 47px), 47px);
+      background: white;
+    }
+    .header-buttons {
       display: flex; align-items: center; gap: 8px;
-      padding-left: 10px; padding-right: 10px;
-      padding-bottom: 8px;
+      padding: 8px 10px;
     }
 
     #map { width: 100vw; height: 100vh; z-index: 1; position: absolute; top: 0; left: 0; }
@@ -206,18 +210,21 @@
 
 <!-- Header bar -->
 <div class="header-bar" id="header-bar">
-  <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="メニュー">
-    <i class="fas fa-bars"></i>
-  </button>
-  <button class="map-btn" onclick="zoomToMyLocation()" title="現在地にズーム">
-    <i class="fas fa-location-crosshairs"></i> 現在地
-  </button>
-  <button class="map-btn" onclick="zoomToKml()" id="btn-zoom-kml" title="KMLにズーム" style="display:none;">
-    <i class="fas fa-layer-group"></i> KML
-  </button>
-  <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピンを追加" style="display:none;">
-    <i class="fas fa-map-pin"></i> ピン追加
-  </button>
+  <div class="header-spacer"></div>
+  <div class="header-buttons">
+    <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="メニュー">
+      <i class="fas fa-bars"></i>
+    </button>
+    <button class="map-btn" onclick="zoomToMyLocation()" title="現在地にズーム">
+      <i class="fas fa-location-crosshairs"></i> 現在地
+    </button>
+    <button class="map-btn" onclick="zoomToKml()" id="btn-zoom-kml" title="KMLにズーム" style="display:none;">
+      <i class="fas fa-layer-group"></i> KML
+    </button>
+    <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピンを追加" style="display:none;">
+      <i class="fas fa-map-pin"></i> ピン追加
+    </button>
+  </div>
 </div>
 
 <div id="map"></div>
