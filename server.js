@@ -10,8 +10,16 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- Data directory (use persistent disk on Render, local otherwise) ---
+const DATA_DIR = process.env.NODE_ENV === 'production'
+  ? '/opt/render/project/src/data'
+  : __dirname;
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(path.join(UPLOAD_DIR, 'kml'), { recursive: true });
+fs.mkdirSync(path.join(UPLOAD_DIR, 'images'), { recursive: true });
+
 // --- Database Setup ---
-const db = new Database(path.join(__dirname, 'mapapp.db'));
+const db = new Database(path.join(DATA_DIR, 'mapapp.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -85,7 +93,7 @@ app.use(session({
   cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 // Auth middleware
 function requireAuth(req, res, next) {
@@ -101,7 +109,7 @@ function requireAdmin(req, res, next) {
 
 // --- File Upload Config ---
 const kmlStorage = multer.diskStorage({
-  destination: path.join(__dirname, 'uploads', 'kml'),
+  destination: path.join(UPLOAD_DIR, 'kml'),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, uuidv4() + ext);
@@ -118,7 +126,7 @@ const kmlUpload = multer({
 });
 
 const imageStorage = multer.diskStorage({
-  destination: path.join(__dirname, 'uploads', 'images'),
+  destination: path.join(UPLOAD_DIR, 'images'),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, uuidv4() + ext);
@@ -193,7 +201,7 @@ app.post('/api/kml/upload', kmlUpload.single('kml'), (req, res) => {
   // Delete existing KML files
   const existing = db.prepare('SELECT * FROM kml_files').all();
   for (const f of existing) {
-    const filePath = path.join(__dirname, 'uploads', 'kml', f.filename);
+    const filePath = path.join(UPLOAD_DIR, 'kml', f.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
   db.prepare('DELETE FROM kml_files').run();
@@ -212,7 +220,7 @@ app.post('/api/kml/upload', kmlUpload.single('kml'), (req, res) => {
 app.delete('/api/kml', (req, res) => {
   const existing = db.prepare('SELECT * FROM kml_files').all();
   for (const f of existing) {
-    const filePath = path.join(__dirname, 'uploads', 'kml', f.filename);
+    const filePath = path.join(UPLOAD_DIR, 'kml', f.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
   db.prepare('DELETE FROM kml_files').run();
@@ -220,7 +228,7 @@ app.delete('/api/kml', (req, res) => {
 });
 
 app.get('/api/kml/file/:filename', (req, res) => {
-  const filePath = path.join(__dirname, 'uploads', 'kml', req.params.filename);
+  const filePath = path.join(UPLOAD_DIR, 'kml', req.params.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'ファイルが見つかりません' });
   res.sendFile(filePath);
 });
@@ -372,7 +380,7 @@ app.delete('/api/pins/:id', requireAuth, (req, res) => {
   // Delete associated images from disk
   const images = db.prepare('SELECT * FROM pin_images WHERE pin_id = ?').all(req.params.id);
   for (const img of images) {
-    const imgPath = path.join(__dirname, 'uploads', 'images', img.filename);
+    const imgPath = path.join(UPLOAD_DIR, 'images', img.filename);
     if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
   }
 
@@ -407,7 +415,7 @@ app.delete('/api/pins/:pinId/images/:imageId', requireAuth, (req, res) => {
   const img = db.prepare('SELECT * FROM pin_images WHERE id = ? AND pin_id = ?').get(req.params.imageId, req.params.pinId);
   if (!img) return res.status(404).json({ error: '画像が見つかりません' });
 
-  const imgPath = path.join(__dirname, 'uploads', 'images', img.filename);
+  const imgPath = path.join(UPLOAD_DIR, 'images', img.filename);
   if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
   db.prepare('DELETE FROM pin_images WHERE id = ?').run(req.params.imageId);
   res.json({ ok: true });
