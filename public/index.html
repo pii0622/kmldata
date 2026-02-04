@@ -188,10 +188,14 @@
     .notification-success { background: #d4edda; color: #155724; }
     .notification-error { background: #f8d7da; color: #721c24; }
 
+    /* Pin mode: make KML layers click-through */
+    .pin-mode-active .leaflet-overlay-pane { pointer-events: none; }
+
     /* Responsive */
     @media (max-width: 480px) {
       .sidebar { width: 100%; }
-      .top-bar { left: 50px; }
+      .top-bar { top: 50px; left: 10px; flex-wrap: wrap; }
+      .sidebar-toggle { top: 8px; }
     }
   </style>
 </head>
@@ -753,6 +757,7 @@ function startPinMode() {
   pinMode = true;
   document.getElementById('btn-add-pin').classList.add('active');
   map.getContainer().style.cursor = 'crosshair';
+  document.body.classList.add('pin-mode-active');
   notify('地図をクリックしてピンを配置してください');
 }
 
@@ -761,6 +766,7 @@ function cancelPinMode() {
   pendingPinLatLng = null;
   document.getElementById('btn-add-pin').classList.remove('active');
   map.getContainer().style.cursor = '';
+  document.body.classList.remove('pin-mode-active');
   closeModal('modal-pin');
 }
 
