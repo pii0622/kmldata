@@ -1,0 +1,8 @@
+node_modules/
+uploads/kml/*
+uploads/images/*
+!uploads/kml/.gitkeep
+!uploads/images/.gitkeep
+mapapp.db
+*.db-journal
+*.db-wal

@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>地図アプリ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif; overflow: hidden; }
+    #map { width: 100vw; height: 100vh; z-index: 1; }
+
+    /* Top bar */
+    .top-bar {
+      position: absolute; top: 10px; left: 60px; right: 10px; z-index: 1000;
+      display: flex; gap: 8px; align-items: flex-start; pointer-events: none;
+    }
+    .top-bar > * { pointer-events: auto; }
+
+    /* Buttons */
+    .map-btn {
+      background: white; border: 2px solid rgba(0,0,0,0.2); border-radius: 4px;
+      padding: 8px 12px; cursor: pointer; font-size: 14px; white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15); display: flex; align-items: center; gap: 6px;
+    }
+    .map-btn:hover { background: #f0f0f0; }
+    .map-btn.active { background: #1a73e8; color: white; border-color: #1a73e8; }
+
+    /* Sidebar */
+    .sidebar {
+      position: absolute; top: 0; left: 0; width: 320px; height: 100vh;
+      background: white; z-index: 1001; box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+      transform: translateX(-100%); transition: transform 0.3s ease;
+      display: flex; flex-direction: column;
+    }
+    .sidebar.open { transform: translateX(0); }
+    .sidebar-header {
+      padding: 16px; background: #1a73e8; color: white;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .sidebar-header h2 { font-size: 16px; }
+    .sidebar-close { background: none; border: none; color: white; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+    .sidebar-content { flex: 1; overflow-y: auto; padding: 16px; }
+
+    .sidebar-toggle {
+      position: absolute; top: 10px; left: 10px; z-index: 1002;
+      background: white; border: 2px solid rgba(0,0,0,0.2); border-radius: 4px;
+      width: 40px; height: 40px; cursor: pointer; font-size: 18px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Forms */
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #555; }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;
+    }
+    .form-group textarea { resize: vertical; min-height: 60px; }
+    .btn {
+      padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
+      font-size: 14px; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: #1a73e8; color: white; }
+    .btn-primary:hover { background: #1557b0; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-danger:hover { background: #b02a37; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .btn-secondary:hover { background: #565e64; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-block { width: 100%; justify-content: center; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5); z-index: 2000;
+      display: none; align-items: center; justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: white; border-radius: 8px; padding: 24px;
+      max-width: 450px; width: 90%; max-height: 85vh; overflow-y: auto;
+    }
+    .modal h3 { margin-bottom: 16px; }
+    .modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+
+    /* Folder tree */
+    .folder-tree { list-style: none; padding-left: 0; }
+    .folder-tree ul { list-style: none; padding-left: 20px; }
+    .folder-item {
+      padding: 6px 8px; cursor: pointer; border-radius: 4px;
+      display: flex; align-items: center; gap: 6px; font-size: 14px;
+    }
+    .folder-item:hover { background: #f0f0f0; }
+    .folder-item.selected { background: #e3f2fd; color: #1a73e8; }
+    .folder-actions { margin-left: auto; display: flex; gap: 4px; }
+    .folder-actions button {
+      background: none; border: none; cursor: pointer; padding: 2px 4px;
+      font-size: 12px; color: #999;
+    }
+    .folder-actions button:hover { color: #333; }
+
+    /* Pin list */
+    .pin-item {
+      padding: 10px; margin-bottom: 8px; border: 1px solid #eee;
+      border-radius: 6px; cursor: pointer;
+    }
+    .pin-item:hover { border-color: #1a73e8; }
+    .pin-item h4 { font-size: 14px; margin-bottom: 4px; }
+    .pin-item p { font-size: 12px; color: #666; }
+    .pin-item .pin-meta { font-size: 11px; color: #999; display: flex; gap: 8px; margin-top: 4px; }
+
+    /* Pin detail images */
+    .pin-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .pin-images img {
+      width: 80px; height: 80px; object-fit: cover; border-radius: 4px;
+      cursor: pointer; border: 1px solid #ddd;
+    }
+    .pin-images img:hover { border-color: #1a73e8; }
+
+    /* Image lightbox */
+    .lightbox {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.9); z-index: 3000;
+      display: none; align-items: center; justify-content: center;
+    }
+    .lightbox.active { display: flex; }
+    .lightbox img { max-width: 90%; max-height: 90%; object-fit: contain; }
+    .lightbox-close {
+      position: absolute; top: 20px; right: 20px;
+      color: white; font-size: 30px; cursor: pointer; background: none; border: none;
+    }
+
+    /* Tabs */
+    .tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 12px; }
+    .tab {
+      padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+      border-bottom: 2px solid transparent; margin-bottom: -2px; color: #666;
+    }
+    .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+
+    /* Visibility badge */
+    .badge {
+      display: inline-block; padding: 2px 6px; border-radius: 10px;
+      font-size: 10px; font-weight: 600;
+    }
+    .badge-public { background: #d4edda; color: #155724; }
+    .badge-private { background: #f8d7da; color: #721c24; }
+
+    /* User info */
+    .user-info { padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 12px; }
+    .user-info span { font-weight: 600; }
+
+    /* KML info */
+    .kml-info {
+      padding: 10px; background: #fff3cd; border-radius: 6px; margin-bottom: 12px;
+      display: flex; align-items: center; justify-content: space-between; font-size: 13px;
+    }
+
+    /* Checkbox style */
+    .checkbox-label {
+      display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;
+    }
+    .checkbox-label input { width: 16px; height: 16px; }
+
+    /* Delete image btn */
+    .img-wrapper { position: relative; display: inline-block; }
+    .img-delete {
+      position: absolute; top: -6px; right: -6px;
+      background: #dc3545; color: white; border: none; border-radius: 50%;
+      width: 20px; height: 20px; font-size: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Section divider */
+    .section-title {
+      font-size: 12px; font-weight: 700; color: #999; text-transform: uppercase;
+      letter-spacing: 1px; margin: 16px 0 8px;
+    }
+
+    /* Notification */
+    .notification {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; border-radius: 6px; z-index: 3000;
+      font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: opacity 0.3s;
+    }
+    .notification-success { background: #d4edda; color: #155724; }
+    .notification-error { background: #f8d7da; color: #721c24; }
+
+    /* Responsive */
+    @media (max-width: 480px) {
+      .sidebar { width: 100%; }
+      .top-bar { left: 50px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Sidebar toggle -->
+<button class="sidebar-toggle" onclick="toggleSidebar()" title="メニュー">
+  <i class="fas fa-bars"></i>
+</button>
+
+<!-- Top bar -->
+<div class="top-bar">
+  <button class="map-btn" onclick="zoomToMyLocation()" title="現在地にズーム">
+    <i class="fas fa-location-crosshairs"></i> 現在地
+  </button>
+  <button class="map-btn" onclick="zoomToKml()" id="btn-zoom-kml" title="KMLにズーム" style="display:none;">
+    <i class="fas fa-layer-group"></i> KMLにズーム
+  </button>
+  <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピンを追加" style="display:none;">
+    <i class="fas fa-map-pin"></i> ピン追加
+  </button>
+</div>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2><i class="fas fa-map"></i> 地図アプリ</h2>
+    <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
+  </div>
+  <div class="sidebar-content" id="sidebar-content">
+    <!-- Dynamic content -->
+  </div>
+</div>
+
+<!-- Pin creation modal -->
+<div class="modal-overlay" id="modal-pin">
+  <div class="modal">
+    <h3><i class="fas fa-map-pin"></i> ピンを作成</h3>
+    <div class="form-group">
+      <label>タイトル *</label>
+      <input type="text" id="pin-title" placeholder="ピンのタイトル">
+    </div>
+    <div class="form-group">
+      <label>説明</label>
+      <textarea id="pin-desc" placeholder="ピンの説明"></textarea>
+    </div>
+    <div class="form-group">
+      <label>フォルダ</label>
+      <select id="pin-folder"></select>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="pin-public"> 他のユーザーに公開する
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="cancelPinMode()">キャンセル</button>
+      <button class="btn btn-primary" onclick="savePin()">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pin edit modal -->
+<div class="modal-overlay" id="modal-pin-edit">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> ピンを編集</h3>
+    <div class="form-group">
+      <label>タイトル *</label>
+      <input type="text" id="edit-pin-title">
+    </div>
+    <div class="form-group">
+      <label>説明</label>
+      <textarea id="edit-pin-desc"></textarea>
+    </div>
+    <div class="form-group">
+      <label>フォルダ</label>
+      <select id="edit-pin-folder"></select>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="edit-pin-public"> 他のユーザーに公開する
+      </label>
+    </div>
+    <div class="form-group">
+      <label>画像を追加</label>
+      <input type="file" id="edit-pin-images" multiple accept="image/*">
+    </div>
+    <div id="edit-pin-current-images" class="pin-images"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeEditPin()">キャンセル</button>
+      <button class="btn btn-primary" onclick="updatePin()">更新</button>
+    </div>
+  </div>
+</div>
+
+<!-- Folder create modal -->
+<div class="modal-overlay" id="modal-folder">
+  <div class="modal">
+    <h3><i class="fas fa-folder-plus"></i> フォルダを作成</h3>
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label>親フォルダ</label>
+      <select id="folder-parent"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="createFolder()">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auth modal -->
+<div class="modal-overlay" id="modal-auth">
+  <div class="modal">
+    <h3 id="auth-title">ログイン</h3>
+    <div class="form-group">
+      <label>ユーザー名</label>
+      <input type="text" id="auth-username" placeholder="ユーザー名">
+    </div>
+    <div class="form-group">
+      <label>パスワード</label>
+      <input type="password" id="auth-password" placeholder="パスワード">
+    </div>
+    <div id="auth-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-auth')">キャンセル</button>
+      <button class="btn btn-primary" id="auth-submit" onclick="submitAuth()">ログイン</button>
+    </div>
+    <p style="margin-top:12px;font-size:13px;text-align:center;">
+      <a href="#" id="auth-toggle" onclick="toggleAuthMode(event)">アカウントを作成</a>
+    </p>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <button class="lightbox-close">&times;</button>
+  <img id="lightbox-img" src="">
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
+<script>
+// ==================== State ====================
+let currentUser = null;
+let pins = [];
+let folders = [];
+let kmlData = null;
+let kmlLayer = null;
+let myLocationMarker = null;
+let myLocationCircle = null;
+let pinMarkers = {};
+let pinMode = false;
+let pendingPinLatLng = null;
+let editingPinId = null;
+let authMode = 'login'; // 'login' or 'register'
+let watchId = null;
+
+// ==================== Map Init ====================
+const map = L.map('map', {
+  center: [35.0, 135.0],
+  zoom: 6,
+  zoomControl: false
+});
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+// GSI Tiles
+const gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+  attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom: 18
+});
+const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+  attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom: 18
+});
+
+gsiStd.addTo(map);
+L.control.layers({
+  '国土地理院地図': gsiStd,
+  '航空写真': gsiPhoto
+}, {}, { position: 'topright' }).addTo(map);
+
+// Map click for pin placement
+map.on('click', function(e) {
+  if (!pinMode) return;
+  pendingPinLatLng = e.latlng;
+  populateFolderSelect('pin-folder');
+  document.getElementById('pin-title').value = '';
+  document.getElementById('pin-desc').value = '';
+  document.getElementById('pin-public').checked = false;
+  openModal('modal-pin');
+});
+
+// ==================== Utility ====================
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+function notify(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = 'notification notification-' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
+}
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    ...opts
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
+  return data;
+}
+
+// ==================== Auth ====================
+async function checkAuth() {
+  try {
+    currentUser = await api('/api/auth/me');
+    updateUI();
+  } catch { currentUser = null; updateUI(); }
+}
+
+function showAuthModal(mode = 'login') {
+  authMode = mode;
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'ログイン' : 'アカウント作成';
+  document.getElementById('auth-submit').textContent = mode === 'login' ? 'ログイン' : '作成';
+  document.getElementById('auth-toggle').textContent = mode === 'login' ? 'アカウントを作成' : 'ログインする';
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-error').style.display = 'none';
+  openModal('modal-auth');
+}
+
+function toggleAuthMode(e) {
+  e.preventDefault();
+  showAuthModal(authMode === 'login' ? 'register' : 'login');
+}
+
+async function submitAuth() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl = document.getElementById('auth-error');
+  try {
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    currentUser = await api(endpoint, { method: 'POST', body: JSON.stringify({ username, password }) });
+    closeModal('modal-auth');
+    notify(authMode === 'login' ? 'ログインしました' : 'アカウントを作成しました');
+    updateUI();
+    loadPins();
+    loadFolders();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function logout() {
+  await api('/api/auth/logout', { method: 'POST' });
+  currentUser = null;
+  notify('ログアウトしました');
+  updateUI();
+  loadPins();
+}
+
+// ==================== UI ====================
+function updateUI() {
+  document.getElementById('btn-add-pin').style.display = currentUser ? '' : 'none';
+  renderSidebar();
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+function renderSidebar() {
+  const c = document.getElementById('sidebar-content');
+  let html = '';
+
+  // Auth section
+  if (currentUser) {
+    html += `<div class="user-info">
+      <i class="fas fa-user"></i> <span>${escHtml(currentUser.username)}</span>
+      ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
+      <button class="btn btn-sm btn-secondary" style="float:right;" onclick="logout()">ログアウト</button>
+    </div>`;
+  } else {
+    html += `<div style="margin-bottom:12px;">
+      <button class="btn btn-primary btn-block" onclick="showAuthModal('login')">
+        <i class="fas fa-sign-in-alt"></i> ログイン / アカウント作成
+      </button>
+    </div>`;
+  }
+
+  // KML section
+  html += '<div class="section-title">KMLファイル</div>';
+  if (kmlData) {
+    html += `<div class="kml-info">
+      <span><i class="fas fa-file"></i> ${escHtml(kmlData.original_name)}</span>
+      <button class="btn btn-sm btn-danger" onclick="deleteKml()"><i class="fas fa-trash"></i></button>
+    </div>`;
+  }
+  html += `<div style="margin-bottom:16px;">
+    <label class="btn btn-secondary btn-block" style="cursor:pointer;">
+      <i class="fas fa-upload"></i> KMLをアップロード
+      <input type="file" accept=".kml,.kmz" style="display:none;" onchange="uploadKml(this)">
+    </label>
+  </div>`;
+
+  // Pins section (only for logged-in users)
+  if (currentUser) {
+    html += '<div class="section-title">フォルダ</div>';
+    html += '<button class="btn btn-sm btn-primary" style="margin-bottom:8px;" onclick="showFolderModal()">';
+    html += '<i class="fas fa-folder-plus"></i> フォルダ作成</button>';
+    html += renderFolderTree();
+
+    html += '<div class="section-title">ピン一覧</div>';
+    html += '<div id="pin-list">';
+    const userPins = pins.filter(p => p.user_id === currentUser.id || currentUser.is_admin);
+    if (userPins.length === 0) {
+      html += '<p style="font-size:13px;color:#999;">ピンがありません。地図をクリックしてピンを追加してください。</p>';
+    }
+    for (const pin of userPins) {
+      html += renderPinItem(pin);
+    }
+    html += '</div>';
+  }
+
+  c.innerHTML = html;
+}
+
+function renderPinItem(pin) {
+  const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
+  const folder = pin.folder_id ? folders.find(f => f.id === pin.folder_id) : null;
+  return `<div class="pin-item" onclick="focusPin(${pin.id})">
+    <h4>${escHtml(pin.title)} ${vis}</h4>
+    <p>${escHtml(pin.description || '').substring(0, 60)}</p>
+    <div class="pin-meta">
+      ${folder ? '<i class="fas fa-folder"></i> ' + escHtml(folder.name) : ''}
+      <span><i class="fas fa-user"></i> ${escHtml(pin.author || '')}</span>
+      ${pin.images && pin.images.length > 0 ? '<span><i class="fas fa-image"></i> ' + pin.images.length + '</span>' : ''}
+    </div>
+  </div>`;
+}
+
+function renderFolderTree() {
+  const roots = folders.filter(f => !f.parent_id);
+  if (folders.length === 0) return '<p style="font-size:13px;color:#999;">フォルダがありません</p>';
+  return '<ul class="folder-tree">' + roots.map(f => renderFolderNode(f)).join('') + '</ul>';
+}
+
+function renderFolderNode(folder) {
+  const children = folders.filter(f => f.parent_id === folder.id);
+  return `<li>
+    <div class="folder-item">
+      <i class="fas fa-folder" style="color:#f0ad4e;"></i>
+      ${escHtml(folder.name)}
+      <span style="font-size:11px;color:#999;margin-left:4px;">(${pins.filter(p => p.folder_id === folder.id).length})</span>
+      <div class="folder-actions">
+        <button onclick="event.stopPropagation();deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
+      </div>
+    </div>
+    ${children.length > 0 ? '<ul>' + children.map(c => renderFolderNode(c)).join('') + '</ul>' : ''}
+  </li>`;
+}
+
+function escHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ==================== KML ====================
+async function loadKml() {
+  try {
+    kmlData = await api('/api/kml');
+    if (kmlData) {
+      displayKml(kmlData.filename);
+      document.getElementById('btn-zoom-kml').style.display = '';
+    } else {
+      document.getElementById('btn-zoom-kml').style.display = 'none';
+    }
+    renderSidebar();
+  } catch (err) {
+    console.error('KML load error:', err);
+  }
+}
+
+function displayKml(filename) {
+  if (kmlLayer) { map.removeLayer(kmlLayer); kmlLayer = null; }
+  kmlLayer = omnivore.kml('/api/kml/file/' + filename)
+    .on('ready', function() {
+      this.eachLayer(function(layer) {
+        if (layer.feature && layer.feature.properties) {
+          const props = layer.feature.properties;
+          let popup = '';
+          for (const [key, val] of Object.entries(props)) {
+            if (val && key !== 'styleUrl' && key !== 'styleHash') {
+              popup += `<b>${escHtml(key)}</b>: ${escHtml(String(val))}<br>`;
+            }
+          }
+          if (popup) layer.bindPopup(popup);
+        }
+      });
+    })
+    .on('error', function(e) { notify('KMLの読み込みに失敗しました', 'error'); })
+    .addTo(map);
+}
+
+async function uploadKml(input) {
+  if (!input.files || !input.files[0]) return;
+  const formData = new FormData();
+  formData.append('kml', input.files[0]);
+  try {
+    const res = await fetch('/api/kml/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    kmlData = data;
+    displayKml(data.filename);
+    document.getElementById('btn-zoom-kml').style.display = '';
+    notify('KMLをアップロードしました');
+    renderSidebar();
+  } catch (err) { notify(err.message, 'error'); }
+  input.value = '';
+}
+
+async function deleteKml() {
+  if (!confirm('KMLファイルを削除しますか？')) return;
+  try {
+    await api('/api/kml', { method: 'DELETE' });
+    if (kmlLayer) { map.removeLayer(kmlLayer); kmlLayer = null; }
+    kmlData = null;
+    document.getElementById('btn-zoom-kml').style.display = 'none';
+    notify('KMLを削除しました');
+    renderSidebar();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+function zoomToKml() {
+  if (kmlLayer && kmlLayer.getLayers().length > 0) {
+    map.fitBounds(kmlLayer.getBounds(), { padding: [50, 50] });
+  } else {
+    notify('KMLデータがありません', 'error');
+  }
+}
+
+// ==================== Geolocation ====================
+function zoomToMyLocation() {
+  if (!navigator.geolocation) { notify('位置情報が利用できません', 'error'); return; }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      updateMyLocation(lat, lng, accuracy);
+      map.setView([lat, lng], 16);
+    },
+    (err) => { notify('位置情報の取得に失敗しました: ' + err.message, 'error'); },
+    { enableHighAccuracy: true }
+  );
+}
+
+function startWatchingLocation() {
+  if (!navigator.geolocation) return;
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+      updateMyLocation(lat, lng, accuracy);
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 10000 }
+  );
+}
+
+function updateMyLocation(lat, lng, accuracy) {
+  if (myLocationMarker) {
+    myLocationMarker.setLatLng([lat, lng]);
+    myLocationCircle.setLatLng([lat, lng]).setRadius(accuracy);
+  } else {
+    myLocationMarker = L.circleMarker([lat, lng], {
+      radius: 8, fillColor: '#4285f4', fillOpacity: 1,
+      color: 'white', weight: 3
+    }).addTo(map).bindPopup('現在地');
+    myLocationCircle = L.circle([lat, lng], {
+      radius: accuracy, color: '#4285f4', fillColor: '#4285f4',
+      fillOpacity: 0.1, weight: 1
+    }).addTo(map);
+  }
+}
+
+// ==================== Pins ====================
+async function loadPins() {
+  try {
+    pins = await api('/api/pins');
+    renderPinMarkers();
+    renderSidebar();
+  } catch (err) { console.error('Pin load error:', err); }
+}
+
+function renderPinMarkers() {
+  // Remove old markers
+  Object.values(pinMarkers).forEach(m => map.removeLayer(m));
+  pinMarkers = {};
+
+  for (const pin of pins) {
+    const isOwn = currentUser && pin.user_id === currentUser.id;
+    const color = isOwn ? '#1a73e8' : '#e53935';
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="
+        background:${color};width:28px;height:28px;border-radius:50% 50% 50% 0;
+        transform:rotate(-45deg);border:2px solid white;
+        box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;
+      "><i class="fas fa-map-pin" style="color:white;font-size:12px;transform:rotate(45deg);"></i></div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 28],
+      popupAnchor: [0, -28]
+    });
+
+    const marker = L.marker([pin.lat, pin.lng], { icon }).addTo(map);
+    marker.bindPopup(() => createPinPopup(pin));
+    pinMarkers[pin.id] = marker;
+  }
+}
+
+function createPinPopup(pin) {
+  const div = document.createElement('div');
+  div.style.cssText = 'max-width:250px;';
+  const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
+  let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${vis}</h4>`;
+  html += `<p style="font-size:12px;color:#666;margin:0 0 4px;">${escHtml(pin.description || '')}</p>`;
+  html += `<p style="font-size:11px;color:#999;">作成者: ${escHtml(pin.author || '')}</p>`;
+
+  if (pin.images && pin.images.length > 0) {
+    html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">';
+    for (const img of pin.images) {
+      html += `<img src="/uploads/images/${img.filename}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;cursor:pointer;" onclick="openLightbox('/uploads/images/${img.filename}')">`;
+    }
+    html += '</div>';
+  }
+
+  const canEdit = currentUser && (pin.user_id === currentUser.id || currentUser.is_admin);
+  if (canEdit) {
+    html += `<div style="margin-top:8px;display:flex;gap:6px;">
+      <button class="btn btn-sm btn-primary" onclick="editPin(${pin.id})"><i class="fas fa-edit"></i> 編集</button>
+      <button class="btn btn-sm btn-danger" onclick="deletePin(${pin.id})"><i class="fas fa-trash"></i> 削除</button>
+    </div>`;
+  }
+  div.innerHTML = html;
+  return div;
+}
+
+function startPinMode() {
+  if (!currentUser) { showAuthModal(); return; }
+  pinMode = true;
+  document.getElementById('btn-add-pin').classList.add('active');
+  map.getContainer().style.cursor = 'crosshair';
+  notify('地図をクリックしてピンを配置してください');
+}
+
+function cancelPinMode() {
+  pinMode = false;
+  pendingPinLatLng = null;
+  document.getElementById('btn-add-pin').classList.remove('active');
+  map.getContainer().style.cursor = '';
+  closeModal('modal-pin');
+}
+
+async function savePin() {
+  const title = document.getElementById('pin-title').value.trim();
+  if (!title) { notify('タイトルを入力してください', 'error'); return; }
+
+  try {
+    const pin = await api('/api/pins', {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        description: document.getElementById('pin-desc').value.trim(),
+        lat: pendingPinLatLng.lat,
+        lng: pendingPinLatLng.lng,
+        folder_id: document.getElementById('pin-folder').value || null,
+        is_public: document.getElementById('pin-public').checked
+      })
+    });
+    cancelPinMode();
+    notify('ピンを作成しました');
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+function focusPin(pinId) {
+  const pin = pins.find(p => p.id === pinId);
+  if (!pin) return;
+  map.setView([pin.lat, pin.lng], 16);
+  if (pinMarkers[pinId]) pinMarkers[pinId].openPopup();
+  // Close sidebar on mobile
+  if (window.innerWidth <= 480) toggleSidebar();
+}
+
+async function editPin(pinId) {
+  editingPinId = pinId;
+  const pin = pins.find(p => p.id === pinId);
+  if (!pin) return;
+
+  map.closePopup();
+  document.getElementById('edit-pin-title').value = pin.title;
+  document.getElementById('edit-pin-desc').value = pin.description || '';
+  document.getElementById('edit-pin-public').checked = !!pin.is_public;
+  document.getElementById('edit-pin-images').value = '';
+  populateFolderSelect('edit-pin-folder', pin.folder_id);
+
+  // Show current images
+  const imgContainer = document.getElementById('edit-pin-current-images');
+  imgContainer.innerHTML = '';
+  if (pin.images) {
+    for (const img of pin.images) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'img-wrapper';
+      wrapper.innerHTML = `
+        <img src="/uploads/images/${img.filename}" onclick="openLightbox('/uploads/images/${img.filename}')">
+        <button class="img-delete" onclick="removePinImage(${pin.id}, ${img.id}, this)" title="削除">&times;</button>
+      `;
+      imgContainer.appendChild(wrapper);
+    }
+  }
+
+  openModal('modal-pin-edit');
+}
+
+function closeEditPin() {
+  editingPinId = null;
+  closeModal('modal-pin-edit');
+}
+
+async function updatePin() {
+  if (!editingPinId) return;
+  try {
+    await api('/api/pins/' + editingPinId, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: document.getElementById('edit-pin-title').value.trim(),
+        description: document.getElementById('edit-pin-desc').value.trim(),
+        folder_id: document.getElementById('edit-pin-folder').value || null,
+        is_public: document.getElementById('edit-pin-public').checked
+      })
+    });
+
+    // Upload new images
+    const imageInput = document.getElementById('edit-pin-images');
+    if (imageInput.files && imageInput.files.length > 0) {
+      const formData = new FormData();
+      for (const f of imageInput.files) formData.append('images', f);
+      await fetch('/api/pins/' + editingPinId + '/images', { method: 'POST', body: formData });
+    }
+
+    closeEditPin();
+    notify('ピンを更新しました');
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function deletePin(pinId) {
+  if (!confirm('このピンを削除しますか？')) return;
+  try {
+    await api('/api/pins/' + pinId, { method: 'DELETE' });
+    notify('ピンを削除しました');
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function removePinImage(pinId, imageId, btn) {
+  if (!confirm('この画像を削除しますか？')) return;
+  try {
+    await api(`/api/pins/${pinId}/images/${imageId}`, { method: 'DELETE' });
+    btn.parentElement.remove();
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+// ==================== Folders ====================
+async function loadFolders() {
+  if (!currentUser) { folders = []; return; }
+  try {
+    folders = await api('/api/folders');
+    renderSidebar();
+  } catch (err) { console.error('Folder load error:', err); }
+}
+
+function showFolderModal() {
+  document.getElementById('folder-name').value = '';
+  populateFolderSelect('folder-parent', null, true);
+  openModal('modal-folder');
+}
+
+async function createFolder() {
+  const name = document.getElementById('folder-name').value.trim();
+  if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
+
+  try {
+    await api('/api/folders', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        parent_id: document.getElementById('folder-parent').value || null
+      })
+    });
+    closeModal('modal-folder');
+    notify('フォルダを作成しました');
+    loadFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function deleteFolder(folderId) {
+  if (!confirm('このフォルダを削除しますか？\nフォルダ内のピンはフォルダなしになります。')) return;
+  try {
+    await api('/api/folders/' + folderId, { method: 'DELETE' });
+    notify('フォルダを削除しました');
+    loadFolders();
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+function populateFolderSelect(selectId, selectedId, includeNone) {
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">-- なし --</option>';
+  function addOptions(parentId, depth) {
+    const children = folders.filter(f => (f.parent_id || null) === parentId);
+    for (const f of children) {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+      if (f.id == selectedId) opt.selected = true;
+      sel.appendChild(opt);
+      addOptions(f.id, depth + 1);
+    }
+  }
+  addOptions(null, 0);
+}
+
+// ==================== Lightbox ====================
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('active');
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('active');
+}
+
+// ==================== Init ====================
+async function init() {
+  await checkAuth();
+  await Promise.all([loadKml(), loadPins(), loadFolders()]);
+  startWatchingLocation();
+}
+
+init();
+</script>
+</body>
+</html>
