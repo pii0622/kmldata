@@ -193,8 +193,13 @@
     .notification-success { background: #d4edda; color: #155724; }
     .notification-error { background: #f8d7da; color: #721c24; }
 
-    /* Pin mode: make KML layers click-through */
-    .pin-mode-active .leaflet-overlay-pane { pointer-events: none; }
+    /* Pin mode: make ALL map layers click-through */
+    .pin-mode-active .leaflet-overlay-pane,
+    .pin-mode-active .leaflet-overlay-pane *,
+    .pin-mode-active .leaflet-marker-pane,
+    .pin-mode-active .leaflet-marker-pane * {
+      pointer-events: none !important;
+    }
 
     /* Responsive */
     @media (max-width: 600px) {
@@ -386,10 +391,14 @@ L.control.layers({
   '航空写真': gsiPhoto
 }, {}, { position: 'topright' }).addTo(map);
 
-// Map click for pin placement
-map.on('click', function(e) {
+// Map click for pin placement (use DOM click as fallback for KML layers)
+map.getContainer().addEventListener('click', function(e) {
   if (!pinMode) return;
-  pendingPinLatLng = e.latlng;
+  // Ignore clicks on UI elements (popups, controls)
+  if (e.target.closest('.leaflet-control-container, .leaflet-popup, .header-buttons')) return;
+  const rect = map.getContainer().getBoundingClientRect();
+  const point = L.point(e.clientX - rect.left, e.clientY - rect.top);
+  pendingPinLatLng = map.containerPointToLatLng(point);
   populateFolderSelect('pin-folder');
   document.getElementById('pin-title').value = '';
   document.getElementById('pin-desc').value = '';
