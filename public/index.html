@@ -602,31 +602,32 @@ async function loadKml() {
 }
 
 function displayKml(filename) {
-  if (kmlLayer) { map.removeLayer(kmlLayer); kmlLayer = null; }
-  
- const geoJsonOptions = {
-    interactive: false, // ★ これが本命（KMLがクリックを食わない）
-    style: function(feature) {
+  if (kmlLayer) {
+    map.removeLayer(kmlLayer);
+    kmlLayer = null;
+  }
+
+  const geoJsonOptions = {
+    interactive: false, // KMLをクリック透過
+    style: function (feature) {
       return {
         color: '#e53935',
         weight: 2,
         opacity: 0.9,
         fillOpacity: 0
       };
-    },
-    onEachFeature: function(feature, layer) {
-      if (feature.properties) {
-        const props = feature.properties;
-        let popup = '';
-        for (const [key, val] of Object.entries(props)) {
-          if (val && key !== 'styleUrl' && key !== 'styleHash') {
-            popup += `<b>${escHtml(key)}</b>: ${escHtml(String(val))}<br>`;
-          }
-        }
-        if (popup) layer.bindPopup(popup);
-      }
     }
-  }))
+    // onEachFeature は不要（interactive:falseなら基本触れない）
+  };
+
+  kmlLayer = omnivore
+    .kml('/api/kml/file/' + filename, null, L.geoJson(null, geoJsonOptions))
+    .on('error', function () {
+      notify('KMLの読み込みに失敗しました', 'error');
+    })
+    .addTo(map);
+}
+
     .on('error', function(e) { notify('KMLの読み込みに失敗しました', 'error'); })
     .addTo(map);
 }
