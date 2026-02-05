@@ -608,8 +608,8 @@ function displayKml(filename) {
   }
 
   const geoJsonOptions = {
-    interactive: false, // KMLをクリック透過
-    style: function (feature) {
+    interactive: false, // KMLをクリック透過（ピンを優先）
+    style: function () {
       return {
         color: '#e53935',
         weight: 2,
@@ -617,7 +617,6 @@ function displayKml(filename) {
         fillOpacity: 0
       };
     }
-    // onEachFeature は不要（interactive:falseなら基本触れない）
   };
 
   kmlLayer = omnivore
@@ -625,10 +624,6 @@ function displayKml(filename) {
     .on('error', function () {
       notify('KMLの読み込みに失敗しました', 'error');
     })
-    .addTo(map);
-}
-
-    .on('error', function(e) { notify('KMLの読み込みに失敗しました', 'error'); })
     .addTo(map);
 }
 
