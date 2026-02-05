@@ -603,9 +603,10 @@ async function loadKml() {
 
 function displayKml(filename) {
   if (kmlLayer) { map.removeLayer(kmlLayer); kmlLayer = null; }
-  kmlLayer = omnivore.kml('/api/kml/file/' + filename, null, L.geoJson(null, {
+  
+ const geoJsonOptions = {
+    interactive: false, // ★ これが本命（KMLがクリックを食わない）
     style: function(feature) {
-      // Polygons rendered as outlines only (no fill)
       return {
         color: '#e53935',
         weight: 2,
