@@ -198,11 +198,26 @@ app.get('/api/kml', (req, res) => {
 app.post('/api/kml/upload', kmlUpload.single('kml'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ファイルが選択されていません' });
 
+  // Convert Polygon to LineString in KML
+  const filePath = path.join(UPLOAD_DIR, 'kml', req.file.filename);
+  try {
+    let kml = fs.readFileSync(filePath, 'utf-8');
+    // Replace <Polygon>...<outerBoundaryIs><LinearRing><coordinates>DATA</coordinates></LinearRing></outerBoundaryIs>...</Polygon>
+    // with <LineString><coordinates>DATA</coordinates></LineString>
+    kml = kml.replace(
+      /<Polygon[^>]*>[\s\S]*?<outerBoundaryIs>\s*<LinearRing>\s*<coordinates>([\s\S]*?)<\/coordinates>\s*<\/LinearRing>\s*<\/outerBoundaryIs>[\s\S]*?<\/Polygon>/gi,
+      '<LineString><coordinates>$1</coordinates></LineString>'
+    );
+    fs.writeFileSync(filePath, kml, 'utf-8');
+  } catch (e) {
+    console.error('KML conversion error:', e);
+  }
+
   // Delete existing KML files
   const existing = db.prepare('SELECT * FROM kml_files').all();
   for (const f of existing) {
-    const filePath = path.join(UPLOAD_DIR, 'kml', f.filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const oldPath = path.join(UPLOAD_DIR, 'kml', f.filename);
+    if (oldPath !== filePath && fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
   db.prepare('DELETE FROM kml_files').run();
 
