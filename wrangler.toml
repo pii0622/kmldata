@@ -1,0 +1,19 @@
+# Cloudflare Pages configuration
+name = "kmldata"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "./public"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "kmldata-db"
+database_id = "YOUR_D1_DATABASE_ID"  # Replace after creating D1 database
+
+# R2 Storage binding for file uploads
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "kmldata-files"
+
+# Environment variables
+[vars]
+JWT_SECRET = "change-this-secret-in-production"

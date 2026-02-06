@@ -1,25 +1,26 @@
 {
   "name": "kmldata",
-  "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "Map application with KML support on Cloudflare Pages",
+  "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler pages dev ./public --d1=DB --r2=R2",
+    "deploy": "wrangler pages deploy ./public",
+    "db:create": "wrangler d1 create kmldata-db",
+    "db:migrate": "wrangler d1 execute kmldata-db --file=./migrations/0001_init.sql",
+    "db:migrate:local": "wrangler d1 execute kmldata-db --local --file=./migrations/0001_init.sql"
   },
   "repository": {
     "type": "git",
     "url": "http://local_proxy@127.0.0.1:45536/git/pii0622/kmldata"
   },
-  "keywords": [],
+  "keywords": ["map", "kml", "cloudflare", "hono"],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.6.2",
-    "express": "^5.2.1",
-    "express-session": "^1.19.0",
-    "multer": "^2.0.2",
-    "uuid": "^13.0.0"
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
   }
 }

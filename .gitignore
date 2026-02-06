@@ -1,9 +1,18 @@
 node_modules/
-uploads/kml/*
-uploads/images/*
-!uploads/kml/.gitkeep
-!uploads/images/.gitkeep
+.wrangler/
+.dev.vars
+
+# Old Express server files (kept for reference)
+uploads/
 mapapp.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
