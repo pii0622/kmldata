@@ -7,7 +7,7 @@ pages_build_output_dir = "./public"
 [[d1_databases]]
 binding = "DB"
 database_name = "kmldata-db"
-database_id = "YOUR_D1_DATABASE_ID"  # Replace after creating D1 database
+database_id = "e2fa2089-2382-442e-b5b9-7e8048094ca4"
 
 # R2 Storage binding for file uploads
 [[r2_buckets]]
