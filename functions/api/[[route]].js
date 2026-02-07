@@ -804,4 +804,7 @@ app.delete('/pins/:pinId/images/:imageId', async (c) => {
   return c.json({ ok: true });
 });
 
-export default app;
+// Cloudflare Pages Functions export
+export const onRequest = (context) => {
+  return app.fetch(context.request, context.env, context);
+};
