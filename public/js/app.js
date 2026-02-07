@@ -178,7 +178,10 @@ function renderSidebar() {
     html += `<div class="user-info">
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
-      <button class="btn btn-sm btn-secondary" style="float:right;" onclick="logout()">ログアウト</button>
+      <div style="float:right;display:flex;gap:4px;">
+        <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
+        <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
+      </div>
     </div>`;
   } else {
     html += `<div style="margin-bottom:12px;">
@@ -232,22 +235,23 @@ function renderKmlFolderList() {
         <i class="fas fa-folder" style="color:#f0ad4e;"></i>
         <span class="kml-folder-name">${escHtml(folder.name)}</span>
         ${publicBadge}${sharedBadge}
-        <label class="toggle-switch" onclick="event.stopPropagation()">
-          <input type="checkbox" ${isVisible ? 'checked' : ''} onchange="toggleKmlFolderVisibility(${folder.id}, this.checked)">
-          <span class="toggle-slider"></span>
-        </label>
-        ${isOwner ? `<div class="kml-folder-actions" onclick="event.stopPropagation()">
-          <button onclick="showKmlUploadModal(${folder.id})" title="KMLを追加"><i class="fas fa-plus"></i></button>
-          <button onclick="showShareKmlFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
-          <button onclick="deleteKmlFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
-        </div>` : ''}
+        <div class="kml-folder-actions" onclick="event.stopPropagation()">
+          <button onclick="zoomToKmlFolder(${folder.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
+          <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
+          ${isOwner ? `<button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
+          <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
+          <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+        </div>
       </div>
       <div class="kml-folder-files" id="kml-folder-files-${folder.id}">
         ${files.map(f => `
           <div class="kml-file-item">
             <i class="fas fa-file"></i>
             <span style="flex:1;">${escHtml(f.original_name)}</span>
-            ${isOwner ? `<button class="btn btn-sm btn-danger" onclick="deleteKmlFile(${f.id})"><i class="fas fa-trash"></i></button>` : ''}
+            <div class="kml-file-actions">
+              <button onclick="zoomToKmlFile(${f.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
+              ${isOwner ? `<button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+            </div>
           </div>
         `).join('')}
         ${files.length === 0 ? '<p style="font-size:12px;color:#999;padding:4px;">ファイルがありません</p>' : ''}
@@ -294,9 +298,36 @@ function updateKmlLayers() {
       displayKmlFile(file);
     }
   }
+}
 
-  // Update KML zoom button visibility
-  document.getElementById('btn-zoom-kml').style.display = Object.keys(kmlLayers).length > 0 ? '' : 'none';
+function zoomToKmlFolder(folderId) {
+  const files = kmlFiles.filter(f => f.folder_id === folderId);
+  const bounds = L.latLngBounds([]);
+  for (const file of files) {
+    if (kmlLayers[file.id] && kmlLayers[file.id].getLayers().length > 0) {
+      bounds.extend(kmlLayers[file.id].getBounds());
+    }
+  }
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [50, 50] });
+  } else {
+    notify('表示中のKMLがありません', 'error');
+  }
+}
+
+function zoomToKmlFile(fileId) {
+  if (kmlLayers[fileId] && kmlLayers[fileId].getLayers().length > 0) {
+    map.fitBounds(kmlLayers[fileId].getBounds(), { padding: [50, 50] });
+  } else {
+    notify('KMLが表示されていません', 'error');
+  }
+}
+
+function toggleKmlFolderVisibilityBtn(folderId) {
+  const folder = kmlFolders.find(f => f.id === folderId);
+  if (folder) {
+    toggleKmlFolderVisibility(folderId, !folder.is_visible);
+  }
 }
 
 function displayKmlFile(file) {
@@ -427,20 +458,69 @@ async function shareKmlFolder() {
   } catch (err) { notify(err.message, 'error'); }
 }
 
-function zoomToKml() {
-  const layers = Object.values(kmlLayers);
-  if (layers.length === 0) {
-    notify('表示中のKMLがありません', 'error');
-    return;
-  }
-  const bounds = L.latLngBounds([]);
-  layers.forEach(layer => {
-    if (layer.getLayers().length > 0) {
-      bounds.extend(layer.getBounds());
+// ==================== Account Settings ====================
+function showAccountSettings() {
+  document.getElementById('settings-display-name').value = currentUser.display_name || currentUser.username;
+  document.getElementById('settings-current-password').value = '';
+  document.getElementById('settings-new-password').value = '';
+  document.getElementById('settings-confirm-password').value = '';
+  document.getElementById('settings-error').style.display = 'none';
+  openModal('modal-settings');
+}
+
+async function saveAccountSettings() {
+  const displayName = document.getElementById('settings-display-name').value.trim();
+  const currentPassword = document.getElementById('settings-current-password').value;
+  const newPassword = document.getElementById('settings-new-password').value;
+  const confirmPassword = document.getElementById('settings-confirm-password').value;
+  const errEl = document.getElementById('settings-error');
+
+  // Validate password change if attempting
+  if (newPassword || confirmPassword) {
+    if (!currentPassword) {
+      errEl.textContent = '現在のパスワードを入力してください';
+      errEl.style.display = 'block';
+      return;
     }
-  });
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [50, 50] });
+    if (newPassword.length < 4) {
+      errEl.textContent = '新しいパスワードは4文字以上にしてください';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      errEl.textContent = '新しいパスワードが一致しません';
+      errEl.style.display = 'block';
+      return;
+    }
+  }
+
+  try {
+    // Update display name
+    if (displayName && displayName !== currentUser.display_name) {
+      await api('/api/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName })
+      });
+      currentUser.display_name = displayName;
+    }
+
+    // Update password if provided
+    if (newPassword) {
+      await api('/api/auth/password', {
+        method: 'PUT',
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword
+        })
+      });
+    }
+
+    closeModal('modal-settings');
+    notify('設定を保存しました');
+    renderSidebar();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
   }
 }
 

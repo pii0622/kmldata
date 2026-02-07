@@ -113,6 +113,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
   border-radius: 4px;
 }
 .kml-file-item:hover { background: #f0f0f0; }
+.kml-file-actions { display: flex; gap: 2px; }
+
+/* Icon buttons */
+.icon-btn {
+  background: none; border: none; cursor: pointer; padding: 4px 6px;
+  font-size: 12px; color: #999; border-radius: 4px;
+  transition: background 0.2s, color 0.2s;
+}
+.icon-btn:hover { background: #e0e0e0; color: #333; }
+.icon-btn.active { color: #1a73e8; }
+.icon-btn.delete:hover { background: #fbe9eb; color: #dc3545; }
 
 /* Pin list - pins inside folders */
 .pin-folder-section { margin-bottom: 12px; }
@@ -121,6 +132,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
   background: #f5f5f5; border-radius: 6px; cursor: pointer; margin-bottom: 4px;
 }
 .pin-folder-header .folder-name { font-weight: 600; font-size: 14px; flex: 1; }
+.pin-folder-header .toggle-icon { transition: transform 0.2s; }
+.pin-folder-header.expanded .toggle-icon { transform: rotate(90deg); }
 .pin-folder-content { padding-left: 12px; display: none; }
 .pin-folder-content.open { display: block; }
 

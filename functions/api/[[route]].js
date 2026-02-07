@@ -113,6 +113,14 @@ export async function onRequest(context) {
     if (path === '/auth/me' && method === 'GET') {
       return json(user);
     }
+    if (path === '/auth/profile' && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleUpdateProfile(request, env, user);
+    }
+    if (path === '/auth/password' && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleChangePassword(request, env, user);
+    }
 
     // Users
     if (path === '/users' && method === 'GET') {
@@ -282,6 +290,55 @@ async function handleLogin(request, env) {
 
 function handleLogout() {
   return json({ ok: true }, 200, { 'Set-Cookie': setCookieHeader('auth', '', { maxAge: 0 }) });
+}
+
+async function handleUpdateProfile(request, env, user) {
+  const { display_name } = await request.json();
+  if (!display_name || !display_name.trim()) {
+    return json({ error: '表示名を入力してください' }, 400);
+  }
+
+  await env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?')
+    .bind(display_name.trim(), user.id).run();
+
+  // Create new token with updated display_name
+  const token = await createToken({
+    id: user.id,
+    username: user.username,
+    display_name: display_name.trim(),
+    is_admin: user.is_admin
+  }, env.JWT_SECRET || 'default-secret');
+
+  return json(
+    { ok: true, display_name: display_name.trim() },
+    200,
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+  );
+}
+
+async function handleChangePassword(request, env, user) {
+  const { current_password, new_password } = await request.json();
+
+  if (!current_password) {
+    return json({ error: '現在のパスワードを入力してください' }, 400);
+  }
+  if (!new_password || new_password.length < 4) {
+    return json({ error: '新しいパスワードは4文字以上にしてください' }, 400);
+  }
+
+  // Verify current password
+  const dbUser = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+    .bind(user.id).first();
+  if (!dbUser || !(await verifyPassword(current_password, dbUser.password_hash))) {
+    return json({ error: '現在のパスワードが正しくありません' }, 401);
+  }
+
+  // Update password
+  const newHash = await hashPassword(new_password);
+  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+    .bind(newHash, user.id).run();
+
+  return json({ ok: true });
 }
 
 // ==================== Users Handlers ====================
