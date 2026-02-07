@@ -136,6 +136,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleCreateKmlFolder(request, env, user);
     }
+    if (path.match(/^\/kml-folders\/(\d+)$/) && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/kml-folders\/(\d+)$/)[1];
+      return await handleRenameKmlFolder(request, env, user, id);
+    }
     if (path.match(/^\/kml-folders\/(\d+)$/) && method === 'DELETE') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/kml-folders\/(\d+)$/)[1];
@@ -177,6 +182,11 @@ export async function onRequest(context) {
     if (path === '/folders' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleCreateFolder(request, env, user);
+    }
+    if (path.match(/^\/folders\/(\d+)$/) && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/folders\/(\d+)$/)[1];
+      return await handleRenameFolder(request, env, user, id);
     }
     if (path.match(/^\/folders\/(\d+)$/) && method === 'DELETE') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
@@ -249,6 +259,13 @@ async function handleRegister(request, env) {
     return json({ error: 'そのユーザー名は既に使われています' }, 400);
   }
 
+  // Check if display name is already used
+  const actualDisplayName = (display_name || username).trim();
+  const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ?').bind(actualDisplayName).first();
+  if (existingDisplayName) {
+    return json({ error: 'その表示名は既に使われています' }, 400);
+  }
+
   const hash = await hashPassword(password);
   const result = await env.DB.prepare(
     'INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)'
@@ -296,6 +313,13 @@ async function handleUpdateProfile(request, env, user) {
   const { display_name } = await request.json();
   if (!display_name || !display_name.trim()) {
     return json({ error: '表示名を入力してください' }, 400);
+  }
+
+  // Check if display name is already used by another user
+  const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
+    .bind(display_name.trim(), user.id).first();
+  if (existingDisplayName) {
+    return json({ error: 'その表示名は既に使われています' }, 400);
   }
 
   await env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?')
@@ -386,6 +410,20 @@ async function handleCreateKmlFolder(request, env, user) {
   ).bind(name, user.id, publicFlag).run();
 
   return json({ id: result.meta.last_row_id, name, user_id: user.id, is_public: publicFlag });
+}
+
+async function handleRenameKmlFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { name } = await request.json();
+  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+
+  await env.DB.prepare('UPDATE kml_folders SET name = ? WHERE id = ?').bind(name.trim(), id).run();
+  return json({ ok: true, name: name.trim() });
 }
 
 async function handleDeleteKmlFolder(env, user, id) {
@@ -543,6 +581,20 @@ async function handleCreateFolder(request, env, user) {
   ).bind(name, parent_id || null, user.id).run();
 
   return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id });
+}
+
+async function handleRenameFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { name } = await request.json();
+  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+
+  await env.DB.prepare('UPDATE folders SET name = ? WHERE id = ?').bind(name.trim(), id).run();
+  return json({ ok: true, name: name.trim() });
 }
 
 async function handleDeleteFolder(env, user, id) {

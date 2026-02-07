@@ -238,7 +238,8 @@ function renderKmlFolderList() {
         <div class="kml-folder-actions" onclick="event.stopPropagation()">
           <button onclick="zoomToKmlFolder(${folder.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
           <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
-          ${isOwner ? `<button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
+          ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
+          <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
           <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
           <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
         </div>
@@ -323,11 +324,19 @@ function zoomToKmlFile(fileId) {
   }
 }
 
-function toggleKmlFolderVisibilityBtn(folderId) {
+async function toggleKmlFolderVisibilityBtn(folderId) {
   const folder = kmlFolders.find(f => f.id === folderId);
-  if (folder) {
-    toggleKmlFolderVisibility(folderId, !folder.is_visible);
+  if (!folder) return;
+
+  const newVisible = !folder.is_visible;
+
+  // Update icon immediately
+  const btn = document.querySelector(`.kml-folder-item[data-folder-id="${folderId}"] .icon-btn[title="表示切替"]`);
+  if (btn) {
+    btn.classList.toggle('active', newVisible);
   }
+
+  await toggleKmlFolderVisibility(folderId, newVisible);
 }
 
 function displayKmlFile(file) {
@@ -381,6 +390,30 @@ async function deleteKmlFolder(folderId) {
   } catch (err) { notify(err.message, 'error'); }
 }
 
+function showRenameKmlFolderModal(folderId) {
+  const folder = kmlFolders.find(f => f.id === folderId);
+  if (!folder) return;
+  document.getElementById('rename-kml-folder-id').value = folderId;
+  document.getElementById('rename-kml-folder-name').value = folder.name;
+  openModal('modal-rename-kml-folder');
+}
+
+async function renameKmlFolder() {
+  const folderId = document.getElementById('rename-kml-folder-id').value;
+  const name = document.getElementById('rename-kml-folder-name').value.trim();
+  if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
+
+  try {
+    await api(`/api/kml-folders/${folderId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name })
+    });
+    closeModal('modal-rename-kml-folder');
+    notify('フォルダ名を変更しました');
+    loadKmlFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
 function showKmlUploadModal(folderId) {
   document.getElementById('kml-upload-folder-id').value = folderId;
   document.getElementById('kml-upload-file').value = '';
@@ -419,27 +452,63 @@ async function deleteKmlFile(fileId) {
   } catch (err) { notify(err.message, 'error'); }
 }
 
+let shareKmlSharedWith = [];
+
 function showShareKmlFolderModal(folderId) {
   document.getElementById('share-kml-folder-id').value = folderId;
   const folder = kmlFolders.find(f => f.id === folderId);
-  const sharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
+  shareKmlSharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
 
-  let html = '';
-  for (const user of allUsers) {
-    const checked = sharedWith.includes(user.id) ? 'checked' : '';
-    html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this)">
-      <input type="checkbox" value="${user.id}" ${checked}>
-      <span>${escHtml(user.display_name || user.username)}</span>
-    </div>`;
-  }
-  document.getElementById('share-kml-user-list').innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
+  document.getElementById('share-kml-search').value = '';
+  renderShareKmlUserList('');
   openModal('modal-share-kml');
 }
 
-function toggleUserSelect(el) {
+function filterShareKmlUsers() {
+  const query = document.getElementById('share-kml-search').value.toLowerCase();
+  renderShareKmlUserList(query);
+}
+
+function renderShareKmlUserList(query) {
+  const listEl = document.getElementById('share-kml-user-list');
+
+  // Get currently checked user IDs from UI (if modal is already open)
+  const checkedIds = new Set(shareKmlSharedWith);
+  listEl.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+    checkedIds.add(parseInt(cb.value));
+  });
+  listEl.querySelectorAll('input[type="checkbox"]:not(:checked)').forEach(cb => {
+    checkedIds.delete(parseInt(cb.value));
+  });
+
+  let html = '';
+  for (const user of allUsers) {
+    const isChecked = checkedIds.has(user.id);
+    const displayName = user.display_name || user.username;
+    const matchesSearch = !query || displayName.toLowerCase().includes(query);
+
+    // Always show checked users or those matching search
+    if (isChecked || matchesSearch) {
+      const checked = isChecked ? 'checked' : '';
+      html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this, event)">
+        <input type="checkbox" value="${user.id}" ${checked}>
+        <span>${escHtml(displayName)}</span>
+      </div>`;
+    }
+  }
+  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
+}
+
+function toggleUserSelect(el, event) {
+  // Allow click anywhere on the row to toggle, including the checkbox itself
   const cb = el.querySelector('input[type="checkbox"]');
-  cb.checked = !cb.checked;
-  el.classList.toggle('selected', cb.checked);
+  // If clicking on the checkbox, it already toggles, so only toggle for other clicks
+  if (event && event.target === cb) {
+    el.classList.toggle('selected', cb.checked);
+  } else {
+    cb.checked = !cb.checked;
+    el.classList.toggle('selected', cb.checked);
+  }
 }
 
 async function shareKmlFolder() {
@@ -573,6 +642,7 @@ function renderPinFolderList() {
         ${sharedBadge}
         <span style="font-size:11px;color:#999;">(${pinsInFolder.length})</span>
         ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
+          <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
           <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
           <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
         </div>` : ''}
@@ -645,21 +715,75 @@ async function deleteFolder(folderId) {
   } catch (err) { notify(err.message, 'error'); }
 }
 
+function showRenameFolderModal(folderId) {
+  const folder = folders.find(f => f.id === folderId);
+  if (!folder) return;
+  document.getElementById('rename-folder-id').value = folderId;
+  document.getElementById('rename-folder-name').value = folder.name;
+  openModal('modal-rename-folder');
+}
+
+async function renameFolder() {
+  const folderId = document.getElementById('rename-folder-id').value;
+  const name = document.getElementById('rename-folder-name').value.trim();
+  if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
+
+  try {
+    await api(`/api/folders/${folderId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name })
+    });
+    closeModal('modal-rename-folder');
+    notify('フォルダ名を変更しました');
+    loadFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+let shareFolderSharedWith = [];
+
 function showShareFolderModal(folderId) {
   document.getElementById('share-folder-id').value = folderId;
   const folder = folders.find(f => f.id === folderId);
-  const sharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
+  shareFolderSharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
+
+  document.getElementById('share-folder-search').value = '';
+  renderShareFolderUserList('');
+  openModal('modal-share-folder');
+}
+
+function filterShareFolderUsers() {
+  const query = document.getElementById('share-folder-search').value.toLowerCase();
+  renderShareFolderUserList(query);
+}
+
+function renderShareFolderUserList(query) {
+  const listEl = document.getElementById('share-folder-user-list');
+
+  // Get currently checked user IDs from UI (if modal is already open)
+  const checkedIds = new Set(shareFolderSharedWith);
+  listEl.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+    checkedIds.add(parseInt(cb.value));
+  });
+  listEl.querySelectorAll('input[type="checkbox"]:not(:checked)').forEach(cb => {
+    checkedIds.delete(parseInt(cb.value));
+  });
 
   let html = '';
   for (const user of allUsers) {
-    const checked = sharedWith.includes(user.id) ? 'checked' : '';
-    html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this)">
-      <input type="checkbox" value="${user.id}" ${checked}>
-      <span>${escHtml(user.display_name || user.username)}</span>
-    </div>`;
+    const isChecked = checkedIds.has(user.id);
+    const displayName = user.display_name || user.username;
+    const matchesSearch = !query || displayName.toLowerCase().includes(query);
+
+    // Always show checked users or those matching search
+    if (isChecked || matchesSearch) {
+      const checked = isChecked ? 'checked' : '';
+      html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this, event)">
+        <input type="checkbox" value="${user.id}" ${checked}>
+        <span>${escHtml(displayName)}</span>
+      </div>`;
+    }
   }
-  document.getElementById('share-folder-user-list').innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
-  openModal('modal-share-folder');
+  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
 }
 
 async function shareFolder() {

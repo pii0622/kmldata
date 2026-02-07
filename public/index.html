@@ -162,12 +162,31 @@
   </div>
 </div>
 
+<!-- Rename KML folder modal -->
+<div class="modal-overlay" id="modal-rename-kml-folder">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> KMLフォルダ名を変更</h3>
+    <input type="hidden" id="rename-kml-folder-id">
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="rename-kml-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-rename-kml-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="renameKmlFolder()">変更</button>
+    </div>
+  </div>
+</div>
+
 <!-- Share KML folder modal -->
 <div class="modal-overlay" id="modal-share-kml">
   <div class="modal">
     <h3><i class="fas fa-share-alt"></i> KMLフォルダを共有</h3>
     <input type="hidden" id="share-kml-folder-id">
-    <p style="font-size:13px;color:#666;margin-bottom:12px;">共有するユーザーを選択してください</p>
+    <div class="form-group">
+      <input type="text" id="share-kml-search" placeholder="表示名で検索..." oninput="filterShareKmlUsers()">
+    </div>
+    <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
     <div class="user-select-list" id="share-kml-user-list">
       <!-- Dynamic user list -->
     </div>
@@ -178,12 +197,31 @@
   </div>
 </div>
 
+<!-- Rename pin folder modal -->
+<div class="modal-overlay" id="modal-rename-folder">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> ピンフォルダ名を変更</h3>
+    <input type="hidden" id="rename-folder-id">
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="rename-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-rename-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="renameFolder()">変更</button>
+    </div>
+  </div>
+</div>
+
 <!-- Share pin folder modal -->
 <div class="modal-overlay" id="modal-share-folder">
   <div class="modal">
     <h3><i class="fas fa-share-alt"></i> ピンフォルダを共有</h3>
     <input type="hidden" id="share-folder-id">
-    <p style="font-size:13px;color:#666;margin-bottom:12px;">共有するユーザーを選択してください</p>
+    <div class="form-group">
+      <input type="text" id="share-folder-search" placeholder="表示名で検索..." oninput="filterShareFolderUsers()">
+    </div>
+    <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
     <div class="user-select-list" id="share-folder-user-list">
       <!-- Dynamic user list -->
     </div>
