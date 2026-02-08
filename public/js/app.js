@@ -239,20 +239,18 @@ function renderKmlFolderList() {
     const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
     const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
 
-    html += `<div class="kml-folder-item" data-folder-id="${folder.id}">
+    html += `<div class="kml-folder-item" data-folder-id="${folder.id}" draggable="${isOwner}"
+      ondragstart="onDragStart(event, 'kml', ${folder.id})"
+      ondragover="onDragOver(event)"
+      ondrop="onDrop(event, 'kml', ${folder.id})">
+      <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge}</div>
       <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
         <i class="fas fa-chevron-right toggle-icon"></i>
-        <div class="folder-icon-wrap">
-          <span class="folder-label">${escHtml(folder.name)}</span>
-          <i class="fas fa-folder"></i>
-        </div>
-        <div class="folder-badges">${publicBadge}${sharedBadge}</div>
+        <i class="fas fa-folder folder-icon"></i>
         <div class="kml-folder-actions" onclick="event.stopPropagation()">
           <button onclick="zoomToKmlFolder(${folder.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
           <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
-          ${isOwner ? `<button onclick="moveKmlFolderUp(${folder.id})" title="上へ" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
-          <button onclick="moveKmlFolderDown(${folder.id})" title="下へ" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
-          <button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
+          ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
           <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
           <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
           <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
@@ -428,24 +426,49 @@ async function deleteKmlFolder(folderId) {
   } catch (err) { notify(err.message, 'error'); }
 }
 
-async function moveKmlFolderUp(folderId) {
-  try {
-    await api(`/api/kml-folders/${folderId}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ direction: 'up' })
-    });
-    loadKmlFolders();
-  } catch (err) { notify(err.message, 'error'); }
+// Drag and drop for folder reordering
+let draggedFolderId = null;
+let draggedFolderType = null;
+
+function onDragStart(e, type, folderId) {
+  draggedFolderId = folderId;
+  draggedFolderType = type;
+  e.dataTransfer.effectAllowed = 'move';
+  e.target.classList.add('dragging');
 }
 
-async function moveKmlFolderDown(folderId) {
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
+
+async function onDrop(e, type, targetId) {
+  e.preventDefault();
+  e.target.closest('.kml-folder-item, .pin-folder-section')?.classList.remove('drag-over');
+
+  if (!draggedFolderId || draggedFolderType !== type || draggedFolderId === targetId) {
+    draggedFolderId = null;
+    draggedFolderType = null;
+    return;
+  }
+
   try {
-    await api(`/api/kml-folders/${folderId}/move`, {
+    const endpoint = type === 'kml' ? '/api/kml-folders' : '/api/folders';
+    await api(`${endpoint}/${draggedFolderId}/reorder`, {
       method: 'POST',
-      body: JSON.stringify({ direction: 'down' })
+      body: JSON.stringify({ target_id: targetId })
     });
-    loadKmlFolders();
-  } catch (err) { notify(err.message, 'error'); }
+    if (type === 'kml') {
+      loadKmlFolders();
+    } else {
+      loadFolders();
+    }
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+
+  draggedFolderId = null;
+  draggedFolderType = null;
 }
 
 function showRenameKmlFolderModal(folderId) {
@@ -682,13 +705,10 @@ function renderPinFolderList() {
   // "すべて" folder for pins without folder
   if (noFolderPins.length > 0) {
     html += `<div class="pin-folder-section">
+      <div class="folder-name-row">すべて <span class="folder-count">(${noFolderPins.length})</span></div>
       <div class="pin-folder-header" onclick="togglePinFolder('all')">
         <i class="fas fa-chevron-right toggle-icon"></i>
-        <div class="folder-icon-wrap">
-          <span class="folder-label">すべて</span>
-          <i class="fas fa-folder"></i>
-        </div>
-        <span class="folder-count">(${noFolderPins.length})</span>
+        <i class="fas fa-folder folder-icon"></i>
       </div>
       <div class="pin-folder-content" id="pin-folder-all">
         ${noFolderPins.map(p => renderPinItem(p)).join('')}
@@ -716,18 +736,14 @@ function renderFolderNode(folder, folderPins, depth) {
   const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
   const totalCount = pinsInFolder.length + childFolders.length;
 
-  let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;">
+  let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}"
+    draggable="${isOwner}" ondragstart="onDragStart(event, 'pin', ${folder.id})"
+    ondragover="onDragOver(event)" ondrop="onDrop(event, 'pin', ${folder.id})">
+    <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
     <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
       <i class="fas fa-chevron-right toggle-icon"></i>
-      <div class="folder-icon-wrap">
-        <span class="folder-label">${escHtml(folder.name)}</span>
-        <i class="fas fa-folder"></i>
-      </div>
-      <div class="folder-badges">${publicBadge}${sharedBadge}</div>
-      <span class="folder-count">(${totalCount})</span>
+      <i class="fas fa-folder folder-icon"></i>
       ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
-        <button onclick="moveFolderUp(${folder.id})" title="上へ"><i class="fas fa-arrow-up"></i></button>
-        <button onclick="moveFolderDown(${folder.id})" title="下へ"><i class="fas fa-arrow-down"></i></button>
         <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
         <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
         <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
@@ -817,26 +833,6 @@ async function deleteFolder(folderId) {
     notify('フォルダを削除しました');
     loadFolders();
     loadPins();
-  } catch (err) { notify(err.message, 'error'); }
-}
-
-async function moveFolderUp(folderId) {
-  try {
-    await api(`/api/folders/${folderId}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ direction: 'up' })
-    });
-    loadFolders();
-  } catch (err) { notify(err.message, 'error'); }
-}
-
-async function moveFolderDown(folderId) {
-  try {
-    await api(`/api/folders/${folderId}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ direction: 'down' })
-    });
-    loadFolders();
   } catch (err) { notify(err.message, 'error'); }
 }
 

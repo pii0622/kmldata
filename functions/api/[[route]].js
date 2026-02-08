@@ -177,10 +177,10 @@ export async function onRequest(context) {
       const id = path.match(/^\/kml-folders\/(\d+)\/share$/)[1];
       return await handleShareKmlFolder(request, env, user, id);
     }
-    if (path.match(/^\/kml-folders\/(\d+)\/move$/) && method === 'POST') {
+    if (path.match(/^\/kml-folders\/(\d+)\/reorder$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      const id = path.match(/^\/kml-folders\/(\d+)\/move$/)[1];
-      return await handleMoveKmlFolder(request, env, user, id);
+      const id = path.match(/^\/kml-folders\/(\d+)\/reorder$/)[1];
+      return await handleReorderKmlFolder(request, env, user, id);
     }
 
     // KML Files
@@ -224,10 +224,10 @@ export async function onRequest(context) {
       const id = path.match(/^\/folders\/(\d+)\/share$/)[1];
       return await handleShareFolder(request, env, user, id);
     }
-    if (path.match(/^\/folders\/(\d+)\/move$/) && method === 'POST') {
+    if (path.match(/^\/folders\/(\d+)\/reorder$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      const id = path.match(/^\/folders\/(\d+)\/move$/)[1];
-      return await handleMoveFolder(request, env, user, id);
+      const id = path.match(/^\/folders\/(\d+)\/reorder$/)[1];
+      return await handleReorderFolder(request, env, user, id);
     }
 
     // Pins
@@ -513,37 +513,25 @@ async function handleShareKmlFolder(request, env, user, id) {
   return json({ ok: true });
 }
 
-async function handleMoveKmlFolder(request, env, user, id) {
+async function handleReorderKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { direction } = await request.json();
-  const currentOrder = folder.sort_order || 0;
+  const { target_id } = await request.json();
+  const target = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(target_id).first();
+  if (!target) return json({ error: '移動先が見つかりません' }, 404);
 
-  // Get all user's KML folders ordered
-  const allFolders = await env.DB.prepare(
-    'SELECT id, sort_order FROM kml_folders WHERE user_id = ? ORDER BY sort_order'
-  ).bind(user.id).all();
+  // Swap sort_order values
+  const sourceOrder = folder.sort_order || 0;
+  const targetOrder = target.sort_order || 0;
 
-  const folderList = allFolders.results;
-  const currentIndex = folderList.findIndex(f => f.id == id);
-
-  if (direction === 'up' && currentIndex > 0) {
-    const prevFolder = folderList[currentIndex - 1];
-    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-      .bind(prevFolder.sort_order || 0, id).run();
-    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-      .bind(currentOrder, prevFolder.id).run();
-  } else if (direction === 'down' && currentIndex < folderList.length - 1) {
-    const nextFolder = folderList[currentIndex + 1];
-    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-      .bind(nextFolder.sort_order || 0, id).run();
-    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-      .bind(currentOrder, nextFolder.id).run();
-  }
+  await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+    .bind(targetOrder, id).run();
+  await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+    .bind(sourceOrder, target_id).run();
 
   return json({ ok: true });
 }
@@ -743,38 +731,25 @@ async function handleShareFolder(request, env, user, id) {
   return json({ ok: true });
 }
 
-async function handleMoveFolder(request, env, user, id) {
+async function handleReorderFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { direction } = await request.json();
-  const currentOrder = folder.sort_order || 0;
-  const parentId = folder.parent_id;
+  const { target_id } = await request.json();
+  const target = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(target_id).first();
+  if (!target) return json({ error: '移動先が見つかりません' }, 404);
 
-  // Get sibling folders (same parent)
-  const siblings = await env.DB.prepare(
-    'SELECT id, sort_order FROM folders WHERE user_id = ? AND (parent_id IS ? OR parent_id = ?) ORDER BY sort_order'
-  ).bind(user.id, parentId, parentId).all();
+  // Swap sort_order values
+  const sourceOrder = folder.sort_order || 0;
+  const targetOrder = target.sort_order || 0;
 
-  const folderList = siblings.results;
-  const currentIndex = folderList.findIndex(f => f.id == id);
-
-  if (direction === 'up' && currentIndex > 0) {
-    const prevFolder = folderList[currentIndex - 1];
-    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-      .bind(prevFolder.sort_order || 0, id).run();
-    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-      .bind(currentOrder, prevFolder.id).run();
-  } else if (direction === 'down' && currentIndex < folderList.length - 1) {
-    const nextFolder = folderList[currentIndex + 1];
-    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-      .bind(nextFolder.sort_order || 0, id).run();
-    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-      .bind(currentOrder, nextFolder.id).run();
-  }
+  await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+    .bind(targetOrder, id).run();
+  await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+    .bind(sourceOrder, target_id).run();
 
   return json({ ok: true });
 }
