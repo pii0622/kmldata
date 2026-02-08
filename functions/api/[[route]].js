@@ -177,6 +177,11 @@ export async function onRequest(context) {
       const id = path.match(/^\/kml-folders\/(\d+)\/share$/)[1];
       return await handleShareKmlFolder(request, env, user, id);
     }
+    if (path.match(/^\/kml-folders\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/kml-folders\/(\d+)\/move$/)[1];
+      return await handleMoveKmlFolder(request, env, user, id);
+    }
 
     // KML Files
     if (path === '/kml-files' && method === 'GET') {
@@ -218,6 +223,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/folders\/(\d+)\/share$/)[1];
       return await handleShareFolder(request, env, user, id);
+    }
+    if (path.match(/^\/folders\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/folders\/(\d+)\/move$/)[1];
+      return await handleMoveFolder(request, env, user, id);
     }
 
     // Pins
@@ -407,7 +417,7 @@ async function handleGetKmlFolders(env, user) {
       LEFT JOIN kml_folder_visibility kfv ON kf.id = kfv.kml_folder_id AND kfv.user_id = ?
       WHERE kf.user_id = ? OR kf.is_public = 1
         OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
-      ORDER BY kf.name
+      ORDER BY kf.sort_order, kf.name
     `).bind(user.id, user.id, user.id, user.id).all();
   } else {
     folders = await env.DB.prepare(`
@@ -415,7 +425,7 @@ async function handleGetKmlFolders(env, user) {
       FROM kml_folders kf
       LEFT JOIN users u ON kf.user_id = u.id
       WHERE kf.is_public = 1
-      ORDER BY kf.name
+      ORDER BY kf.sort_order, kf.name
     `).all();
   }
   return json(folders.results);
@@ -458,11 +468,22 @@ async function handleDeleteKmlFolder(env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
+  // Delete KML files from R2
   const files = await env.DB.prepare('SELECT r2_key FROM kml_files WHERE folder_id = ?').bind(id).all();
   for (const f of files.results) {
     await env.R2.delete(f.r2_key);
   }
 
+  // Delete KML files from DB
+  await env.DB.prepare('DELETE FROM kml_files WHERE folder_id = ?').bind(id).run();
+
+  // Delete folder shares
+  await env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id = ?').bind(id).run();
+
+  // Delete visibility settings
+  await env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id = ?').bind(id).run();
+
+  // Delete folder
   await env.DB.prepare('DELETE FROM kml_folders WHERE id = ?').bind(id).run();
   return json({ ok: true });
 }
@@ -489,6 +510,41 @@ async function handleShareKmlFolder(request, env, user, id) {
       'INSERT INTO kml_folder_shares (kml_folder_id, shared_with_user_id) VALUES (?, ?)'
     ).bind(id, uid).run();
   }
+  return json({ ok: true });
+}
+
+async function handleMoveKmlFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { direction } = await request.json();
+  const currentOrder = folder.sort_order || 0;
+
+  // Get all user's KML folders ordered
+  const allFolders = await env.DB.prepare(
+    'SELECT id, sort_order FROM kml_folders WHERE user_id = ? ORDER BY sort_order'
+  ).bind(user.id).all();
+
+  const folderList = allFolders.results;
+  const currentIndex = folderList.findIndex(f => f.id == id);
+
+  if (direction === 'up' && currentIndex > 0) {
+    const prevFolder = folderList[currentIndex - 1];
+    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+      .bind(prevFolder.sort_order || 0, id).run();
+    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+      .bind(currentOrder, prevFolder.id).run();
+  } else if (direction === 'down' && currentIndex < folderList.length - 1) {
+    const nextFolder = folderList[currentIndex + 1];
+    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+      .bind(nextFolder.sort_order || 0, id).run();
+    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+      .bind(currentOrder, nextFolder.id).run();
+  }
+
   return json({ ok: true });
 }
 
@@ -584,7 +640,7 @@ async function handleGetFolders(env, user) {
       FROM folders f
       LEFT JOIN users u ON f.user_id = u.id
       WHERE f.is_public = 1
-      ORDER BY f.name
+      ORDER BY f.sort_order, f.name
     `).all();
     return json(folders.results);
   }
@@ -595,7 +651,7 @@ async function handleGetFolders(env, user) {
     FROM folders f
     LEFT JOIN users u ON f.user_id = u.id
     WHERE f.user_id = ? OR f.is_public = 1 OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
-    ORDER BY f.name
+    ORDER BY f.sort_order, f.name
   `).bind(user.id, user.id, user.id).all();
 
   return json(folders.results);
@@ -644,8 +700,28 @@ async function handleDeleteFolder(env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  await env.DB.prepare('UPDATE pins SET folder_id = NULL WHERE folder_id = ?').bind(id).run();
-  await env.DB.prepare('UPDATE folders SET parent_id = ? WHERE parent_id = ?').bind(folder.parent_id, id).run();
+  // Delete pin images from R2
+  const pinsInFolder = await env.DB.prepare('SELECT id FROM pins WHERE folder_id = ?').bind(id).all();
+  for (const pin of pinsInFolder.results) {
+    const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
+    for (const img of images.results) {
+      await env.R2.delete(img.r2_key);
+    }
+  }
+
+  // Delete pins in this folder
+  await env.DB.prepare('DELETE FROM pins WHERE folder_id = ?').bind(id).run();
+
+  // Delete child folders recursively
+  const childFolders = await env.DB.prepare('SELECT id FROM folders WHERE parent_id = ?').bind(id).all();
+  for (const child of childFolders.results) {
+    await handleDeleteFolder(env, user, child.id);
+  }
+
+  // Delete folder shares
+  await env.DB.prepare('DELETE FROM folder_shares WHERE folder_id = ?').bind(id).run();
+
+  // Delete the folder itself
   await env.DB.prepare('DELETE FROM folders WHERE id = ?').bind(id).run();
 
   return json({ ok: true });
@@ -664,6 +740,42 @@ async function handleShareFolder(request, env, user, id) {
       'INSERT INTO folder_shares (folder_id, shared_with_user_id) VALUES (?, ?)'
     ).bind(id, uid).run();
   }
+  return json({ ok: true });
+}
+
+async function handleMoveFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { direction } = await request.json();
+  const currentOrder = folder.sort_order || 0;
+  const parentId = folder.parent_id;
+
+  // Get sibling folders (same parent)
+  const siblings = await env.DB.prepare(
+    'SELECT id, sort_order FROM folders WHERE user_id = ? AND (parent_id IS ? OR parent_id = ?) ORDER BY sort_order'
+  ).bind(user.id, parentId, parentId).all();
+
+  const folderList = siblings.results;
+  const currentIndex = folderList.findIndex(f => f.id == id);
+
+  if (direction === 'up' && currentIndex > 0) {
+    const prevFolder = folderList[currentIndex - 1];
+    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+      .bind(prevFolder.sort_order || 0, id).run();
+    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+      .bind(currentOrder, prevFolder.id).run();
+  } else if (direction === 'down' && currentIndex < folderList.length - 1) {
+    const nextFolder = folderList[currentIndex + 1];
+    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+      .bind(nextFolder.sort_order || 0, id).run();
+    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+      .bind(currentOrder, nextFolder.id).run();
+  }
+
   return json({ ok: true });
 }
 

@@ -242,13 +242,17 @@ function renderKmlFolderList() {
     html += `<div class="kml-folder-item" data-folder-id="${folder.id}">
       <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
         <i class="fas fa-chevron-right toggle-icon"></i>
-        <i class="fas fa-folder" style="color:#f0ad4e;"></i>
-        <span class="kml-folder-name">${escHtml(folder.name)}</span>
-        ${publicBadge}${sharedBadge}
+        <div class="folder-icon-wrap">
+          <span class="folder-label">${escHtml(folder.name)}</span>
+          <i class="fas fa-folder"></i>
+        </div>
+        <div class="folder-badges">${publicBadge}${sharedBadge}</div>
         <div class="kml-folder-actions" onclick="event.stopPropagation()">
           <button onclick="zoomToKmlFolder(${folder.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
           <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
-          ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
+          ${isOwner ? `<button onclick="moveKmlFolderUp(${folder.id})" title="上へ" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+          <button onclick="moveKmlFolderDown(${folder.id})" title="下へ" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+          <button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
           <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
           <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
           <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
@@ -258,7 +262,7 @@ function renderKmlFolderList() {
         ${files.map(f => `
           <div class="kml-file-item">
             <i class="fas fa-file"></i>
-            <span style="flex:1;">${escHtml(f.original_name)}</span>
+            <span class="kml-file-name" onclick="focusKmlFile(${f.id})">${escHtml(f.original_name)}</span>
             <div class="kml-file-actions">
               <button onclick="zoomToKmlFile(${f.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
               ${isOwner ? `<button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
@@ -334,6 +338,13 @@ function zoomToKmlFile(fileId) {
   }
 }
 
+function focusKmlFile(fileId) {
+  // Close sidebar on mobile
+  if (window.innerWidth <= 600) toggleSidebar();
+  // Zoom to KML
+  zoomToKmlFile(fileId);
+}
+
 async function toggleKmlFolderVisibilityBtn(folderId) {
   const folder = kmlFolders.find(f => f.id === folderId);
   if (!folder) return;
@@ -395,10 +406,44 @@ async function createKmlFolder() {
 }
 
 async function deleteKmlFolder(folderId) {
-  if (!confirm('このKMLフォルダを削除しますか？\n中のKMLファイルも削除されます。')) return;
+  const folder = kmlFolders.find(f => f.id === folderId);
+  if (!folder) return;
+  const files = kmlFiles.filter(f => f.folder_id === folderId);
+  const hasShares = folder.shared_with;
+
+  let msg = 'このKMLフォルダを削除しますか？\n\n';
+  if (files.length > 0) {
+    msg += `⚠️ 内包している ${files.length} 件のKMLファイルも全て削除されます。\n`;
+  }
+  if (hasShares) {
+    msg += '⚠️ 共有中のユーザーからも削除されます。\n';
+  }
+  msg += '\nこの操作は取り消せません。';
+
+  if (!confirm(msg)) return;
   try {
     await api(`/api/kml-folders/${folderId}`, { method: 'DELETE' });
     notify('KMLフォルダを削除しました');
+    loadKmlFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function moveKmlFolderUp(folderId) {
+  try {
+    await api(`/api/kml-folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction: 'up' })
+    });
+    loadKmlFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function moveKmlFolderDown(folderId) {
+  try {
+    await api(`/api/kml-folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction: 'down' })
+    });
     loadKmlFolders();
   } catch (err) { notify(err.message, 'error'); }
 }
@@ -639,9 +684,11 @@ function renderPinFolderList() {
     html += `<div class="pin-folder-section">
       <div class="pin-folder-header" onclick="togglePinFolder('all')">
         <i class="fas fa-chevron-right toggle-icon"></i>
-        <i class="fas fa-folder" style="color:#f0ad4e;"></i>
-        <span class="folder-name">すべて</span>
-        <span style="font-size:11px;color:#999;">(${noFolderPins.length})</span>
+        <div class="folder-icon-wrap">
+          <span class="folder-label">すべて</span>
+          <i class="fas fa-folder"></i>
+        </div>
+        <span class="folder-count">(${noFolderPins.length})</span>
       </div>
       <div class="pin-folder-content" id="pin-folder-all">
         ${noFolderPins.map(p => renderPinItem(p)).join('')}
@@ -649,36 +696,58 @@ function renderPinFolderList() {
     </div>`;
   }
 
-  // User folders
-  for (const folder of folders) {
-    const pinsInFolder = folderPins[folder.id] || [];
-    const isOwner = folder.is_owner;
-    const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
-    const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
-
-    html += `<div class="pin-folder-section">
-      <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
-        <i class="fas fa-chevron-right toggle-icon"></i>
-        <i class="fas fa-folder" style="color:#f0ad4e;"></i>
-        <span class="folder-name">${escHtml(folder.name)}</span>
-        ${publicBadge}${sharedBadge}
-        <span style="font-size:11px;color:#999;">(${pinsInFolder.length})</span>
-        ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
-          <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
-          <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
-          <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
-        </div>` : ''}
-      </div>
-      <div class="pin-folder-content" id="pin-folder-${folder.id}">
-        ${pinsInFolder.length > 0 ? pinsInFolder.map(p => renderPinItem(p)).join('') :
-          '<p style="font-size:12px;color:#999;padding:4px;">ピンがありません</p>'}
-      </div>
-    </div>`;
+  // Render folders hierarchically - only top-level folders
+  const topFolders = folders.filter(f => !f.parent_id);
+  for (const folder of topFolders) {
+    html += renderFolderNode(folder, folderPins, 0);
   }
 
   if (html === '') {
     return '<p style="font-size:13px;color:#999;">フォルダがありません</p>';
   }
+  return html;
+}
+
+function renderFolderNode(folder, folderPins, depth) {
+  const pinsInFolder = folderPins[folder.id] || [];
+  const childFolders = folders.filter(f => f.parent_id === folder.id);
+  const isOwner = folder.is_owner;
+  const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
+  const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
+  const totalCount = pinsInFolder.length + childFolders.length;
+
+  let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;">
+    <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
+      <i class="fas fa-chevron-right toggle-icon"></i>
+      <div class="folder-icon-wrap">
+        <span class="folder-label">${escHtml(folder.name)}</span>
+        <i class="fas fa-folder"></i>
+      </div>
+      <div class="folder-badges">${publicBadge}${sharedBadge}</div>
+      <span class="folder-count">(${totalCount})</span>
+      ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
+        <button onclick="moveFolderUp(${folder.id})" title="上へ"><i class="fas fa-arrow-up"></i></button>
+        <button onclick="moveFolderDown(${folder.id})" title="下へ"><i class="fas fa-arrow-down"></i></button>
+        <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
+        <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
+        <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
+      </div>` : ''}
+    </div>
+    <div class="pin-folder-content" id="pin-folder-${folder.id}">`;
+
+  // Render child folders first
+  for (const child of childFolders) {
+    html += renderFolderNode(child, folderPins, 0);
+  }
+
+  // Then render pins
+  if (pinsInFolder.length > 0) {
+    html += pinsInFolder.map(p => renderPinItem(p)).join('');
+  } else if (childFolders.length === 0) {
+    html += '<p style="font-size:12px;color:#999;padding:4px;">ピンがありません</p>';
+  }
+
+  html += '</div></div>';
   return html;
 }
 
@@ -728,12 +797,46 @@ async function createFolder() {
 }
 
 async function deleteFolder(folderId) {
-  if (!confirm('このフォルダを削除しますか？\nフォルダ内のピンは「すべて」に移動します。')) return;
+  const folder = folders.find(f => f.id === folderId);
+  if (!folder) return;
+  const pinsInFolder = pins.filter(p => p.folder_id === folderId);
+  const hasShares = folder.shared_with;
+
+  let msg = 'このフォルダを削除しますか？\n\n';
+  if (pinsInFolder.length > 0) {
+    msg += `⚠️ 内包している ${pinsInFolder.length} 件のピンも全て削除されます。\n`;
+  }
+  if (hasShares) {
+    msg += '⚠️ 共有中のユーザーからも削除されます。\n';
+  }
+  msg += '\nこの操作は取り消せません。';
+
+  if (!confirm(msg)) return;
   try {
     await api('/api/folders/' + folderId, { method: 'DELETE' });
     notify('フォルダを削除しました');
     loadFolders();
     loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function moveFolderUp(folderId) {
+  try {
+    await api(`/api/folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction: 'up' })
+    });
+    loadFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function moveFolderDown(folderId) {
+  try {
+    await api(`/api/folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction: 'down' })
+    });
+    loadFolders();
   } catch (err) { notify(err.message, 'error'); }
 }
 
