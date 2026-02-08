@@ -70,12 +70,22 @@ function notify(msg, type = 'success') {
 }
 
 async function api(url, opts = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    credentials: 'include',
-    ...opts
-  });
-  const data = await res.json();
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...opts.headers },
+      credentials: 'include',
+      ...opts
+    });
+  } catch (err) {
+    throw new Error('ネットワークエラー: サーバーに接続できません');
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('サーバーからの応答を解析できませんでした');
+  }
   if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
   return data;
 }
@@ -351,7 +361,10 @@ function displayKmlFile(file) {
   const key = file.r2_key.replace('kml/', '');
   const layer = omnivore
     .kml(`/api/kml-files/${key}`, null, L.geoJson(null, geoJsonOptions))
-    .on('error', () => console.error('KML load error:', file.original_name))
+    .on('error', () => {
+      console.error('KML load error:', file.original_name);
+      notify(`KML読み込みエラー: ${file.original_name}`, 'error');
+    })
     .addTo(map);
   kmlLayers[file.id] = layer;
 }
@@ -842,7 +855,10 @@ async function loadPins() {
     pins = await api('/api/pins');
     renderPinMarkers();
     renderSidebar();
-  } catch (err) { console.error('Pin load error:', err); }
+  } catch (err) {
+    console.error('Pin load error:', err);
+    notify('ピンの読み込みに失敗しました', 'error');
+  }
 }
 
 function renderPinMarkers() {
@@ -1118,7 +1134,10 @@ async function loadKmlFolders() {
     kmlFiles = await api('/api/kml-files');
     updateKmlLayers();
     renderSidebar();
-  } catch (err) { console.error('KML folder load error:', err); }
+  } catch (err) {
+    console.error('KML folder load error:', err);
+    notify('KMLフォルダの読み込みに失敗しました', 'error');
+  }
 }
 
 async function loadFolders() {
@@ -1126,7 +1145,10 @@ async function loadFolders() {
   try {
     folders = await api('/api/folders');
     renderSidebar();
-  } catch (err) { console.error('Folder load error:', err); }
+  } catch (err) {
+    console.error('Folder load error:', err);
+    notify('フォルダの読み込みに失敗しました', 'error');
+  }
 }
 
 async function loadAll() {
