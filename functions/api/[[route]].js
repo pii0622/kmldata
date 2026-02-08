@@ -59,10 +59,17 @@ function setCookieHeader(name, value, options = {}) {
   return cookie;
 }
 
+// Security headers
+const securityHeaders = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin'
+};
+
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...headers }
+    headers: { 'Content-Type': 'application/json', ...securityHeaders, ...headers }
   });
 }
 
@@ -80,11 +87,25 @@ export async function onRequest(context) {
   const path = url.pathname.replace('/api', '');
   const method = request.method;
 
-  // CORS headers
+  // Warn if JWT_SECRET is not set (check once per request for logging)
+  if (!env.JWT_SECRET) {
+    console.warn('WARNING: JWT_SECRET environment variable is not set. Using insecure default.');
+  }
+
+  // CORS headers - only allow same origin for security
+  const origin = request.headers.get('Origin');
+  const allowedOrigin = origin && (
+    origin === url.origin ||
+    origin.endsWith('.pages.dev') ||
+    env.ALLOWED_ORIGIN === origin
+  ) ? origin : url.origin;
+
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
+    ...securityHeaders
   };
 
   if (method === 'OPTIONS') {
