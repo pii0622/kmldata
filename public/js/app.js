@@ -641,13 +641,14 @@ function renderPinFolderList() {
     const pinsInFolder = folderPins[folder.id] || [];
     const isOwner = folder.is_owner;
     const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
+    const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
 
     html += `<div class="pin-folder-section">
       <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
         <i class="fas fa-chevron-right toggle-icon"></i>
         <i class="fas fa-folder" style="color:#f0ad4e;"></i>
         <span class="folder-name">${escHtml(folder.name)}</span>
-        ${sharedBadge}
+        ${publicBadge}${sharedBadge}
         <span style="font-size:11px;color:#999;">(${pinsInFolder.length})</span>
         ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
           <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
@@ -728,6 +729,8 @@ function showRenameFolderModal(folderId) {
   if (!folder) return;
   document.getElementById('rename-folder-id').value = folderId;
   document.getElementById('rename-folder-name').value = folder.name;
+  document.getElementById('rename-folder-public').checked = !!folder.is_public;
+  document.getElementById('rename-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
   openModal('modal-rename-folder');
 }
 
@@ -739,10 +742,13 @@ async function renameFolder() {
   try {
     await api(`/api/folders/${folderId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({
+        name,
+        is_public: document.getElementById('rename-folder-public').checked
+      })
     });
     closeModal('modal-rename-folder');
-    notify('フォルダ名を変更しました');
+    notify('フォルダ設定を変更しました');
     loadFolders();
   } catch (err) { notify(err.message, 'error'); }
 }

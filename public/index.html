@@ -205,11 +205,16 @@
 <!-- Rename pin folder modal -->
 <div class="modal-overlay" id="modal-rename-folder">
   <div class="modal">
-    <h3><i class="fas fa-edit"></i> ピンフォルダ名を変更</h3>
+    <h3><i class="fas fa-edit"></i> ピンフォルダ設定</h3>
     <input type="hidden" id="rename-folder-id">
     <div class="form-group">
       <label>フォルダ名 *</label>
       <input type="text" id="rename-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="rename-folder-public"> 全ユーザーに公開する（管理者のみ）
+      </label>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-rename-folder')">キャンセル</button>

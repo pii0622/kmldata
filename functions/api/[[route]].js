@@ -556,14 +556,24 @@ async function handleDeleteKmlFile(env, user, id) {
 
 // ==================== Pin Folders Handlers ====================
 async function handleGetFolders(env, user) {
-  if (!user) return json([]);
+  if (!user) {
+    // Non-logged in users can see public folders
+    const folders = await env.DB.prepare(`
+      SELECT f.*, u.display_name as owner_name, 0 as is_owner
+      FROM folders f
+      LEFT JOIN users u ON f.user_id = u.id
+      WHERE f.is_public = 1
+      ORDER BY f.name
+    `).all();
+    return json(folders.results);
+  }
 
   const folders = await env.DB.prepare(`
     SELECT f.*, u.display_name as owner_name,
       CASE WHEN f.user_id = ? THEN 1 ELSE 0 END as is_owner
     FROM folders f
     LEFT JOIN users u ON f.user_id = u.id
-    WHERE f.user_id = ? OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+    WHERE f.user_id = ? OR f.is_public = 1 OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
     ORDER BY f.name
   `).bind(user.id, user.id, user.id).all();
 
@@ -571,7 +581,7 @@ async function handleGetFolders(env, user) {
 }
 
 async function handleCreateFolder(request, env, user) {
-  const { name, parent_id } = await request.json();
+  const { name, parent_id, is_public } = await request.json();
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   if (parent_id) {
@@ -580,11 +590,12 @@ async function handleCreateFolder(request, env, user) {
     if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
   }
 
+  const publicFlag = user.is_admin && is_public ? 1 : 0;
   const result = await env.DB.prepare(
-    'INSERT INTO folders (name, parent_id, user_id) VALUES (?, ?, ?)'
-  ).bind(name, parent_id || null, user.id).run();
+    'INSERT INTO folders (name, parent_id, user_id, is_public) VALUES (?, ?, ?, ?)'
+  ).bind(name, parent_id || null, user.id, publicFlag).run();
 
-  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id });
+  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, is_public: publicFlag });
 }
 
 async function handleRenameFolder(request, env, user, id) {
@@ -594,11 +605,15 @@ async function handleRenameFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name } = await request.json();
+  const { name, is_public } = await request.json();
   if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
 
-  await env.DB.prepare('UPDATE folders SET name = ? WHERE id = ?').bind(name.trim(), id).run();
-  return json({ ok: true, name: name.trim() });
+  // Only admin can change is_public
+  const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : (folder.is_public || 0);
+
+  await env.DB.prepare('UPDATE folders SET name = ?, is_public = ? WHERE id = ?')
+    .bind(name.trim(), publicFlag, id).run();
+  return json({ ok: true, name: name.trim(), is_public: publicFlag });
 }
 
 async function handleDeleteFolder(env, user, id) {
