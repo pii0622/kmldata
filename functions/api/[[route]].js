@@ -368,7 +368,7 @@ async function handleChangePassword(request, env, user) {
 // ==================== Users Handlers ====================
 async function handleGetUsers(env, user) {
   const users = await env.DB.prepare(
-    'SELECT id, username, display_name FROM users WHERE id != ? ORDER BY display_name'
+    'SELECT id, username, display_name, is_admin FROM users WHERE id != ? ORDER BY display_name'
   ).bind(user.id).all();
   return json(users.results);
 }
@@ -419,11 +419,15 @@ async function handleRenameKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name } = await request.json();
+  const { name, is_public } = await request.json();
   if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
 
-  await env.DB.prepare('UPDATE kml_folders SET name = ? WHERE id = ?').bind(name.trim(), id).run();
-  return json({ ok: true, name: name.trim() });
+  // Only admin can change is_public
+  const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : folder.is_public;
+
+  await env.DB.prepare('UPDATE kml_folders SET name = ?, is_public = ? WHERE id = ?')
+    .bind(name.trim(), publicFlag, id).run();
+  return json({ ok: true, name: name.trim(), is_public: publicFlag });
 }
 
 async function handleDeleteKmlFolder(env, user, id) {

@@ -395,6 +395,8 @@ function showRenameKmlFolderModal(folderId) {
   if (!folder) return;
   document.getElementById('rename-kml-folder-id').value = folderId;
   document.getElementById('rename-kml-folder-name').value = folder.name;
+  document.getElementById('rename-kml-folder-public').checked = !!folder.is_public;
+  document.getElementById('rename-kml-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
   openModal('modal-rename-kml-folder');
 }
 
@@ -406,10 +408,13 @@ async function renameKmlFolder() {
   try {
     await api(`/api/kml-folders/${folderId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({
+        name,
+        is_public: document.getElementById('rename-kml-folder-public').checked
+      })
     });
     closeModal('modal-rename-kml-folder');
-    notify('フォルダ名を変更しました');
+    notify('フォルダ設定を変更しました');
     loadKmlFolders();
   } catch (err) { notify(err.message, 'error'); }
 }
@@ -483,11 +488,14 @@ function renderShareKmlUserList(query) {
 
   let html = '';
   for (const user of allUsers) {
+    // Skip admins
+    if (user.is_admin) continue;
+
     const isChecked = checkedIds.has(user.id);
     const displayName = user.display_name || user.username;
-    const matchesSearch = !query || displayName.toLowerCase().includes(query);
+    const matchesSearch = query && displayName.toLowerCase().includes(query);
 
-    // Always show checked users or those matching search
+    // Show checked users OR users matching search (search required for non-checked)
     if (isChecked || matchesSearch) {
       const checked = isChecked ? 'checked' : '';
       html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this, event)">
@@ -496,7 +504,7 @@ function renderShareKmlUserList(query) {
       </div>`;
     }
   }
-  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
+  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">ユーザー名を入力して検索してください</p>';
 }
 
 function toggleUserSelect(el, event) {
@@ -770,11 +778,14 @@ function renderShareFolderUserList(query) {
 
   let html = '';
   for (const user of allUsers) {
+    // Skip admins
+    if (user.is_admin) continue;
+
     const isChecked = checkedIds.has(user.id);
     const displayName = user.display_name || user.username;
-    const matchesSearch = !query || displayName.toLowerCase().includes(query);
+    const matchesSearch = query && displayName.toLowerCase().includes(query);
 
-    // Always show checked users or those matching search
+    // Show checked users OR users matching search (search required for non-checked)
     if (isChecked || matchesSearch) {
       const checked = isChecked ? 'checked' : '';
       html += `<div class="user-select-item ${checked ? 'selected' : ''}" onclick="toggleUserSelect(this, event)">
@@ -783,7 +794,7 @@ function renderShareFolderUserList(query) {
       </div>`;
     }
   }
-  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">共有可能なユーザーがいません</p>';
+  listEl.innerHTML = html || '<p style="padding:8px;color:#999;">ユーザー名を入力して検索してください</p>';
 }
 
 async function shareFolder() {
