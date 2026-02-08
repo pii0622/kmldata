@@ -16,4 +16,4 @@ bucket_name = "kmldata-files"
 
 # Environment variables
 [vars]
-JWT_SECRET = "change-this-secret-in-production"
+
