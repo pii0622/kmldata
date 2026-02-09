@@ -1537,7 +1537,7 @@ async function handleCreatePin(request, env, user) {
     images.push({ id: imgResult.meta.last_row_id, r2_key: r2Key, original_name: file.name });
   }
 
-  return json({ id: pinId, title, description, lat, lng, folder_id, user_id: user.id, is_public: publicFlag, images });
+  return json({ id: pinId, title, description, lat, lng, folder_id, user_id: user.id, images });
 }
 
 async function handleUpdatePin(request, env, user, id) {
