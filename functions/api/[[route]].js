@@ -121,24 +121,42 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   }
 }
 
-// Email sending via MailChannels
+// Email sending via MailChannels (requires DNS setup)
+// Required DNS records for map.taishi-lab.com:
+// 1. TXT _mailchannels.map.taishi-lab.com "v=mc1 cfid=your-account.workers.dev"
+// 2. TXT map.taishi-lab.com "v=spf1 include:relay.mailchannels.net ~all"
 const EMAIL_FROM = 'hello@map.taishi-lab.com';
 const EMAIL_FROM_NAME = '地図アプリ';
+const EMAIL_DOMAIN = 'map.taishi-lab.com';
 
 async function sendEmail(to, subject, htmlBody, textBody) {
   try {
+    const emailData = {
+      personalizations: [{
+        to: [{ email: to }],
+        dkim_domain: EMAIL_DOMAIN,
+        dkim_selector: 'mailchannels',
+        dkim_private_key: '' // Optional: Add DKIM private key if configured
+      }],
+      from: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
+      subject: subject,
+      content: [
+        { type: 'text/plain', value: textBody },
+        { type: 'text/html', value: htmlBody }
+      ]
+    };
+
+    // Remove DKIM fields if not configured
+    if (!emailData.personalizations[0].dkim_private_key) {
+      delete emailData.personalizations[0].dkim_domain;
+      delete emailData.personalizations[0].dkim_selector;
+      delete emailData.personalizations[0].dkim_private_key;
+    }
+
     const response = await fetch('https://api.mailchannels.net/tx/v1/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: to }] }],
-        from: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
-        subject: subject,
-        content: [
-          { type: 'text/plain', value: textBody },
-          { type: 'text/html', value: htmlBody }
-        ]
-      })
+      body: JSON.stringify(emailData)
     });
 
     if (!response.ok) {
@@ -146,6 +164,7 @@ async function sendEmail(to, subject, htmlBody, textBody) {
       console.error('Email send failed:', response.status, errText);
       return false;
     }
+    console.log('Email sent successfully to:', to);
     return true;
   } catch (err) {
     console.error('Email send error:', err);
@@ -823,15 +842,8 @@ async function handleRejectUser(env, id) {
   if (!user) return json({ error: 'ユーザーが見つかりません' }, 404);
   if (user.status !== 'pending') return json({ error: 'このユーザーは既に処理済みです' }, 400);
 
-  await env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind('rejected', id).run();
-
-  // Mark related notifications as read
-  await env.DB.prepare(`
-    UPDATE admin_notifications SET is_read = 1
-    WHERE type = 'user_pending' AND data LIKE ?
-  `).bind(`%"user_id":${id}%`).run();
-
-  // Send rejection email
+  // Send rejection email first (before deleting user)
+  let emailSent = false;
   if (user.email) {
     const subject = 'アカウント申請について - 地図アプリ';
     const htmlBody = `
@@ -843,10 +855,20 @@ async function handleRejectUser(env, id) {
       <p>地図アプリ</p>
     `;
     const textBody = `${user.display_name || user.username} 様\n\n申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。\nご不明な点がございましたら、管理者までお問い合わせください。\n\n地図アプリ`;
-    await sendEmail(user.email, subject, htmlBody, textBody);
+    emailSent = await sendEmail(user.email, subject, htmlBody, textBody);
   }
 
-  return json({ ok: true, message: `${user.display_name}を拒否しました` });
+  // Delete related notifications
+  await env.DB.prepare(`
+    DELETE FROM admin_notifications
+    WHERE type = 'user_pending' AND data LIKE ?
+  `).bind(`%"user_id":${id}%`).run();
+
+  // Delete user from database
+  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+
+  const emailStatus = emailSent ? '（メール送信済み）' : '（メール送信失敗）';
+  return json({ ok: true, message: `${user.display_name}を削除しました${emailStatus}` });
 }
 
 async function handleGetAdminNotifications(env) {
