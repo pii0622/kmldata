@@ -971,6 +971,52 @@ async function rejectUser(userId) {
   }
 }
 
+function switchAdminTab(tab) {
+  document.querySelectorAll('#modal-admin .tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`#modal-admin .tab:nth-child(${tab === 'users' ? 1 : 2})`).classList.add('active');
+  document.getElementById('admin-tab-users').style.display = tab === 'users' ? '' : 'none';
+  document.getElementById('admin-tab-security').style.display = tab === 'security' ? '' : 'none';
+  if (tab === 'security') loadSecurityLogs();
+}
+
+async function loadSecurityLogs() {
+  const listEl = document.getElementById('admin-security-logs');
+  const filter = document.getElementById('security-log-filter').value;
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+
+  try {
+    const url = filter ? `/api/admin/security-logs?type=${filter}` : '/api/admin/security-logs';
+    const logs = await api(url);
+    if (logs.length === 0) {
+      listEl.innerHTML = '<p style="color:#999;">ログがありません</p>';
+    } else {
+      listEl.innerHTML = logs.map(log => {
+        const date = new Date(log.created_at).toLocaleString('ja-JP');
+        const eventLabels = {
+          'login_success': '<span style="color:#28a745;">ログイン成功</span>',
+          'login_failed': '<span style="color:#dc3545;">ログイン失敗</span>',
+          'rate_limit_exceeded': '<span style="color:#fd7e14;">レート制限</span>',
+          'register_duplicate_username': '<span style="color:#6c757d;">重複ユーザー名</span>'
+        };
+        const details = log.details ? JSON.parse(log.details) : {};
+        return `<div class="security-log-item">
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            ${eventLabels[log.event_type] || log.event_type}
+            <span style="color:#999;">${date}</span>
+          </div>
+          <div style="color:#666;">
+            IP: ${log.ip_address || 'N/A'}
+            ${details.username ? ` | User: ${escHtml(details.username)}` : ''}
+            ${details.reason ? ` | Reason: ${details.reason}` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch (err) {
+    listEl.innerHTML = `<p style="color:#dc3545;">読み込みエラー: ${err.message}</p>`;
+  }
+}
+
 // ==================== Pin Folder Management ====================
 function renderPinFolderList() {
   // Group pins by folder

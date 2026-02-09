@@ -359,6 +359,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
   display: flex; gap: 6px; flex-shrink: 0;
 }
 
+/* Admin tabs */
+.admin-tabs {
+  display: flex; border-bottom: 1px solid #ddd; margin-bottom: 16px;
+}
+.admin-tabs .tab {
+  padding: 10px 20px; cursor: pointer; border: none; background: none;
+  font-size: 14px; color: #666; border-bottom: 2px solid transparent;
+}
+.admin-tabs .tab.active {
+  color: #2196f3; border-bottom-color: #2196f3;
+}
+.admin-tabs .tab:hover { color: #1976d2; }
+
+/* Security logs */
+.security-log-filter {
+  margin-bottom: 12px;
+}
+.security-log-filter select {
+  padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;
+  font-size: 14px;
+}
+.security-log-list {
+  max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;
+}
+.security-log-item {
+  padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 13px;
+}
+.security-log-item:last-child { border-bottom: none; }
+.security-log-item:hover { background: #f9f9f9; }
+
 /* Responsive */
 @media (max-width: 600px) {
   .sidebar { width: 100%; }

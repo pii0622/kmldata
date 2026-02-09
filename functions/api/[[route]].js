@@ -63,14 +63,68 @@ function setCookieHeader(name, value, options = {}) {
 const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'strict-origin-when-cross-origin'
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-XSS-Protection': '1; mode=block',
+  'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()'
 };
+
+// Content Security Policy for HTML responses
+const cspHeader = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' https://cyberjapandata.gsi.go.jp data: blob:; connect-src 'self' https://cyberjapandata.gsi.go.jp; font-src 'self' https://cdnjs.cloudflare.com;";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json', ...securityHeaders, ...headers }
   });
+}
+
+// Rate limiting configuration
+const RATE_LIMITS = {
+  login: { maxRequests: 5, windowSeconds: 300 },      // 5 attempts per 5 minutes
+  register: { maxRequests: 3, windowSeconds: 3600 },  // 3 attempts per hour
+  default: { maxRequests: 100, windowSeconds: 60 }    // 100 requests per minute
+};
+
+async function checkRateLimit(env, ip, endpoint) {
+  const config = RATE_LIMITS[endpoint] || RATE_LIMITS.default;
+  const key = `${ip}:${endpoint}`;
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - config.windowSeconds * 1000).toISOString();
+
+  // Clean up old entries and get current count
+  await env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(windowStart).run();
+
+  const existing = await env.DB.prepare('SELECT * FROM rate_limits WHERE key = ?').bind(key).first();
+
+  if (existing) {
+    if (existing.count >= config.maxRequests) {
+      return { allowed: false, retryAfter: config.windowSeconds };
+    }
+    await env.DB.prepare('UPDATE rate_limits SET count = count + 1 WHERE key = ?').bind(key).run();
+  } else {
+    await env.DB.prepare('INSERT INTO rate_limits (key, count, window_start) VALUES (?, 1, ?)').bind(key, now.toISOString()).run();
+  }
+
+  return { allowed: true };
+}
+
+async function logSecurityEvent(env, eventType, userId, request, details = {}) {
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const userAgent = request.headers.get('User-Agent') || 'unknown';
+
+  try {
+    await env.DB.prepare(
+      'INSERT INTO security_logs (event_type, user_id, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?)'
+    ).bind(eventType, userId, ip, userAgent, JSON.stringify(details)).run();
+  } catch (err) {
+    console.error('Failed to log security event:', err);
+  }
+}
+
+function getClientIP(request) {
+  return request.headers.get('CF-Connecting-IP') ||
+         request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+         'unknown';
 }
 
 // Allowed image types and max size
@@ -143,12 +197,28 @@ export async function onRequest(context) {
 
   try {
     // Route matching
-    // Auth routes
+    // Auth routes with rate limiting
     if (path === '/auth/register' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'register');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'register' });
+        return json({ error: '登録の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleRegister(request, env);
     }
     if (path === '/auth/login' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'login');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'login' });
+        return json({ error: 'ログインの試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleLogin(request, env);
+    }
+    if (path === '/auth/refresh' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleTokenRefresh(env, user);
     }
     if (path === '/auth/logout' && method === 'POST') {
       return handleLogout();
@@ -189,6 +259,10 @@ export async function onRequest(context) {
     if (path === '/admin/notifications' && method === 'GET') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
       return await handleGetAdminNotifications(env);
+    }
+    if (path === '/admin/security-logs' && method === 'GET') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      return await handleGetSecurityLogs(env, url);
     }
     if (path.match(/^\/admin\/notifications\/(\d+)\/read$/) && method === 'POST') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
@@ -345,6 +419,27 @@ export async function onRequest(context) {
 }
 
 // ==================== Auth Handlers ====================
+async function handleTokenRefresh(env, user) {
+  // Get fresh user data from DB
+  const dbUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+  if (!dbUser || dbUser.status !== 'approved') {
+    return json({ error: 'ユーザーが見つかりません' }, 404);
+  }
+
+  const token = await createToken({
+    id: dbUser.id,
+    username: dbUser.username,
+    display_name: dbUser.display_name || dbUser.username,
+    is_admin: !!dbUser.is_admin
+  }, env.JWT_SECRET || 'default-secret');
+
+  return json(
+    { ok: true },
+    200,
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+  );
+}
+
 async function handleRegister(request, env) {
   const { username, password, display_name } = await request.json();
   if (!username || !password) {
@@ -359,6 +454,7 @@ async function handleRegister(request, env) {
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) {
+    await logSecurityEvent(env, 'register_duplicate_username', null, request, { username });
     return json({ error: 'そのユーザー名は既に使われています' }, 400);
   }
 
@@ -397,16 +493,21 @@ async function handleLogin(request, env) {
 
   const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
   if (!user || !(await verifyPassword(password, user.password_hash))) {
+    await logSecurityEvent(env, 'login_failed', null, request, { username, reason: 'invalid_credentials' });
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
   }
 
   // Check user approval status
   if (user.status === 'pending') {
+    await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'pending_approval' });
     return json({ error: 'アカウントは承認待ちです。管理者の承認をお待ちください。' }, 403);
   }
   if (user.status === 'rejected') {
+    await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'rejected' });
     return json({ error: 'アカウントは承認されませんでした。' }, 403);
   }
+
+  await logSecurityEvent(env, 'login_success', user.id, request, {});
 
   const token = await createToken({
     id: user.id, username: user.username,
@@ -539,6 +640,25 @@ async function handleGetAdminNotifications(env) {
 async function handleMarkNotificationRead(env, id) {
   await env.DB.prepare('UPDATE admin_notifications SET is_read = 1 WHERE id = ?').bind(id).run();
   return json({ ok: true });
+}
+
+async function handleGetSecurityLogs(env, url) {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500);
+  const eventType = url.searchParams.get('type');
+
+  let query = 'SELECT * FROM security_logs';
+  const bindings = [];
+
+  if (eventType) {
+    query += ' WHERE event_type = ?';
+    bindings.push(eventType);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(limit);
+
+  const logs = await env.DB.prepare(query).bind(...bindings).all();
+  return json(logs.results);
 }
 
 // ==================== KML Folders Handlers ====================
