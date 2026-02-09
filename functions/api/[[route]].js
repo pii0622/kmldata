@@ -1117,7 +1117,7 @@ async function handleGetKmlFiles(env, user, url) {
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
         WHERE kf.folder_id = ? AND (kf.user_id = ? OR f.is_public = 1 OR
           kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
-        ORDER BY kf.sort_order, kf.original_name`;
+        ORDER BY kf.original_name`;
       bindings = [folderId, user.id, user.id];
     } else {
       // All KML files user can access (own files, public folder files, shared folder files)
@@ -1128,7 +1128,7 @@ async function handleGetKmlFiles(env, user, url) {
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
         WHERE kf.user_id = ? OR f.is_public = 1 OR
           kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
-        ORDER BY kf.sort_order, kf.original_name`;
+        ORDER BY kf.original_name`;
       bindings = [user.id, user.id];
     }
   } else {
@@ -1137,7 +1137,7 @@ async function handleGetKmlFiles(env, user, url) {
       FROM kml_files kf
       LEFT JOIN users u ON kf.user_id = u.id
       INNER JOIN kml_folders f ON kf.folder_id = f.id AND f.is_public = 1
-      ORDER BY kf.sort_order, kf.original_name`;
+      ORDER BY kf.original_name`;
   }
 
   const stmt = env.DB.prepare(query);
