@@ -582,17 +582,32 @@ async function handleReorderKmlFolder(request, env, user, id) {
   }
 
   const { target_id } = await request.json();
-  const target = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(target_id).first();
-  if (!target) return json({ error: '移動先が見つかりません' }, 404);
 
-  // Swap sort_order values
-  const sourceOrder = folder.sort_order || 0;
-  const targetOrder = target.sort_order || 0;
+  // Get all folders at the same level owned by the user
+  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
+  const siblings = await env.DB.prepare(`
+    SELECT id, sort_order FROM kml_folders
+    WHERE user_id = ? AND ${parentCondition}
+    ORDER BY sort_order, id
+  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
 
-  await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-    .bind(targetOrder, id).run();
-  await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
-    .bind(sourceOrder, target_id).run();
+  const folderIds = siblings.results.map(f => f.id);
+  const sourceIdx = folderIds.indexOf(parseInt(id));
+  const targetIdx = folderIds.indexOf(parseInt(target_id));
+
+  if (sourceIdx === -1 || targetIdx === -1) {
+    return json({ error: 'フォルダが見つかりません' }, 404);
+  }
+
+  // Move source to target position
+  folderIds.splice(sourceIdx, 1);
+  folderIds.splice(targetIdx, 0, parseInt(id));
+
+  // Update all sort_order values sequentially
+  for (let i = 0; i < folderIds.length; i++) {
+    await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
+      .bind(i, folderIds[i]).run();
+  }
 
   return json({ ok: true });
 }
@@ -889,17 +904,32 @@ async function handleReorderFolder(request, env, user, id) {
   }
 
   const { target_id } = await request.json();
-  const target = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(target_id).first();
-  if (!target) return json({ error: '移動先が見つかりません' }, 404);
 
-  // Swap sort_order values
-  const sourceOrder = folder.sort_order || 0;
-  const targetOrder = target.sort_order || 0;
+  // Get all folders at the same level owned by the user
+  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
+  const siblings = await env.DB.prepare(`
+    SELECT id, sort_order FROM folders
+    WHERE user_id = ? AND ${parentCondition}
+    ORDER BY sort_order, id
+  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
 
-  await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-    .bind(targetOrder, id).run();
-  await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
-    .bind(sourceOrder, target_id).run();
+  const folderIds = siblings.results.map(f => f.id);
+  const sourceIdx = folderIds.indexOf(parseInt(id));
+  const targetIdx = folderIds.indexOf(parseInt(target_id));
+
+  if (sourceIdx === -1 || targetIdx === -1) {
+    return json({ error: 'フォルダが見つかりません' }, 404);
+  }
+
+  // Move source to target position
+  folderIds.splice(sourceIdx, 1);
+  folderIds.splice(targetIdx, 0, parseInt(id));
+
+  // Update all sort_order values sequentially
+  for (let i = 0; i < folderIds.length; i++) {
+    await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
+      .bind(i, folderIds[i]).run();
+  }
 
   return json({ ok: true });
 }
