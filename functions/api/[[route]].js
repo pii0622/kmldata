@@ -200,6 +200,11 @@ export async function onRequest(context) {
       const id = path.match(/^\/kml-files\/(\d+)$/)[1];
       return await handleDeleteKmlFile(env, user, id);
     }
+    if (path.match(/^\/kml-files\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/kml-files\/(\d+)\/move$/)[1];
+      return await handleMoveKmlFile(request, env, user, id);
+    }
 
     // Pin Folders
     if (path === '/folders' && method === 'GET') {
@@ -229,6 +234,11 @@ export async function onRequest(context) {
       const id = path.match(/^\/folders\/(\d+)\/reorder$/)[1];
       return await handleReorderFolder(request, env, user, id);
     }
+    if (path.match(/^\/folders\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/folders\/(\d+)\/move$/)[1];
+      return await handleMoveFolder(request, env, user, id);
+    }
 
     // Pins
     if (path === '/pins' && method === 'GET') {
@@ -257,6 +267,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const match = path.match(/^\/pins\/(\d+)\/images\/(\d+)$/);
       return await handleDeletePinImage(env, user, match[1], match[2]);
+    }
+    if (path.match(/^\/pins\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/pins\/(\d+)\/move$/)[1];
+      return await handleMovePin(request, env, user, id);
     }
 
     // Images
@@ -619,6 +634,29 @@ async function handleDeleteKmlFile(env, user, id) {
   return json({ ok: true });
 }
 
+async function handleMoveKmlFile(request, env, user, id) {
+  const file = await env.DB.prepare('SELECT * FROM kml_files WHERE id = ?').bind(id).first();
+  if (!file) return json({ error: 'ファイルが見つかりません' }, 404);
+  if (file.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { folder_id } = await request.json();
+
+  // Check if target folder exists and user has access
+  if (folder_id) {
+    const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(folder_id).first();
+    if (!folder) return json({ error: '移動先フォルダが見つかりません' }, 404);
+    if (folder.user_id !== user.id && !user.is_admin) {
+      return json({ error: '移動先フォルダの権限がありません' }, 403);
+    }
+  }
+
+  await env.DB.prepare('UPDATE kml_files SET folder_id = ? WHERE id = ?')
+    .bind(folder_id || null, id).run();
+  return json({ ok: true });
+}
+
 // ==================== Pin Folders Handlers ====================
 async function handleGetFolders(env, user) {
   if (!user) {
@@ -751,6 +789,43 @@ async function handleReorderFolder(request, env, user, id) {
   await env.DB.prepare('UPDATE folders SET sort_order = ? WHERE id = ?')
     .bind(sourceOrder, target_id).run();
 
+  return json({ ok: true });
+}
+
+async function handleMoveFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { parent_id } = await request.json();
+
+  // Cannot move folder to itself
+  if (parent_id && parseInt(parent_id) === parseInt(id)) {
+    return json({ error: '自分自身には移動できません' }, 400);
+  }
+
+  // Check if target parent exists and belongs to user
+  if (parent_id) {
+    const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(parent_id).first();
+    if (!parent) return json({ error: '移動先フォルダが見つかりません' }, 404);
+    if (parent.user_id !== user.id && !user.is_admin) {
+      return json({ error: '移動先フォルダの権限がありません' }, 403);
+    }
+
+    // Check for circular reference (cannot move to child folder)
+    let current = parent;
+    while (current && current.parent_id) {
+      if (parseInt(current.parent_id) === parseInt(id)) {
+        return json({ error: '子フォルダには移動できません' }, 400);
+      }
+      current = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(current.parent_id).first();
+    }
+  }
+
+  await env.DB.prepare('UPDATE folders SET parent_id = ? WHERE id = ?')
+    .bind(parent_id || null, id).run();
   return json({ ok: true });
 }
 
@@ -912,6 +987,29 @@ async function handleDeletePinImage(env, user, pinId, imageId) {
 
   await env.R2.delete(img.r2_key);
   await env.DB.prepare('DELETE FROM pin_images WHERE id = ?').bind(imageId).run();
+  return json({ ok: true });
+}
+
+async function handleMovePin(request, env, user, id) {
+  const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(id).first();
+  if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
+  if (pin.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { folder_id } = await request.json();
+
+  // Check if target folder exists and user has access
+  if (folder_id) {
+    const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(folder_id).first();
+    if (!folder) return json({ error: '移動先フォルダが見つかりません' }, 404);
+    if (folder.user_id !== user.id && !user.is_admin) {
+      return json({ error: '移動先フォルダの権限がありません' }, 403);
+    }
+  }
+
+  await env.DB.prepare('UPDATE pins SET folder_id = ? WHERE id = ?')
+    .bind(folder_id || null, id).run();
   return json({ ok: true });
 }
 

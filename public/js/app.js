@@ -242,6 +242,9 @@ function renderKmlFolderList() {
     html += `<div class="kml-folder-item" data-folder-id="${folder.id}" draggable="${isOwner}"
       ondragstart="onDragStart(event, 'kml', ${folder.id})"
       ondragover="onDragOver(event)"
+      ondragenter="onDragEnter(event)"
+      ondragleave="onDragLeave(event)"
+      ondragend="onDragEnd(event)"
       ondrop="onDrop(event, 'kml', ${folder.id})">
       <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge}</div>
       <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
@@ -258,12 +261,13 @@ function renderKmlFolderList() {
       </div>
       <div class="kml-folder-files" id="kml-folder-files-${folder.id}">
         ${files.map(f => `
-          <div class="kml-file-item">
+          <div class="kml-file-item" data-file-id="${f.id}">
             <i class="fas fa-file"></i>
             <span class="kml-file-name" onclick="focusKmlFile(${f.id})">${escHtml(f.original_name)}</span>
             <div class="kml-file-actions">
               <button onclick="zoomToKmlFile(${f.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
-              ${isOwner ? `<button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+              ${isOwner ? `<button onclick="showMoveKmlFileModal(${f.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
+              <button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
             </div>
           </div>
         `).join('')}
@@ -427,48 +431,84 @@ async function deleteKmlFolder(folderId) {
 }
 
 // Drag and drop for folder reordering
-let draggedFolderId = null;
-let draggedFolderType = null;
+let draggedItemId = null;
+let draggedItemType = null; // 'kml-folder', 'pin-folder', 'kml-file', 'pin'
 
-function onDragStart(e, type, folderId) {
-  draggedFolderId = folderId;
-  draggedFolderType = type;
+function onDragStart(e, type, itemId) {
+  draggedItemId = itemId;
+  draggedItemType = type;
   e.dataTransfer.effectAllowed = 'move';
-  e.target.classList.add('dragging');
+  e.dataTransfer.setData('text/plain', `${type}:${itemId}`);
+  setTimeout(() => e.target.classList.add('dragging'), 0);
 }
 
 function onDragOver(e) {
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
+  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
+  if (target && !target.classList.contains('dragging')) {
+    target.classList.add('drag-over');
+  }
 }
 
-async function onDrop(e, type, targetId) {
-  e.preventDefault();
-  e.target.closest('.kml-folder-item, .pin-folder-section')?.classList.remove('drag-over');
+function onDragEnter(e) {
+  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
+  if (target && !target.classList.contains('dragging')) {
+    target.classList.add('drag-over');
+  }
+}
 
-  if (!draggedFolderId || draggedFolderType !== type || draggedFolderId === targetId) {
-    draggedFolderId = null;
-    draggedFolderType = null;
+function onDragLeave(e) {
+  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
+  if (target && !target.contains(e.relatedTarget)) {
+    target.classList.remove('drag-over');
+  }
+}
+
+function onDragEnd(e) {
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  draggedItemId = null;
+  draggedItemType = null;
+}
+
+async function onDrop(e, targetType, targetId) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+
+  if (!draggedItemId || !draggedItemType) return;
+
+  // Same item, ignore
+  if (draggedItemType === targetType && draggedItemId === targetId) {
+    draggedItemId = null;
+    draggedItemType = null;
     return;
   }
 
   try {
-    const endpoint = type === 'kml' ? '/api/kml-folders' : '/api/folders';
-    await api(`${endpoint}/${draggedFolderId}/reorder`, {
-      method: 'POST',
-      body: JSON.stringify({ target_id: targetId })
-    });
-    if (type === 'kml') {
+    // Folder reordering (same type swap)
+    if (draggedItemType === 'kml' && targetType === 'kml') {
+      await api(`/api/kml-folders/${draggedItemId}/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ target_id: targetId })
+      });
       loadKmlFolders();
-    } else {
+    } else if (draggedItemType === 'pin' && targetType === 'pin') {
+      await api(`/api/folders/${draggedItemId}/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ target_id: targetId })
+      });
       loadFolders();
     }
   } catch (err) {
     notify(err.message, 'error');
   }
 
-  draggedFolderId = null;
-  draggedFolderType = null;
+  draggedItemId = null;
+  draggedItemType = null;
 }
 
 function showRenameKmlFolderModal(folderId) {
@@ -738,13 +778,15 @@ function renderFolderNode(folder, folderPins, depth) {
 
   let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}"
     draggable="${isOwner}" ondragstart="onDragStart(event, 'pin', ${folder.id})"
-    ondragover="onDragOver(event)" ondrop="onDrop(event, 'pin', ${folder.id})">
+    ondragover="onDragOver(event)" ondragenter="onDragEnter(event)" ondragleave="onDragLeave(event)"
+    ondragend="onDragEnd(event)" ondrop="onDrop(event, 'pin', ${folder.id})">
     <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
     <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
       <i class="fas fa-chevron-right toggle-icon"></i>
       <i class="fas fa-folder folder-icon"></i>
       ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
         <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
+        <button onclick="showMoveFolderModal(${folder.id})" title="移動"><i class="fas fa-arrows-alt"></i></button>
         <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
         <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
       </div>` : ''}
@@ -778,12 +820,16 @@ function togglePinFolder(folderId) {
 
 function renderPinItem(pin) {
   const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
-  return `<div class="pin-item" onclick="focusPin(${pin.id})">
-    <h4>${escHtml(pin.title)} ${vis}</h4>
-    <p>${escHtml(pin.description || '').substring(0, 60)}</p>
+  const canEdit = currentUser && (pin.user_id === currentUser.id || currentUser.is_admin);
+  return `<div class="pin-item" data-pin-id="${pin.id}">
+    <div class="pin-item-header" onclick="focusPin(${pin.id})">
+      <h4>${escHtml(pin.title)} ${vis}</h4>
+      <p>${escHtml(pin.description || '').substring(0, 60)}</p>
+    </div>
     <div class="pin-meta">
       <span><i class="fas fa-user"></i> ${escHtml(pin.author || '')}</span>
       ${pin.images && pin.images.length > 0 ? '<span><i class="fas fa-image"></i> ' + pin.images.length + '</span>' : ''}
+      ${canEdit ? `<button onclick="event.stopPropagation(); showMovePinModal(${pin.id})" title="移動" class="icon-btn" style="margin-left:auto;"><i class="fas fa-arrows-alt"></i></button>` : ''}
     </div>
   </div>`;
 }
@@ -928,6 +974,121 @@ async function shareFolder() {
     closeModal('modal-share-folder');
     notify('共有設定を更新しました');
     loadFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+// Move folder to another parent
+function showMoveFolderModal(folderId) {
+  document.getElementById('move-folder-id').value = folderId;
+  const folder = folders.find(f => f.id === folderId);
+  document.getElementById('move-folder-name').textContent = folder ? folder.name : '';
+
+  // Populate folder select excluding self and children
+  const sel = document.getElementById('move-folder-target');
+  sel.innerHTML = '<option value="">-- ルート（最上位）--</option>';
+
+  function addOptions(parentId, depth) {
+    const children = folders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
+    for (const f of children) {
+      // Exclude self and check for circular reference
+      if (f.id === folderId) continue;
+      // Check if f is a descendant of folderId (prevent circular)
+      let isDescendant = false;
+      let current = f;
+      while (current && current.parent_id) {
+        if (current.parent_id === folderId) { isDescendant = true; break; }
+        current = folders.find(p => p.id === current.parent_id);
+      }
+      if (isDescendant) continue;
+
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+      if (f.id === folder?.parent_id) opt.selected = true;
+      sel.appendChild(opt);
+      addOptions(f.id, depth + 1);
+    }
+  }
+  addOptions(null, 0);
+  openModal('modal-move-folder');
+}
+
+async function moveFolder() {
+  const folderId = document.getElementById('move-folder-id').value;
+  const targetId = document.getElementById('move-folder-target').value || null;
+
+  try {
+    await api(`/api/folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ parent_id: targetId ? parseInt(targetId) : null })
+    });
+    closeModal('modal-move-folder');
+    notify('フォルダを移動しました');
+    loadFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+// Move pin to another folder
+function showMovePinModal(pinId) {
+  document.getElementById('move-pin-id').value = pinId;
+  const pin = pins.find(p => p.id === pinId);
+  document.getElementById('move-pin-name').textContent = pin ? pin.title : '';
+  populateFolderSelect('move-pin-target', pin?.folder_id);
+  openModal('modal-move-pin');
+}
+
+async function movePin() {
+  const pinId = document.getElementById('move-pin-id').value;
+  const targetId = document.getElementById('move-pin-target').value || null;
+
+  try {
+    await api(`/api/pins/${pinId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ folder_id: targetId ? parseInt(targetId) : null })
+    });
+    closeModal('modal-move-pin');
+    notify('ピンを移動しました');
+    loadPins();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+// Move KML file to another folder
+function showMoveKmlFileModal(fileId) {
+  document.getElementById('move-kml-file-id').value = fileId;
+  const file = kmlFiles.find(f => f.id === fileId);
+  document.getElementById('move-kml-file-name').textContent = file ? file.original_name : '';
+
+  // Populate KML folder select
+  const sel = document.getElementById('move-kml-file-target');
+  sel.innerHTML = '';
+  for (const f of kmlFolders) {
+    if (!f.is_owner) continue;
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = f.name;
+    if (f.id === file?.folder_id) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  openModal('modal-move-kml-file');
+}
+
+async function moveKmlFile() {
+  const fileId = document.getElementById('move-kml-file-id').value;
+  const targetId = document.getElementById('move-kml-file-target').value;
+
+  if (!targetId) {
+    notify('移動先フォルダを選択してください', 'error');
+    return;
+  }
+
+  try {
+    await api(`/api/kml-files/${fileId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ folder_id: parseInt(targetId) })
+    });
+    closeModal('modal-move-kml-file');
+    notify('KMLファイルを移動しました');
+    loadKmlFolders();
   } catch (err) { notify(err.message, 'error'); }
 }
 

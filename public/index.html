@@ -242,6 +242,57 @@
   </div>
 </div>
 
+<!-- Move folder modal -->
+<div class="modal-overlay" id="modal-move-folder">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> フォルダを移動</h3>
+    <input type="hidden" id="move-folder-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-folder-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-folder-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveFolder()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move pin modal -->
+<div class="modal-overlay" id="modal-move-pin">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> ピンを移動</h3>
+    <input type="hidden" id="move-pin-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-pin-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-pin-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-pin')">キャンセル</button>
+      <button class="btn btn-primary" onclick="movePin()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move KML file modal -->
+<div class="modal-overlay" id="modal-move-kml-file">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> KMLファイルを移動</h3>
+    <input type="hidden" id="move-kml-file-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-kml-file-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-kml-file-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-kml-file')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveKmlFile()">移動</button>
+    </div>
+  </div>
+</div>
+
 <!-- Auth modal -->
 <div class="modal-overlay" id="modal-auth">
   <div class="modal">
