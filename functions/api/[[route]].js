@@ -584,6 +584,11 @@ async function handleRegister(request, env) {
   if (username.length < 3) {
     return json({ error: 'ユーザー名は3文字以上にしてください' }, 400);
   }
+  // Validate username is full name in Roman letters (e.g., "Taro Yamada")
+  const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
+  if (!fullNamePattern.test(username.trim())) {
+    return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
+  }
   if (password.length < 4) {
     return json({ error: 'パスワードは4文字以上にしてください' }, 400);
   }

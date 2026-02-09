@@ -138,6 +138,7 @@ function toggleLoginMode(e) {
   document.getElementById('login-display-name-group').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-submit').textContent = loginMode === 'login' ? 'ログイン' : 'アカウント作成';
   document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
+  document.getElementById('login-username').placeholder = loginMode === 'register' ? 'Taro Yamada（ローマ字フルネーム）' : 'ユーザー名';
   document.getElementById('login-error').classList.remove('show');
 }
 
