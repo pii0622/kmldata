@@ -1476,18 +1476,33 @@ async function moveKmlFile() {
 function populateFolderSelect(selectId, selectedId, includeNone) {
   const sel = document.getElementById(selectId);
   sel.innerHTML = '<option value="">-- なし --</option>';
-  function addOptions(parentId, depth) {
-    const children = folders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
+
+  // First add owned folders
+  function addOptions(parentId, depth, filterFn) {
+    const children = folders.filter(f => (f.parent_id || null) === parentId && filterFn(f));
     for (const f of children) {
       const opt = document.createElement('option');
       opt.value = f.id;
-      opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+      const prefix = f.is_owner ? '' : '📁 ';
+      opt.textContent = '\u00A0\u00A0'.repeat(depth) + prefix + f.name;
       if (f.id == selectedId) opt.selected = true;
       sel.appendChild(opt);
-      addOptions(f.id, depth + 1);
+      addOptions(f.id, depth + 1, filterFn);
     }
   }
-  addOptions(null, 0);
+
+  // Add owned folders first
+  addOptions(null, 0, f => f.is_owner);
+
+  // Add shared/public folders (not owned)
+  const sharedFolders = folders.filter(f => !f.is_owner && !f.parent_id);
+  if (sharedFolders.length > 0) {
+    const divider = document.createElement('option');
+    divider.disabled = true;
+    divider.textContent = '── 共有フォルダ ──';
+    sel.appendChild(divider);
+    addOptions(null, 0, f => !f.is_owner);
+  }
 }
 
 // ==================== Pins ====================

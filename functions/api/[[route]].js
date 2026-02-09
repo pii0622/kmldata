@@ -1499,6 +1499,21 @@ async function handleCreatePin(request, env, user) {
     return json({ error: 'タイトルと座標は必須です' }, 400);
   }
 
+  // Verify folder access if folder_id is specified
+  if (folder_id) {
+    const folder = await env.DB.prepare(`
+      SELECT f.* FROM folders f
+      WHERE f.id = ? AND (
+        f.user_id = ? OR
+        f.is_public = 1 OR
+        f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+      )
+    `).bind(folder_id, user.id, user.id).first();
+    if (!folder) {
+      return json({ error: 'このフォルダへのアクセス権限がありません' }, 403);
+    }
+  }
+
   const publicFlag = user.is_admin && is_public ? 1 : 0;
 
   const result = await env.DB.prepare(
