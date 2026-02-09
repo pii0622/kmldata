@@ -1109,7 +1109,7 @@ async function handleGetKmlFiles(env, user, url) {
     if (folderId) {
       // KML files in a specific folder - check folder access
       query = `SELECT kf.*, u.display_name as owner_name,
-          CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+          COALESCE(f.is_public, 0) as is_public
         FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
@@ -1118,9 +1118,9 @@ async function handleGetKmlFiles(env, user, url) {
         ORDER BY kf.sort_order, kf.original_name`;
       bindings = [folderId, user.id, user.id];
     } else {
-      // All KML files user can access
+      // All KML files user can access (own files, public folder files, shared folder files)
       query = `SELECT kf.*, u.display_name as owner_name,
-          CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+          COALESCE(f.is_public, 0) as is_public
         FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
@@ -1134,8 +1134,7 @@ async function handleGetKmlFiles(env, user, url) {
     query = `SELECT kf.*, u.display_name as owner_name, 1 as is_public
       FROM kml_files kf
       LEFT JOIN users u ON kf.user_id = u.id
-      LEFT JOIN kml_folders f ON kf.folder_id = f.id
-      WHERE f.is_public = 1
+      INNER JOIN kml_folders f ON kf.folder_id = f.id AND f.is_public = 1
       ORDER BY kf.sort_order, kf.original_name`;
   }
 
