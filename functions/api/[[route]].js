@@ -73,6 +73,28 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+// Allowed image types and max size
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_KML_SIZE = 50 * 1024 * 1024; // 50MB
+
+function validateImageFile(file) {
+  if (!file || !file.name) return { valid: false, error: 'ファイルが無効です' };
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return { valid: false, error: `許可されていないファイル形式です: ${file.type}` };
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    return { valid: false, error: `ファイルサイズが大きすぎます（最大10MB）: ${file.name}` };
+  }
+  // Check extension matches type
+  const ext = file.name.split('.').pop().toLowerCase();
+  const validExts = { 'image/jpeg': ['jpg', 'jpeg'], 'image/png': ['png'], 'image/gif': ['gif'], 'image/webp': ['webp'] };
+  if (!validExts[file.type]?.includes(ext)) {
+    return { valid: false, error: `ファイル拡張子が不正です: ${file.name}` };
+  }
+  return { valid: true };
+}
+
 function convertKmlPolygonToLine(kml) {
   return kml.replace(
     /<Polygon[^>]*>[\s\S]*?<outerBoundaryIs>\s*<LinearRing>\s*<coordinates>([\s\S]*?)<\/coordinates>\s*<\/LinearRing>\s*<\/outerBoundaryIs>[\s\S]*?<\/Polygon>/gi,
@@ -198,7 +220,7 @@ export async function onRequest(context) {
     }
     if (path.match(/^\/kml-files\/(.+)$/) && method === 'GET') {
       const key = path.match(/^\/kml-files\/(.+)$/)[1];
-      return await handleGetKmlFile(env, key);
+      return await handleGetKmlFile(env, user, key);
     }
     if (path.match(/^\/kml-files\/(\d+)$/) && method === 'DELETE') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
@@ -287,7 +309,7 @@ export async function onRequest(context) {
     // Images
     if (path.match(/^\/images\/(.+)$/) && method === 'GET') {
       const key = path.match(/^\/images\/(.+)$/)[1];
-      return await handleGetImage(env, key);
+      return await handleGetImage(env, user, key);
     }
 
     return json({ error: 'Not found' }, 404);
@@ -520,6 +542,14 @@ async function handleDeleteKmlFolder(env, user, id) {
 }
 
 async function handleKmlFolderVisibility(request, env, user, id) {
+  // Verify user has access to this folder (owner, public, or shared)
+  const folder = await env.DB.prepare(`
+    SELECT kf.* FROM kml_folders kf
+    WHERE kf.id = ? AND (kf.user_id = ? OR kf.is_public = 1
+      OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
+  `).bind(id, user.id, user.id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+
   const { is_visible } = await request.json();
   await env.DB.prepare(`
     INSERT INTO kml_folder_visibility (kml_folder_id, user_id, is_visible) VALUES (?, ?, ?)
@@ -648,6 +678,10 @@ async function handleUploadKmlFile(request, env, user) {
     return json({ error: 'KMLまたはKMZファイルのみアップロード可能です' }, 400);
   }
 
+  if (file.size > MAX_KML_SIZE) {
+    return json({ error: 'ファイルサイズが大きすぎます（最大50MB）' }, 400);
+  }
+
   const r2Key = `kml/${crypto.randomUUID()}.${ext}`;
   let content = await file.text();
   if (ext === 'kml') {
@@ -666,12 +700,35 @@ async function handleUploadKmlFile(request, env, user) {
   return json({ id: result.meta.last_row_id, r2_key: r2Key, original_name: file.name, folder_id: folderId || null, is_public: publicFlag });
 }
 
-async function handleGetKmlFile(env, key) {
-  const obj = await env.R2.get(`kml/${key}`);
+async function handleGetKmlFile(env, user, key) {
+  const r2Key = `kml/${key}`;
+
+  // Look up file and check access
+  const file = await env.DB.prepare('SELECT * FROM kml_files WHERE r2_key = ?').bind(r2Key).first();
+  if (!file) return json({ error: 'ファイルが見つかりません' }, 404);
+
+  // Check access: public file, or user owns it, or user has folder access
+  if (!file.is_public) {
+    if (!user) return json({ error: '認証が必要です' }, 401);
+
+    const hasAccess = file.user_id === user.id || user.is_admin ||
+      (file.folder_id && await env.DB.prepare(`
+        SELECT 1 FROM kml_folders kf
+        WHERE kf.id = ? AND (kf.user_id = ? OR kf.is_public = 1
+          OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
+      `).bind(file.folder_id, user.id, user.id).first());
+
+    if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
+  }
+
+  const obj = await env.R2.get(r2Key);
   if (!obj) return json({ error: 'ファイルが見つかりません' }, 404);
 
   return new Response(obj.body, {
-    headers: { 'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream' }
+    headers: {
+      'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+      ...securityHeaders
+    }
   });
 }
 
@@ -885,6 +942,14 @@ async function handleMoveFolder(request, env, user, id) {
 }
 
 async function handleFolderVisibility(request, env, user, id) {
+  // Verify user has access to this folder (owner, public, or shared)
+  const folder = await env.DB.prepare(`
+    SELECT f.* FROM folders f
+    WHERE f.id = ? AND (f.user_id = ? OR f.is_public = 1
+      OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?))
+  `).bind(id, user.id, user.id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+
   const { is_visible } = await request.json();
   await env.DB.prepare(`
     INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
@@ -964,7 +1029,13 @@ async function handleCreatePin(request, env, user) {
 
   for (const file of imageFiles) {
     if (!file || !file.name) continue;
-    const r2Key = `images/${crypto.randomUUID()}-${file.name}`;
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      return json({ error: validation.error }, 400);
+    }
+    // Sanitize filename
+    const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const r2Key = `images/${crypto.randomUUID()}-${safeFilename}`;
     await env.R2.put(r2Key, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type }
     });
@@ -1025,7 +1096,13 @@ async function handleAddPinImages(request, env, user, id) {
 
   for (const file of files) {
     if (!file || !file.name) continue;
-    const r2Key = `images/${crypto.randomUUID()}-${file.name}`;
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      return json({ error: validation.error }, 400);
+    }
+    // Sanitize filename
+    const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const r2Key = `images/${crypto.randomUUID()}-${safeFilename}`;
     await env.R2.put(r2Key, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type }
     });
@@ -1077,14 +1154,35 @@ async function handleMovePin(request, env, user, id) {
   return json({ ok: true });
 }
 
-async function handleGetImage(env, key) {
-  const obj = await env.R2.get(`images/${key}`);
+async function handleGetImage(env, user, key) {
+  const r2Key = `images/${key}`;
+
+  // Look up image and check access via pin
+  const image = await env.DB.prepare('SELECT pi.*, p.user_id as pin_user_id, p.is_public as pin_is_public, p.folder_id as pin_folder_id FROM pin_images pi JOIN pins p ON pi.pin_id = p.id WHERE pi.r2_key = ?').bind(r2Key).first();
+  if (!image) return json({ error: '画像が見つかりません' }, 404);
+
+  // Check access: public pin, or user owns it, or user has folder access
+  if (!image.pin_is_public) {
+    if (!user) return json({ error: '認証が必要です' }, 401);
+
+    const hasAccess = image.pin_user_id === user.id || user.is_admin ||
+      (image.pin_folder_id && await env.DB.prepare(`
+        SELECT 1 FROM folders f
+        WHERE f.id = ? AND (f.user_id = ? OR f.is_public = 1
+          OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?))
+      `).bind(image.pin_folder_id, user.id, user.id).first());
+
+    if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
+  }
+
+  const obj = await env.R2.get(r2Key);
   if (!obj) return json({ error: '画像が見つかりません' }, 404);
 
   return new Response(obj.body, {
     headers: {
       'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg',
-      'Cache-Control': 'public, max-age=31536000'
+      'Cache-Control': image.pin_is_public ? 'public, max-age=31536000' : 'private, max-age=3600',
+      ...securityHeaders
     }
   });
 }
