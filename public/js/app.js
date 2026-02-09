@@ -1715,8 +1715,54 @@ async function loadAll() {
   await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers()]);
 }
 
+// ==================== Service Worker ====================
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+      .then((registration) => {
+        console.log('Service Worker registered:', registration.scope);
+      })
+      .catch((err) => {
+        console.log('Service Worker registration failed:', err);
+      });
+  }
+}
+
+async function clearTileCache() {
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    return new Promise((resolve) => {
+      const messageChannel = new MessageChannel();
+      messageChannel.port1.onmessage = (event) => {
+        resolve(event.data.success);
+      };
+      navigator.serviceWorker.controller.postMessage(
+        { action: 'clearTileCache' },
+        [messageChannel.port2]
+      );
+    });
+  }
+  return false;
+}
+
+async function getTileCacheCount() {
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    return new Promise((resolve) => {
+      const messageChannel = new MessageChannel();
+      messageChannel.port1.onmessage = (event) => {
+        resolve(event.data.count);
+      };
+      navigator.serviceWorker.controller.postMessage(
+        { action: 'getCacheSize' },
+        [messageChannel.port2]
+      );
+    });
+  }
+  return 0;
+}
+
 // ==================== Init ====================
 async function init() {
+  registerServiceWorker();
   await checkAuth();
   await loadAll();
   startWatchingLocation();
