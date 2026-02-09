@@ -156,12 +156,148 @@ function convertKmlPolygonToLine(kml) {
   );
 }
 
+// ==================== Auto Migration ====================
+let tablesInitialized = false;
+
+async function ensureTablesExist(env) {
+  if (tablesInitialized) return;
+
+  try {
+    // Create all necessary tables if they don't exist
+    await env.DB.batch([
+      // Users table with status for approval system
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        is_admin INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now'))
+      )`),
+      // Admin notifications
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        user_id INTEGER,
+        is_read INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`),
+      // Security logs
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS security_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        user_id INTEGER,
+        ip_address TEXT,
+        user_agent TEXT,
+        details TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      )`),
+      // Rate limits
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT UNIQUE NOT NULL,
+        count INTEGER DEFAULT 1,
+        window_start TEXT DEFAULT (datetime('now'))
+      )`),
+      // Folders
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        is_visible INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (parent_id) REFERENCES folders(id)
+      )`),
+      // Pins
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS pins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        folder_id INTEGER,
+        title TEXT NOT NULL,
+        description TEXT,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        is_public INTEGER DEFAULT 0,
+        is_visible INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (folder_id) REFERENCES folders(id)
+      )`),
+      // Pin images
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS pin_images (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE
+      )`),
+      // Pin shares
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS pin_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id INTEGER NOT NULL,
+        shared_with_user_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE,
+        FOREIGN KEY (shared_with_user_id) REFERENCES users(id)
+      )`),
+      // Folder shares
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS folder_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_id INTEGER NOT NULL,
+        shared_with_user_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (shared_with_user_id) REFERENCES users(id)
+      )`),
+      // KML folders
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        is_visible INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (parent_id) REFERENCES kml_folders(id)
+      )`),
+      // KML files
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        folder_id INTEGER,
+        name TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        is_visible INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (folder_id) REFERENCES kml_folders(id)
+      )`)
+    ]);
+
+    tablesInitialized = true;
+  } catch (err) {
+    console.error('Table initialization error:', err);
+    // Continue anyway - tables might already exist with different schema
+    tablesInitialized = true;
+  }
+}
+
 // ==================== Main Handler ====================
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname.replace('/api', '');
   const method = request.method;
+
+  // Auto-create tables on first request
+  await ensureTablesExist(env);
 
   // Warn if JWT_SECRET is not set (check once per request for logging)
   if (!env.JWT_SECRET) {
