@@ -52,7 +52,7 @@ map.getContainer().addEventListener('click', function(e) {
   document.getElementById('pin-title').value = '';
   document.getElementById('pin-desc').value = '';
   document.getElementById('pin-public').checked = false;
-  document.getElementById('pin-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
+  updatePinPublicVisibility();
   document.getElementById('pin-images').value = '';
   document.getElementById('pin-image-preview').innerHTML = '';
   openModal('modal-pin');
@@ -1505,6 +1505,34 @@ function populateFolderSelect(selectId, selectedId, includeNone) {
   }
 }
 
+// Check if selected folder is owned by current user
+function isSelectedFolderOwned(selectId) {
+  const folderId = document.getElementById(selectId).value;
+  if (!folderId) return true; // No folder selected = owned (personal pin)
+  const folder = folders.find(f => f.id == folderId);
+  return folder ? folder.is_owner : true;
+}
+
+// Update public checkbox visibility for new pin modal
+function updatePinPublicVisibility() {
+  const publicGroup = document.getElementById('pin-public-group');
+  const showPublic = currentUser?.is_admin && isSelectedFolderOwned('pin-folder');
+  publicGroup.style.display = showPublic ? '' : 'none';
+  if (!showPublic) {
+    document.getElementById('pin-public').checked = false;
+  }
+}
+
+// Update public checkbox visibility for edit pin modal
+function updateEditPinPublicVisibility() {
+  const publicGroup = document.getElementById('edit-pin-public-group');
+  const showPublic = currentUser?.is_admin && isSelectedFolderOwned('edit-pin-folder');
+  publicGroup.style.display = showPublic ? '' : 'none';
+  if (!showPublic) {
+    document.getElementById('edit-pin-public').checked = false;
+  }
+}
+
 // ==================== Pins ====================
 async function loadPins() {
   try {
@@ -1637,9 +1665,9 @@ async function editPin(pinId) {
   document.getElementById('edit-pin-title').value = pin.title;
   document.getElementById('edit-pin-desc').value = pin.description || '';
   document.getElementById('edit-pin-public').checked = !!pin.is_public;
-  document.getElementById('edit-pin-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
   document.getElementById('edit-pin-images').value = '';
   populateFolderSelect('edit-pin-folder', pin.folder_id);
+  updateEditPinPublicVisibility();
 
   // Show current images
   const imgContainer = document.getElementById('edit-pin-current-images');
