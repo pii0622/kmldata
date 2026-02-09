@@ -1135,7 +1135,6 @@ async function handleUploadKmlFile(request, env, user) {
   const formData = await request.formData();
   const file = formData.get('kml');
   const folderId = formData.get('folder_id');
-  const isPublic = formData.get('is_public');
 
   if (!file) return json({ error: 'ファイルが選択されていません' }, 400);
 
@@ -1158,12 +1157,12 @@ async function handleUploadKmlFile(request, env, user) {
     httpMetadata: { contentType: ext === 'kml' ? 'application/vnd.google-earth.kml+xml' : 'application/vnd.google-earth.kmz' }
   });
 
-  const publicFlag = user.is_admin && isPublic === 'true' ? 1 : 0;
+  // KML files no longer have individual public flag - visibility is controlled by folder
   const result = await env.DB.prepare(
-    'INSERT INTO kml_files (folder_id, user_id, r2_key, original_name, is_public) VALUES (?, ?, ?, ?, ?)'
-  ).bind(folderId || null, user.id, r2Key, file.name, publicFlag).run();
+    'INSERT INTO kml_files (folder_id, user_id, r2_key, original_name, is_public) VALUES (?, ?, ?, ?, 0)'
+  ).bind(folderId || null, user.id, r2Key, file.name).run();
 
-  return json({ id: result.meta.last_row_id, r2_key: r2Key, original_name: file.name, folder_id: folderId || null, is_public: publicFlag });
+  return json({ id: result.meta.last_row_id, r2_key: r2Key, original_name: file.name, folder_id: folderId || null });
 }
 
 async function handleGetKmlFile(env, user, key) {
@@ -1474,7 +1473,7 @@ async function handleGetPins(env, user) {
 
 async function handleCreatePin(request, env, user) {
   const contentType = request.headers.get('content-type') || '';
-  let title, description, lat, lng, folder_id, is_public, imageFiles = [];
+  let title, description, lat, lng, folder_id, imageFiles = [];
 
   if (contentType.includes('multipart/form-data')) {
     const formData = await request.formData();
@@ -1483,7 +1482,6 @@ async function handleCreatePin(request, env, user) {
     lat = parseFloat(formData.get('lat'));
     lng = parseFloat(formData.get('lng'));
     folder_id = formData.get('folder_id') || null;
-    is_public = formData.get('is_public') === 'true';
     imageFiles = formData.getAll('images');
   } else {
     const body = await request.json();
@@ -1492,7 +1490,6 @@ async function handleCreatePin(request, env, user) {
     lat = body.lat;
     lng = body.lng;
     folder_id = body.folder_id || null;
-    is_public = body.is_public;
   }
 
   if (!title || lat == null || lng == null) {
@@ -1514,11 +1511,10 @@ async function handleCreatePin(request, env, user) {
     }
   }
 
-  const publicFlag = user.is_admin && is_public ? 1 : 0;
-
+  // Pins no longer have individual public flag - visibility is controlled by folder
   const result = await env.DB.prepare(
-    'INSERT INTO pins (title, description, lat, lng, folder_id, user_id, is_public) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(title, description, lat, lng, folder_id, user.id, publicFlag).run();
+    'INSERT INTO pins (title, description, lat, lng, folder_id, user_id, is_public) VALUES (?, ?, ?, ?, ?, ?, 0)'
+  ).bind(title, description, lat, lng, folder_id, user.id).run();
 
   const pinId = result.meta.last_row_id;
   const images = [];
@@ -1551,14 +1547,13 @@ async function handleUpdatePin(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { title, description, folder_id, is_public } = await request.json();
-  const publicFlag = user.is_admin ? (is_public ? 1 : 0) : pin.is_public;
+  const { title, description, folder_id } = await request.json();
 
   await env.DB.prepare(`
     UPDATE pins SET title = COALESCE(?, title), description = COALESCE(?, description),
-    folder_id = ?, is_public = ? WHERE id = ?
+    folder_id = ? WHERE id = ?
   `).bind(title || pin.title, description !== undefined ? description : pin.description,
-    folder_id !== undefined ? folder_id : pin.folder_id, publicFlag, id).run();
+    folder_id !== undefined ? folder_id : pin.folder_id, id).run();
 
   return json({ ok: true });
 }

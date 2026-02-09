@@ -88,11 +88,6 @@
       <input type="file" id="pin-images" multiple accept="image/*" onchange="previewPinImages(this)">
       <div id="pin-image-preview" class="image-preview-container"></div>
     </div>
-    <div class="form-group" id="pin-public-group">
-      <label class="checkbox-label">
-        <input type="checkbox" id="pin-public"> 全ユーザーに公開する（管理者のみ）
-      </label>
-    </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="cancelPinMode()">キャンセル</button>
       <button class="btn btn-primary" onclick="savePin()">作成</button>
@@ -114,12 +109,7 @@
     </div>
     <div class="form-group">
       <label>フォルダ</label>
-      <select id="edit-pin-folder" onchange="updateEditPinPublicVisibility()"></select>
-    </div>
-    <div class="form-group" id="edit-pin-public-group">
-      <label class="checkbox-label">
-        <input type="checkbox" id="edit-pin-public"> 全ユーザーに公開する（管理者のみ）
-      </label>
+      <select id="edit-pin-folder"></select>
     </div>
     <div class="form-group">
       <label>画像を追加</label>
@@ -184,11 +174,6 @@
     <div class="form-group">
       <label>KMLファイル *</label>
       <input type="file" id="kml-upload-file" accept=".kml,.kmz">
-    </div>
-    <div class="form-group">
-      <label class="checkbox-label">
-        <input type="checkbox" id="kml-upload-public"> 全ユーザーに公開する（管理者のみ）
-      </label>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-kml-upload')">キャンセル</button>
