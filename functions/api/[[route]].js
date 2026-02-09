@@ -121,6 +121,38 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   }
 }
 
+// Email sending via MailChannels
+const EMAIL_FROM = 'hello@map.taishi-lab.com';
+const EMAIL_FROM_NAME = '地図アプリ';
+
+async function sendEmail(to, subject, htmlBody, textBody) {
+  try {
+    const response = await fetch('https://api.mailchannels.net/tx/v1/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
+        subject: subject,
+        content: [
+          { type: 'text/plain', value: textBody },
+          { type: 'text/html', value: htmlBody }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Email send failed:', response.status, errText);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Email send error:', err);
+    return false;
+  }
+}
+
 function getClientIP(request) {
   return request.headers.get('CF-Connecting-IP') ||
          request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
@@ -170,6 +202,7 @@ async function ensureTablesExist(env) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
+        email TEXT,
         is_admin INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending',
         created_at TEXT DEFAULT (datetime('now'))
@@ -280,6 +313,13 @@ async function ensureTablesExist(env) {
         FOREIGN KEY (folder_id) REFERENCES kml_folders(id)
       )`)
     ]);
+
+    // Add email column to existing users table if it doesn't exist
+    try {
+      await env.DB.prepare('ALTER TABLE users ADD COLUMN email TEXT').run();
+    } catch (e) {
+      // Column might already exist, ignore error
+    }
 
     tablesInitialized = true;
   } catch (err) {
@@ -577,9 +617,17 @@ async function handleTokenRefresh(env, user) {
 }
 
 async function handleRegister(request, env) {
-  const { username, password, display_name } = await request.json();
+  const { username, password, email, display_name } = await request.json();
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
+  }
+  if (!email) {
+    return json({ error: 'メールアドレスを入力してください' }, 400);
+  }
+  // Validate email format
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailPattern.test(email)) {
+    return json({ error: '有効なメールアドレスを入力してください' }, 400);
   }
   if (username.length < 3) {
     return json({ error: 'ユーザー名は3文字以上にしてください' }, 400);
@@ -609,8 +657,8 @@ async function handleRegister(request, env) {
   const hash = await hashPassword(password);
   // New users start with 'pending' status - must be approved by admin
   const result = await env.DB.prepare(
-    'INSERT INTO users (username, password_hash, display_name, status) VALUES (?, ?, ?, ?)'
-  ).bind(username, hash, actualDisplayName, 'pending').run();
+    'INSERT INTO users (username, password_hash, email, display_name, status) VALUES (?, ?, ?, ?, ?)'
+  ).bind(username, hash, email, actualDisplayName, 'pending').run();
 
   const userId = result.meta.last_row_id;
 
@@ -752,6 +800,21 @@ async function handleApproveUser(env, id) {
     WHERE type = 'user_pending' AND data LIKE ?
   `).bind(`%"user_id":${id}%`).run();
 
+  // Send approval email
+  if (user.email) {
+    const subject = 'アカウントが承認されました - 地図アプリ';
+    const htmlBody = `
+      <h2>アカウント承認のお知らせ</h2>
+      <p>${user.display_name || user.username} 様</p>
+      <p>地図アプリへのアカウント申請が承認されました。</p>
+      <p>ログインしてご利用ください。</p>
+      <br>
+      <p>地図アプリ</p>
+    `;
+    const textBody = `${user.display_name || user.username} 様\n\n地図アプリへのアカウント申請が承認されました。\nログインしてご利用ください。\n\n地図アプリ`;
+    await sendEmail(user.email, subject, htmlBody, textBody);
+  }
+
   return json({ ok: true, message: `${user.display_name}を承認しました` });
 }
 
@@ -767,6 +830,21 @@ async function handleRejectUser(env, id) {
     UPDATE admin_notifications SET is_read = 1
     WHERE type = 'user_pending' AND data LIKE ?
   `).bind(`%"user_id":${id}%`).run();
+
+  // Send rejection email
+  if (user.email) {
+    const subject = 'アカウント申請について - 地図アプリ';
+    const htmlBody = `
+      <h2>アカウント申請のお知らせ</h2>
+      <p>${user.display_name || user.username} 様</p>
+      <p>申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。</p>
+      <p>ご不明な点がございましたら、管理者までお問い合わせください。</p>
+      <br>
+      <p>地図アプリ</p>
+    `;
+    const textBody = `${user.display_name || user.username} 様\n\n申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。\nご不明な点がございましたら、管理者までお問い合わせください。\n\n地図アプリ`;
+    await sendEmail(user.email, subject, htmlBody, textBody);
+  }
 
   return json({ ok: true, message: `${user.display_name}を拒否しました` });
 }

@@ -135,6 +135,7 @@ function updateLoginScreen() {
 function toggleLoginMode(e) {
   e.preventDefault();
   loginMode = loginMode === 'login' ? 'register' : 'login';
+  document.getElementById('login-email-group').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-display-name-group').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-submit').textContent = loginMode === 'login' ? 'ログイン' : 'アカウント作成';
   document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
@@ -146,6 +147,7 @@ function toggleLoginMode(e) {
 async function submitLogin() {
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
+  const email = document.getElementById('login-email').value.trim();
   const displayName = document.getElementById('login-display-name').value.trim();
   const errEl = document.getElementById('login-error');
 
@@ -155,11 +157,17 @@ async function submitLogin() {
     return;
   }
 
+  if (loginMode === 'register' && !email) {
+    errEl.textContent = 'メールアドレスを入力してください';
+    errEl.classList.add('show');
+    return;
+  }
+
   try {
     const endpoint = loginMode === 'login' ? '/api/auth/login' : '/api/auth/register';
     const body = loginMode === 'login'
       ? { username, password }
-      : { username, password, display_name: displayName || username };
+      : { username, password, email, display_name: displayName || username };
     const result = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
 
     // Handle pending registration
@@ -170,11 +178,15 @@ async function submitLogin() {
       // Clear form and switch to login mode
       document.getElementById('login-username').value = '';
       document.getElementById('login-password').value = '';
+      document.getElementById('login-email').value = '';
       document.getElementById('login-display-name').value = '';
       loginMode = 'login';
+      document.getElementById('login-email-group').style.display = 'none';
       document.getElementById('login-display-name-group').style.display = 'none';
       document.getElementById('login-submit').textContent = 'ログイン';
       document.getElementById('login-toggle-link').textContent = 'アカウントを作成';
+      document.getElementById('login-username').placeholder = 'ユーザー名';
+      document.querySelector('#login-form .form-group:first-child label').textContent = 'ユーザー名';
       return;
     }
 
