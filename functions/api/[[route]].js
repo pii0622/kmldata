@@ -1107,23 +1107,36 @@ async function handleGetKmlFiles(env, user, url) {
 
   if (user) {
     if (folderId) {
-      query = `SELECT kf.*, u.display_name as owner_name FROM kml_files kf
+      // KML files in a specific folder - check folder access
+      query = `SELECT kf.*, u.display_name as owner_name,
+          CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+        FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
-        WHERE kf.folder_id = ? AND (kf.user_id = ? OR kf.is_public = 1 OR
+        LEFT JOIN kml_folders f ON kf.folder_id = f.id
+        WHERE kf.folder_id = ? AND (kf.user_id = ? OR f.is_public = 1 OR
           kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
-        ORDER BY kf.original_name`;
+        ORDER BY kf.sort_order, kf.original_name`;
       bindings = [folderId, user.id, user.id];
     } else {
-      query = `SELECT kf.*, u.display_name as owner_name FROM kml_files kf
+      // All KML files user can access
+      query = `SELECT kf.*, u.display_name as owner_name,
+          CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+        FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
-        WHERE kf.user_id = ? OR kf.is_public = 1 OR
+        LEFT JOIN kml_folders f ON kf.folder_id = f.id
+        WHERE kf.user_id = ? OR f.is_public = 1 OR
           kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
-        ORDER BY kf.original_name`;
+        ORDER BY kf.sort_order, kf.original_name`;
       bindings = [user.id, user.id];
     }
   } else {
-    query = `SELECT kf.*, u.display_name as owner_name FROM kml_files kf
-      LEFT JOIN users u ON kf.user_id = u.id WHERE kf.is_public = 1 ORDER BY kf.original_name`;
+    // Non-logged in users see only KML files in public folders
+    query = `SELECT kf.*, u.display_name as owner_name, 1 as is_public
+      FROM kml_files kf
+      LEFT JOIN users u ON kf.user_id = u.id
+      LEFT JOIN kml_folders f ON kf.folder_id = f.id
+      WHERE f.is_public = 1
+      ORDER BY kf.sort_order, kf.original_name`;
   }
 
   const stmt = env.DB.prepare(query);
@@ -1442,22 +1455,37 @@ async function handleFolderVisibility(request, env, user, id) {
 async function handleGetPins(env, user) {
   let pins;
   if (user && user.is_admin) {
+    // Admin sees all pins
     pins = await env.DB.prepare(`
-      SELECT p.*, u.display_name as author FROM pins p
-      LEFT JOIN users u ON p.user_id = u.id ORDER BY p.created_at DESC
+      SELECT p.*, u.display_name as author,
+        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+      FROM pins p
+      LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN folders f ON p.folder_id = f.id
+      ORDER BY p.created_at DESC
     `).all();
   } else if (user) {
+    // User sees: own pins, pins in public folders, pins in shared folders
     pins = await env.DB.prepare(`
-      SELECT p.*, u.display_name as author FROM pins p
+      SELECT p.*, u.display_name as author,
+        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+      FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.is_public = 1 OR p.user_id = ?
+      LEFT JOIN folders f ON p.folder_id = f.id
+      WHERE p.user_id = ?
+        OR f.is_public = 1
         OR p.folder_id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
       ORDER BY p.created_at DESC
     `).bind(user.id, user.id).all();
   } else {
+    // Non-logged in users see only pins in public folders
     pins = await env.DB.prepare(`
-      SELECT p.*, u.display_name as author FROM pins p
-      LEFT JOIN users u ON p.user_id = u.id WHERE p.is_public = 1 ORDER BY p.created_at DESC
+      SELECT p.*, u.display_name as author, 1 as is_public
+      FROM pins p
+      LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN folders f ON p.folder_id = f.id
+      WHERE f.is_public = 1
+      ORDER BY p.created_at DESC
     `).all();
   }
 
