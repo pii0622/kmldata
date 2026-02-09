@@ -34,11 +34,22 @@ const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
   maxZoom: 18
 });
+const gsiRelief = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png', {
+  attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom: 15
+});
+const gsiHillshade = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png', {
+  attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
+  maxZoom: 16,
+  opacity: 0.6
+});
 
 gsiStd.addTo(map);
 L.control.layers({
   '国土地理院地図': gsiStd,
-  '航空写真': gsiPhoto
+  '航空写真': gsiPhoto,
+  '色別標高図': gsiRelief,
+  '陰影起伏図': gsiHillshade
 }, {}, { position: 'topright' }).addTo(map);
 
 // Map click for pin placement
@@ -1198,6 +1209,7 @@ function addPinMarker(pin) {
 function renderPinItem(pin) {
   const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
   const canEdit = currentUser && (pin.user_id === currentUser.id || currentUser.is_admin);
+  const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   return `<div class="pin-item" data-pin-id="${pin.id}">
     <div class="pin-item-header" onclick="focusPin(${pin.id})">
       <h4>${escHtml(pin.title)} ${vis}</h4>
@@ -1205,6 +1217,7 @@ function renderPinItem(pin) {
     </div>
     <div class="pin-meta">
       <span><i class="fas fa-user"></i> ${escHtml(pin.author || '')}</span>
+      <span><i class="fas fa-calendar"></i> ${dateStr}</span>
       ${pin.images && pin.images.length > 0 ? '<span><i class="fas fa-image"></i> ' + pin.images.length + '</span>' : ''}
       ${canEdit ? `<button onclick="event.stopPropagation(); showMovePinModal(${pin.id})" title="移動" class="icon-btn" style="margin-left:auto;"><i class="fas fa-arrows-alt"></i></button>` : ''}
     </div>
@@ -1521,9 +1534,10 @@ function createPinPopup(pin) {
   const div = document.createElement('div');
   div.style.cssText = 'max-width:250px;';
   const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
+  const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${vis}</h4>`;
   html += `<p style="font-size:12px;color:#666;margin:0 0 4px;">${escHtml(pin.description || '')}</p>`;
-  html += `<p style="font-size:11px;color:#999;">作成者: ${escHtml(pin.author || '')}</p>`;
+  html += `<p style="font-size:11px;color:#999;">作成者: ${escHtml(pin.author || '')} | ${dateStr}</p>`;
 
   if (pin.images && pin.images.length > 0) {
     html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">';
