@@ -10,6 +10,33 @@
 </head>
 <body>
 
+<!-- Login screen (shown when not logged in) -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <h1><i class="fas fa-map"></i> 地図アプリ</h1>
+    <p class="login-subtitle">続けるにはログインしてください</p>
+    <div id="login-form">
+      <div class="form-group">
+        <label>ユーザー名</label>
+        <input type="text" id="login-username" placeholder="ユーザー名">
+      </div>
+      <div class="form-group">
+        <label>パスワード</label>
+        <input type="password" id="login-password" placeholder="パスワード">
+      </div>
+      <div class="form-group" id="login-display-name-group" style="display:none;">
+        <label>表示名</label>
+        <input type="text" id="login-display-name" placeholder="表示名（省略可）">
+      </div>
+      <div id="login-error" class="login-error"></div>
+      <button class="btn btn-primary btn-block" id="login-submit" onclick="submitLogin()">ログイン</button>
+      <p class="login-toggle">
+        <a href="#" id="login-toggle-link" onclick="toggleLoginMode(event)">アカウントを作成</a>
+      </p>
+    </div>
+  </div>
+</div>
+
 <!-- Header buttons -->
 <div class="header-buttons">
   <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="メニュー">

@@ -109,11 +109,82 @@ function escHtml(str) {
 }
 
 // ==================== Auth ====================
+let loginMode = 'login';
+
 async function checkAuth() {
   try {
     currentUser = await api('/api/auth/me');
+    updateLoginScreen();
     updateUI();
-  } catch { currentUser = null; updateUI(); }
+  } catch {
+    currentUser = null;
+    updateLoginScreen();
+    updateUI();
+  }
+}
+
+function updateLoginScreen() {
+  const loginScreen = document.getElementById('login-screen');
+  if (currentUser) {
+    loginScreen.classList.add('hidden');
+  } else {
+    loginScreen.classList.remove('hidden');
+  }
+}
+
+function toggleLoginMode(e) {
+  e.preventDefault();
+  loginMode = loginMode === 'login' ? 'register' : 'login';
+  document.getElementById('login-display-name-group').style.display = loginMode === 'register' ? '' : 'none';
+  document.getElementById('login-submit').textContent = loginMode === 'login' ? 'ログイン' : 'アカウント作成';
+  document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
+  document.getElementById('login-error').classList.remove('show');
+}
+
+async function submitLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const displayName = document.getElementById('login-display-name').value.trim();
+  const errEl = document.getElementById('login-error');
+
+  if (!username || !password) {
+    errEl.textContent = 'ユーザー名とパスワードを入力してください';
+    errEl.classList.add('show');
+    return;
+  }
+
+  try {
+    const endpoint = loginMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const body = loginMode === 'login'
+      ? { username, password }
+      : { username, password, display_name: displayName || username };
+    const result = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+
+    // Handle pending registration
+    if (result.pending) {
+      errEl.textContent = '';
+      errEl.classList.remove('show');
+      notify(result.message, 'success');
+      // Clear form and switch to login mode
+      document.getElementById('login-username').value = '';
+      document.getElementById('login-password').value = '';
+      document.getElementById('login-display-name').value = '';
+      loginMode = 'login';
+      document.getElementById('login-display-name-group').style.display = 'none';
+      document.getElementById('login-submit').textContent = 'ログイン';
+      document.getElementById('login-toggle-link').textContent = 'アカウントを作成';
+      return;
+    }
+
+    currentUser = result;
+    updateLoginScreen();
+    notify('ログインしました');
+    updateUI();
+    loadAll();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('show');
+  }
 }
 
 function showAuthModal(mode = 'login') {
@@ -168,8 +239,8 @@ async function logout() {
   await api('/api/auth/logout', { method: 'POST' });
   currentUser = null;
   notify('ログアウトしました');
+  updateLoginScreen();
   updateUI();
-  loadAll();
 }
 
 async function loadUsers() {
