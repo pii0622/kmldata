@@ -121,50 +121,43 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   }
 }
 
-// Email sending via MailChannels (requires DNS setup)
-// Required DNS records for map.taishi-lab.com:
-// 1. TXT _mailchannels.map.taishi-lab.com "v=mc1 cfid=your-account.workers.dev"
-// 2. TXT map.taishi-lab.com "v=spf1 include:relay.mailchannels.net ~all"
+// Email sending via Resend (https://resend.com)
+// Free tier: 100 emails/day
+// Setup: Add RESEND_API_KEY to Cloudflare Pages environment variables
 const EMAIL_FROM = 'hello@map.taishi-lab.com';
 const EMAIL_FROM_NAME = '地図アプリ';
-const EMAIL_DOMAIN = 'map.taishi-lab.com';
 
-async function sendEmail(to, subject, htmlBody, textBody) {
+async function sendEmail(env, to, subject, htmlBody, textBody) {
+  // Check if Resend API key is configured
+  if (!env.RESEND_API_KEY) {
+    console.error('Email send failed: RESEND_API_KEY not configured');
+    return false;
+  }
+
   try {
-    const emailData = {
-      personalizations: [{
-        to: [{ email: to }],
-        dkim_domain: EMAIL_DOMAIN,
-        dkim_selector: 'mailchannels',
-        dkim_private_key: '' // Optional: Add DKIM private key if configured
-      }],
-      from: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
-      subject: subject,
-      content: [
-        { type: 'text/plain', value: textBody },
-        { type: 'text/html', value: htmlBody }
-      ]
-    };
-
-    // Remove DKIM fields if not configured
-    if (!emailData.personalizations[0].dkim_private_key) {
-      delete emailData.personalizations[0].dkim_domain;
-      delete emailData.personalizations[0].dkim_selector;
-      delete emailData.personalizations[0].dkim_private_key;
-    }
-
-    const response = await fetch('https://api.mailchannels.net/tx/v1/send', {
+    const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(emailData)
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`
+      },
+      body: JSON.stringify({
+        from: `${EMAIL_FROM_NAME} <${EMAIL_FROM}>`,
+        to: [to],
+        subject: subject,
+        html: htmlBody,
+        text: textBody
+      })
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error('Email send failed:', response.status, errText);
+      const errData = await response.json();
+      console.error('Email send failed:', response.status, JSON.stringify(errData));
       return false;
     }
-    console.log('Email sent successfully to:', to);
+
+    const result = await response.json();
+    console.log('Email sent successfully:', result.id);
     return true;
   } catch (err) {
     console.error('Email send error:', err);
@@ -833,7 +826,7 @@ async function handleApproveUser(env, id) {
       <p>地図アプリ</p>
     `;
     const textBody = `${user.display_name || user.username} 様\n\n地図アプリへのアカウント申請が承認されました。\nログインしてご利用ください。\n\n地図アプリ`;
-    await sendEmail(user.email, subject, htmlBody, textBody);
+    await sendEmail(env, user.email, subject, htmlBody, textBody);
   }
 
   return json({ ok: true, message: `${user.display_name}を承認しました` });
@@ -857,7 +850,7 @@ async function handleRejectUser(env, id) {
       <p>地図アプリ</p>
     `;
     const textBody = `${user.display_name || user.username} 様\n\n申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。\nご不明な点がございましたら、管理者までお問い合わせください。\n\n地図アプリ`;
-    emailSent = await sendEmail(user.email, subject, htmlBody, textBody);
+    emailSent = await sendEmail(env, user.email, subject, htmlBody, textBody);
   }
 
   // Delete related notifications
