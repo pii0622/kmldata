@@ -172,7 +172,8 @@ async function submitLogin() {
     if (result.pending) {
       errEl.textContent = '';
       errEl.classList.remove('show');
-      notify(result.message, 'success');
+      // Show success modal
+      openModal('modal-register-success');
       // Clear form and switch to login mode
       document.getElementById('login-username').value = '';
       document.getElementById('login-password').value = '';
