@@ -309,27 +309,29 @@ async function ensureTablesExist(env) {
       // KML folders
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
         name TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
         parent_id INTEGER,
+        is_public INTEGER DEFAULT 0,
         is_visible INTEGER DEFAULT 1,
         sort_order INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (parent_id) REFERENCES kml_folders(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (parent_id) REFERENCES kml_folders(id) ON DELETE CASCADE
       )`),
       // KML files
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
         folder_id INTEGER,
-        name TEXT NOT NULL,
-        filename TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        r2_key TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        is_public INTEGER DEFAULT 0,
         is_visible INTEGER DEFAULT 1,
         sort_order INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (folder_id) REFERENCES kml_folders(id)
+        FOREIGN KEY (folder_id) REFERENCES kml_folders(id) ON DELETE SET NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
