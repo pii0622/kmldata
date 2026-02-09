@@ -130,6 +130,10 @@
       <input type="text" id="kml-folder-name" placeholder="フォルダ名">
     </div>
     <div class="form-group">
+      <label>親フォルダ</label>
+      <select id="kml-folder-parent"></select>
+    </div>
+    <div class="form-group">
       <label class="checkbox-label">
         <input type="checkbox" id="kml-folder-public"> 全ユーザーに公開する（管理者のみ）
       </label>
@@ -289,6 +293,51 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-move-kml-file')">キャンセル</button>
       <button class="btn btn-primary" onclick="moveKmlFile()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move KML folder modal -->
+<div class="modal-overlay" id="modal-move-kml-folder">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> KMLフォルダを移動</h3>
+    <input type="hidden" id="move-kml-folder-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-kml-folder-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-kml-folder-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-kml-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveKmlFolder()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reorder KML folders modal -->
+<div class="modal-overlay" id="modal-reorder-kml-folders">
+  <div class="modal">
+    <h3><i class="fas fa-sort"></i> KMLフォルダの並び替え</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">上下ボタンで順番を変更してください</p>
+    <div id="reorder-kml-folder-list" class="reorder-list">
+      <!-- Dynamic list -->
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal('modal-reorder-kml-folders')">完了</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reorder pin folders modal -->
+<div class="modal-overlay" id="modal-reorder-folders">
+  <div class="modal">
+    <h3><i class="fas fa-sort"></i> ピンフォルダの並び替え</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">上下ボタンで順番を変更してください</p>
+    <div id="reorder-folder-list" class="reorder-list">
+      <!-- Dynamic list -->
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal('modal-reorder-folders')">完了</button>
     </div>
   </div>
 </div>

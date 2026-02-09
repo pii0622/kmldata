@@ -182,6 +182,11 @@ export async function onRequest(context) {
       const id = path.match(/^\/kml-folders\/(\d+)\/reorder$/)[1];
       return await handleReorderKmlFolder(request, env, user, id);
     }
+    if (path.match(/^\/kml-folders\/(\d+)\/move$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/kml-folders\/(\d+)\/move$/)[1];
+      return await handleMoveKmlFolder(request, env, user, id);
+    }
 
     // KML Files
     if (path === '/kml-files' && method === 'GET') {
@@ -238,6 +243,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/folders\/(\d+)\/move$/)[1];
       return await handleMoveFolder(request, env, user, id);
+    }
+    if (path.match(/^\/folders\/(\d+)\/visibility$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/folders\/(\d+)\/visibility$/)[1];
+      return await handleFolderVisibility(request, env, user, id);
     }
 
     // Pins
@@ -447,15 +457,21 @@ async function handleGetKmlFolders(env, user) {
 }
 
 async function handleCreateKmlFolder(request, env, user) {
-  const { name, is_public } = await request.json();
+  const { name, is_public, parent_id } = await request.json();
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
+
+  if (parent_id) {
+    const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ? AND user_id = ?')
+      .bind(parent_id, user.id).first();
+    if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
+  }
 
   const publicFlag = user.is_admin && is_public ? 1 : 0;
   const result = await env.DB.prepare(
-    'INSERT INTO kml_folders (name, user_id, is_public) VALUES (?, ?, ?)'
-  ).bind(name, user.id, publicFlag).run();
+    'INSERT INTO kml_folders (name, user_id, is_public, parent_id) VALUES (?, ?, ?, ?)'
+  ).bind(name, user.id, publicFlag, parent_id || null).run();
 
-  return json({ id: result.meta.last_row_id, name, user_id: user.id, is_public: publicFlag });
+  return json({ id: result.meta.last_row_id, name, user_id: user.id, is_public: publicFlag, parent_id: parent_id || null });
 }
 
 async function handleRenameKmlFolder(request, env, user, id) {
@@ -548,6 +564,43 @@ async function handleReorderKmlFolder(request, env, user, id) {
   await env.DB.prepare('UPDATE kml_folders SET sort_order = ? WHERE id = ?')
     .bind(sourceOrder, target_id).run();
 
+  return json({ ok: true });
+}
+
+async function handleMoveKmlFolder(request, env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+  if (folder.user_id !== user.id && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const { parent_id } = await request.json();
+
+  // Cannot move folder to itself
+  if (parent_id && parseInt(parent_id) === parseInt(id)) {
+    return json({ error: '自分自身には移動できません' }, 400);
+  }
+
+  // Check if target parent exists and belongs to user
+  if (parent_id) {
+    const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(parent_id).first();
+    if (!parent) return json({ error: '移動先フォルダが見つかりません' }, 404);
+    if (parent.user_id !== user.id && !user.is_admin) {
+      return json({ error: '移動先フォルダの権限がありません' }, 403);
+    }
+
+    // Check for circular reference (cannot move to child folder)
+    let current = parent;
+    while (current && current.parent_id) {
+      if (parseInt(current.parent_id) === parseInt(id)) {
+        return json({ error: '子フォルダには移動できません' }, 400);
+      }
+      current = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(current.parent_id).first();
+    }
+  }
+
+  await env.DB.prepare('UPDATE kml_folders SET parent_id = ? WHERE id = ?')
+    .bind(parent_id || null, id).run();
   return json({ ok: true });
 }
 
@@ -662,7 +715,7 @@ async function handleGetFolders(env, user) {
   if (!user) {
     // Non-logged in users can see public folders
     const folders = await env.DB.prepare(`
-      SELECT f.*, u.display_name as owner_name, 0 as is_owner
+      SELECT f.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible
       FROM folders f
       LEFT JOIN users u ON f.user_id = u.id
       WHERE f.is_public = 1
@@ -673,12 +726,14 @@ async function handleGetFolders(env, user) {
 
   const folders = await env.DB.prepare(`
     SELECT f.*, u.display_name as owner_name,
-      CASE WHEN f.user_id = ? THEN 1 ELSE 0 END as is_owner
+      CASE WHEN f.user_id = ? THEN 1 ELSE 0 END as is_owner,
+      COALESCE(fv.is_visible, 1) as is_visible
     FROM folders f
     LEFT JOIN users u ON f.user_id = u.id
+    LEFT JOIN folder_visibility fv ON f.id = fv.folder_id AND fv.user_id = ?
     WHERE f.user_id = ? OR f.is_public = 1 OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
     ORDER BY f.sort_order, f.name
-  `).bind(user.id, user.id, user.id).all();
+  `).bind(user.id, user.id, user.id, user.id).all();
 
   return json(folders.results);
 }
@@ -826,6 +881,15 @@ async function handleMoveFolder(request, env, user, id) {
 
   await env.DB.prepare('UPDATE folders SET parent_id = ? WHERE id = ?')
     .bind(parent_id || null, id).run();
+  return json({ ok: true });
+}
+
+async function handleFolderVisibility(request, env, user, id) {
+  const { is_visible } = await request.json();
+  await env.DB.prepare(`
+    INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
+    ON CONFLICT(folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
+  `).bind(id, user.id, is_visible ? 1 : 0).run();
   return json({ ok: true });
 }
 

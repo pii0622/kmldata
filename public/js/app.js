@@ -204,18 +204,28 @@ function renderSidebar() {
   // KML Folders section
   html += '<div class="section-title">KMLフォルダ</div>';
   if (currentUser) {
-    html += `<button class="btn btn-sm btn-primary" style="margin-bottom:8px;" onclick="showKmlFolderModal()">
-      <i class="fas fa-folder-plus"></i> フォルダ作成
-    </button>`;
+    html += `<div style="margin-bottom:8px;display:flex;gap:4px;">
+      <button class="btn btn-sm btn-primary" onclick="showKmlFolderModal()">
+        <i class="fas fa-folder-plus"></i> フォルダ作成
+      </button>
+      <button class="btn btn-sm btn-secondary" onclick="showReorderKmlFoldersModal()" title="並び替え">
+        <i class="fas fa-sort"></i>
+      </button>
+    </div>`;
   }
   html += renderKmlFolderList();
 
   // Pin Folders section (pins grouped by folder)
   if (currentUser) {
     html += '<div class="section-title">ピンフォルダ</div>';
-    html += `<button class="btn btn-sm btn-primary" style="margin-bottom:8px;" onclick="showFolderModal()">
-      <i class="fas fa-folder-plus"></i> フォルダ作成
-    </button>`;
+    html += `<div style="margin-bottom:8px;display:flex;gap:4px;">
+      <button class="btn btn-sm btn-primary" onclick="showFolderModal()">
+        <i class="fas fa-folder-plus"></i> フォルダ作成
+      </button>
+      <button class="btn btn-sm btn-secondary" onclick="showReorderFoldersModal()" title="並び替え">
+        <i class="fas fa-sort"></i>
+      </button>
+    </div>`;
     html += renderPinFolderList();
   }
 
@@ -232,49 +242,62 @@ function renderKmlFolderList() {
   }
 
   let html = '';
-  for (const folder of kmlFolders) {
-    const files = kmlFiles.filter(f => f.folder_id === folder.id);
-    const isOwner = folder.is_owner;
-    const isVisible = folder.is_visible;
-    const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
-    const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
+  // Render only top-level folders (parent_id = null)
+  const topFolders = kmlFolders.filter(f => !f.parent_id);
+  for (const folder of topFolders) {
+    html += renderKmlFolderNode(folder, 0);
+  }
+  return html;
+}
 
-    html += `<div class="kml-folder-item" data-folder-id="${folder.id}" draggable="${isOwner}"
-      ondragstart="onDragStart(event, 'kml', ${folder.id})"
-      ondragover="onDragOver(event)"
-      ondragenter="onDragEnter(event)"
-      ondragleave="onDragLeave(event)"
-      ondragend="onDragEnd(event)"
-      ondrop="onDrop(event, 'kml', ${folder.id})">
-      <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge}</div>
-      <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
-        <i class="fas fa-chevron-right toggle-icon"></i>
-        <i class="fas fa-folder folder-icon"></i>
-        <div class="kml-folder-actions" onclick="event.stopPropagation()">
-          <button onclick="zoomToKmlFolder(${folder.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
-          <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
-          ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
-          <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
-          <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
-          <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+function renderKmlFolderNode(folder, depth) {
+  const files = kmlFiles.filter(f => f.folder_id === folder.id);
+  const childFolders = kmlFolders.filter(f => f.parent_id === folder.id);
+  const isOwner = folder.is_owner;
+  const isVisible = folder.is_visible;
+  const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
+  const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
+  const totalCount = files.length + childFolders.length;
+
+  let html = `<div class="kml-folder-item" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
+    <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
+    <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
+      <i class="fas fa-chevron-right toggle-icon"></i>
+      <i class="fas fa-folder folder-icon"></i>
+      <div class="kml-folder-actions" onclick="event.stopPropagation()">
+        <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
+        ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
+        <button onclick="showMoveKmlFolderModal(${folder.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
+        <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
+        <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
+        <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+      </div>
+    </div>
+    <div class="kml-folder-files" id="kml-folder-files-${folder.id}">`;
+
+  // Render child folders first
+  for (const child of childFolders) {
+    html += renderKmlFolderNode(child, 0);
+  }
+
+  // Then render files
+  if (files.length > 0) {
+    html += files.map(f => `
+      <div class="kml-file-item" data-file-id="${f.id}">
+        <i class="fas fa-file"></i>
+        <span class="kml-file-name" onclick="focusKmlFile(${f.id})">${escHtml(f.original_name)}</span>
+        <div class="kml-file-actions">
+          <button onclick="zoomToKmlFile(${f.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
+          ${isOwner ? `<button onclick="showMoveKmlFileModal(${f.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
+          <button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
         </div>
       </div>
-      <div class="kml-folder-files" id="kml-folder-files-${folder.id}">
-        ${files.map(f => `
-          <div class="kml-file-item" data-file-id="${f.id}">
-            <i class="fas fa-file"></i>
-            <span class="kml-file-name" onclick="focusKmlFile(${f.id})">${escHtml(f.original_name)}</span>
-            <div class="kml-file-actions">
-              <button onclick="zoomToKmlFile(${f.id})" title="ズーム" class="icon-btn"><i class="fas fa-search-plus"></i></button>
-              ${isOwner ? `<button onclick="showMoveKmlFileModal(${f.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
-              <button onclick="deleteKmlFile(${f.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
-            </div>
-          </div>
-        `).join('')}
-        ${files.length === 0 ? '<p style="font-size:12px;color:#999;padding:4px;">ファイルがありません</p>' : ''}
-      </div>
-    </div>`;
+    `).join('');
+  } else if (childFolders.length === 0) {
+    html += '<p style="font-size:12px;color:#999;padding:4px;">ファイルがありません</p>';
   }
+
+  html += '</div></div>';
   return html;
 }
 
@@ -386,7 +409,25 @@ function showKmlFolderModal() {
   document.getElementById('kml-folder-name').value = '';
   document.getElementById('kml-folder-public').checked = false;
   document.getElementById('kml-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
+  populateKmlFolderSelect('kml-folder-parent', null);
   openModal('modal-kml-folder');
+}
+
+function populateKmlFolderSelect(selectId, selectedId) {
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">-- なし --</option>';
+  function addOptions(parentId, depth) {
+    const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
+    for (const f of children) {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+      if (f.id == selectedId) opt.selected = true;
+      sel.appendChild(opt);
+      addOptions(f.id, depth + 1);
+    }
+  }
+  addOptions(null, 0);
 }
 
 async function createKmlFolder() {
@@ -398,6 +439,7 @@ async function createKmlFolder() {
       method: 'POST',
       body: JSON.stringify({
         name,
+        parent_id: document.getElementById('kml-folder-parent').value || null,
         is_public: document.getElementById('kml-folder-public').checked
       })
     });
@@ -430,85 +472,119 @@ async function deleteKmlFolder(folderId) {
   } catch (err) { notify(err.message, 'error'); }
 }
 
-// Drag and drop for folder reordering
-let draggedItemId = null;
-let draggedItemType = null; // 'kml-folder', 'pin-folder', 'kml-file', 'pin'
+// Move KML folder to another parent
+function showMoveKmlFolderModal(folderId) {
+  document.getElementById('move-kml-folder-id').value = folderId;
+  const folder = kmlFolders.find(f => f.id === folderId);
+  document.getElementById('move-kml-folder-name').textContent = folder ? folder.name : '';
 
-function onDragStart(e, type, itemId) {
-  draggedItemId = itemId;
-  draggedItemType = type;
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', `${type}:${itemId}`);
-  setTimeout(() => e.target.classList.add('dragging'), 0);
-}
+  // Populate folder select excluding self and children
+  const sel = document.getElementById('move-kml-folder-target');
+  sel.innerHTML = '<option value="">-- ルート（最上位）--</option>';
 
-function onDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
-  if (target && !target.classList.contains('dragging')) {
-    target.classList.add('drag-over');
+  function addOptions(parentId, depth) {
+    const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
+    for (const f of children) {
+      if (f.id === folderId) continue;
+      // Check if f is a descendant of folderId (prevent circular)
+      let isDescendant = false;
+      let current = f;
+      while (current && current.parent_id) {
+        if (current.parent_id === folderId) { isDescendant = true; break; }
+        current = kmlFolders.find(p => p.id === current.parent_id);
+      }
+      if (isDescendant) continue;
+
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+      if (f.id === folder?.parent_id) opt.selected = true;
+      sel.appendChild(opt);
+      addOptions(f.id, depth + 1);
+    }
   }
+  addOptions(null, 0);
+  openModal('modal-move-kml-folder');
 }
 
-function onDragEnter(e) {
-  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
-  if (target && !target.classList.contains('dragging')) {
-    target.classList.add('drag-over');
-  }
-}
-
-function onDragLeave(e) {
-  const target = e.target.closest('.kml-folder-item, .pin-folder-section');
-  if (target && !target.contains(e.relatedTarget)) {
-    target.classList.remove('drag-over');
-  }
-}
-
-function onDragEnd(e) {
-  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
-  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-  draggedItemId = null;
-  draggedItemType = null;
-}
-
-async function onDrop(e, targetType, targetId) {
-  e.preventDefault();
-  e.stopPropagation();
-
-  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
-
-  if (!draggedItemId || !draggedItemType) return;
-
-  // Same item, ignore
-  if (draggedItemType === targetType && draggedItemId === targetId) {
-    draggedItemId = null;
-    draggedItemType = null;
-    return;
-  }
+async function moveKmlFolder() {
+  const folderId = document.getElementById('move-kml-folder-id').value;
+  const targetId = document.getElementById('move-kml-folder-target').value || null;
 
   try {
-    // Folder reordering (same type swap)
-    if (draggedItemType === 'kml' && targetType === 'kml') {
-      await api(`/api/kml-folders/${draggedItemId}/reorder`, {
-        method: 'POST',
-        body: JSON.stringify({ target_id: targetId })
-      });
-      loadKmlFolders();
-    } else if (draggedItemType === 'pin' && targetType === 'pin') {
-      await api(`/api/folders/${draggedItemId}/reorder`, {
-        method: 'POST',
-        body: JSON.stringify({ target_id: targetId })
-      });
-      loadFolders();
-    }
-  } catch (err) {
-    notify(err.message, 'error');
-  }
+    await api(`/api/kml-folders/${folderId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ parent_id: targetId ? parseInt(targetId) : null })
+    });
+    closeModal('modal-move-kml-folder');
+    notify('KMLフォルダを移動しました');
+    loadKmlFolders();
+  } catch (err) { notify(err.message, 'error'); }
+}
 
-  draggedItemId = null;
-  draggedItemType = null;
+// Folder reorder modals
+function showReorderKmlFoldersModal() {
+  const listEl = document.getElementById('reorder-kml-folder-list');
+  const topFolders = kmlFolders.filter(f => !f.parent_id && f.is_owner);
+  listEl.innerHTML = topFolders.map(f => `
+    <div class="reorder-item" data-id="${f.id}">
+      <span>${escHtml(f.name)}</span>
+      <div class="reorder-buttons">
+        <button onclick="reorderKmlFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+        <button onclick="reorderKmlFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+      </div>
+    </div>
+  `).join('') || '<p style="color:#999;">フォルダがありません</p>';
+  openModal('modal-reorder-kml-folders');
+}
+
+async function reorderKmlFolder(folderId, direction) {
+  const topFolders = kmlFolders.filter(f => !f.parent_id && f.is_owner);
+  const idx = topFolders.findIndex(f => f.id === folderId);
+  const targetIdx = idx + direction;
+  if (targetIdx < 0 || targetIdx >= topFolders.length) return;
+
+  const targetFolder = topFolders[targetIdx];
+  try {
+    await api(`/api/kml-folders/${folderId}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetFolder.id })
+    });
+    await loadKmlFolders();
+    showReorderKmlFoldersModal(); // Refresh list
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+function showReorderFoldersModal() {
+  const listEl = document.getElementById('reorder-folder-list');
+  const topFolders = folders.filter(f => !f.parent_id && f.is_owner);
+  listEl.innerHTML = topFolders.map(f => `
+    <div class="reorder-item" data-id="${f.id}">
+      <span>${escHtml(f.name)}</span>
+      <div class="reorder-buttons">
+        <button onclick="reorderFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+        <button onclick="reorderFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+      </div>
+    </div>
+  `).join('') || '<p style="color:#999;">フォルダがありません</p>';
+  openModal('modal-reorder-folders');
+}
+
+async function reorderFolder(folderId, direction) {
+  const topFolders = folders.filter(f => !f.parent_id && f.is_owner);
+  const idx = topFolders.findIndex(f => f.id === folderId);
+  const targetIdx = idx + direction;
+  if (targetIdx < 0 || targetIdx >= topFolders.length) return;
+
+  const targetFolder = topFolders[targetIdx];
+  try {
+    await api(`/api/folders/${folderId}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetFolder.id })
+    });
+    await loadFolders();
+    showReorderFoldersModal(); // Refresh list
+  } catch (err) { notify(err.message, 'error'); }
 }
 
 function showRenameKmlFolderModal(folderId) {
@@ -772,24 +848,23 @@ function renderFolderNode(folder, folderPins, depth) {
   const pinsInFolder = folderPins[folder.id] || [];
   const childFolders = folders.filter(f => f.parent_id === folder.id);
   const isOwner = folder.is_owner;
+  const isVisible = folder.is_visible;
   const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
   const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
   const totalCount = pinsInFolder.length + childFolders.length;
 
-  let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}"
-    draggable="${isOwner}" ondragstart="onDragStart(event, 'pin', ${folder.id})"
-    ondragover="onDragOver(event)" ondragenter="onDragEnter(event)" ondragleave="onDragLeave(event)"
-    ondragend="onDragEnd(event)" ondrop="onDrop(event, 'pin', ${folder.id})">
+  let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
     <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
     <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
       <i class="fas fa-chevron-right toggle-icon"></i>
       <i class="fas fa-folder folder-icon"></i>
-      ${isOwner ? `<div class="folder-actions" onclick="event.stopPropagation()">
-        <button onclick="showRenameFolderModal(${folder.id})" title="名前変更"><i class="fas fa-edit"></i></button>
-        <button onclick="showMoveFolderModal(${folder.id})" title="移動"><i class="fas fa-arrows-alt"></i></button>
-        <button onclick="showShareFolderModal(${folder.id})" title="共有"><i class="fas fa-share-alt"></i></button>
-        <button onclick="deleteFolder(${folder.id})" title="削除"><i class="fas fa-trash"></i></button>
-      </div>` : ''}
+      <div class="folder-actions" onclick="event.stopPropagation()">
+        <button onclick="toggleFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
+        ${isOwner ? `<button onclick="showRenameFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
+        <button onclick="showMoveFolderModal(${folder.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
+        <button onclick="showShareFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
+        <button onclick="deleteFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+      </div>
     </div>
     <div class="pin-folder-content" id="pin-folder-${folder.id}">`;
 
@@ -816,6 +891,79 @@ function togglePinFolder(folderId) {
     header.classList.toggle('expanded');
     content.classList.toggle('open');
   }
+}
+
+async function toggleFolderVisibility(folderId, visible) {
+  if (!currentUser) return;
+  try {
+    await api(`/api/folders/${folderId}/visibility`, {
+      method: 'POST',
+      body: JSON.stringify({ is_visible: visible })
+    });
+    // Update local state
+    const folder = folders.find(f => f.id === folderId);
+    if (folder) folder.is_visible = visible ? 1 : 0;
+    // Update pin markers
+    updatePinMarkers();
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function toggleFolderVisibilityBtn(folderId) {
+  const folder = folders.find(f => f.id === folderId);
+  if (!folder) return;
+
+  const newVisible = !folder.is_visible;
+
+  // Update icon immediately
+  const btn = document.querySelector(`.pin-folder-section[data-folder-id="${folderId}"] .icon-btn[title="表示切替"]`);
+  if (btn) {
+    btn.classList.toggle('active', newVisible);
+  }
+
+  await toggleFolderVisibility(folderId, newVisible);
+}
+
+function updatePinMarkers() {
+  // Remove all pin markers
+  Object.values(pinMarkers).forEach(m => map.removeLayer(m));
+  pinMarkers = {};
+
+  // Add visible pins based on folder visibility
+  for (const pin of pins) {
+    // Check if pin's folder is visible (or pin has no folder)
+    let isVisible = true;
+    if (pin.folder_id) {
+      const folder = folders.find(f => f.id === pin.folder_id);
+      if (folder && !folder.is_visible) {
+        isVisible = false;
+      }
+    }
+    if (isVisible) {
+      addPinMarker(pin);
+    }
+  }
+}
+
+function addPinMarker(pin) {
+  const isOwn = currentUser && pin.user_id === currentUser.id;
+  const color = isOwn ? '#1a73e8' : '#e53935';
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      background:${color};width:28px;height:28px;border-radius:50% 50% 50% 0;
+      transform:rotate(-45deg);border:2px solid white;
+      box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;
+    "><i class="fas fa-map-pin" style="color:white;font-size:12px;transform:rotate(45deg);"></i></div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
+    popupAnchor: [0, -28]
+  });
+
+  const marker = L.marker([pin.lat, pin.lng], { icon }).addTo(map);
+  marker.bindPopup(() => createPinPopup(pin));
+  pinMarkers[pin.id] = marker;
 }
 
 function renderPinItem(pin) {
@@ -1122,28 +1270,7 @@ async function loadPins() {
 }
 
 function renderPinMarkers() {
-  Object.values(pinMarkers).forEach(m => map.removeLayer(m));
-  pinMarkers = {};
-
-  for (const pin of pins) {
-    const isOwn = currentUser && pin.user_id === currentUser.id;
-    const color = isOwn ? '#1a73e8' : '#e53935';
-    const icon = L.divIcon({
-      className: '',
-      html: `<div style="
-        background:${color};width:28px;height:28px;border-radius:50% 50% 50% 0;
-        transform:rotate(-45deg);border:2px solid white;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;
-      "><i class="fas fa-map-pin" style="color:white;font-size:12px;transform:rotate(45deg);"></i></div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 28],
-      popupAnchor: [0, -28]
-    });
-
-    const marker = L.marker([pin.lat, pin.lng], { icon }).addTo(map);
-    marker.bindPopup(() => createPinPopup(pin));
-    pinMarkers[pin.id] = marker;
-  }
+  updatePinMarkers();
 }
 
 function createPinPopup(pin) {
