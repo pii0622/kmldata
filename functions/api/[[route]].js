@@ -81,7 +81,7 @@ function json(data, status = 200, headers = {}) {
 // Rate limiting configuration
 const RATE_LIMITS = {
   login: { maxRequests: 5, windowSeconds: 300 },      // 5 attempts per 5 minutes
-  register: { maxRequests: 3, windowSeconds: 3600 },  // 3 attempts per hour
+  register: { maxRequests: 5, windowSeconds: 3600 },  // 5 attempts per hour
   default: { maxRequests: 100, windowSeconds: 60 }    // 100 requests per minute
 };
 
