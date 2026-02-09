@@ -14,6 +14,7 @@ let pendingPinLatLng = null;
 let editingPinId = null;
 let authMode = 'login';
 let watchId = null;
+let pendingUsersCount = 0;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
@@ -143,7 +144,16 @@ async function submitAuth() {
     const body = authMode === 'login'
       ? { username, password }
       : { username, password, display_name: displayName || username };
-    currentUser = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+    const result = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+
+    // Handle pending registration
+    if (result.pending) {
+      closeModal('modal-auth');
+      notify(result.message, 'success');
+      return;
+    }
+
+    currentUser = result;
     closeModal('modal-auth');
     notify(authMode === 'login' ? 'ログインしました' : 'アカウントを作成しました');
     updateUI();
@@ -189,6 +199,9 @@ function renderSidebar() {
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
       <div style="float:right;display:flex;gap:4px;">
+        ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
+          <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
+        </button>` : ''}
         <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
       </div>
@@ -795,6 +808,95 @@ async function saveAccountSettings() {
   } catch (err) {
     errEl.textContent = err.message;
     errEl.style.display = 'block';
+  }
+}
+
+// ==================== Admin Panel ====================
+async function loadPendingUsers() {
+  if (!currentUser || !currentUser.is_admin) {
+    pendingUsersCount = 0;
+    return;
+  }
+  try {
+    const users = await api('/api/admin/pending-users');
+    pendingUsersCount = users.length;
+  } catch (err) {
+    console.error('Failed to load pending users:', err);
+    pendingUsersCount = 0;
+  }
+}
+
+async function showAdminPanel() {
+  if (!currentUser || !currentUser.is_admin) return;
+
+  const listEl = document.getElementById('admin-pending-users');
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+  openModal('modal-admin');
+
+  try {
+    const users = await api('/api/admin/pending-users');
+    if (users.length === 0) {
+      listEl.innerHTML = '<p style="color:#999;">承認待ちのユーザーはいません</p>';
+    } else {
+      listEl.innerHTML = users.map(u => `
+        <div class="pending-user-item" data-user-id="${u.id}">
+          <div class="pending-user-info">
+            <strong>${escHtml(u.display_name || u.username)}</strong>
+            <span style="color:#666;font-size:12px;">@${escHtml(u.username)}</span>
+            <span style="color:#999;font-size:11px;">${new Date(u.created_at).toLocaleString('ja-JP')}</span>
+          </div>
+          <div class="pending-user-actions">
+            <button class="btn btn-sm btn-primary" onclick="approveUser(${u.id})">
+              <i class="fas fa-check"></i> 承認
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="rejectUser(${u.id})">
+              <i class="fas fa-times"></i> 拒否
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+    pendingUsersCount = users.length;
+    renderSidebar(); // Update badge
+  } catch (err) {
+    listEl.innerHTML = `<p style="color:#dc3545;">読み込みエラー: ${err.message}</p>`;
+  }
+}
+
+async function approveUser(userId) {
+  try {
+    const result = await api(`/api/admin/users/${userId}/approve`, { method: 'POST' });
+    notify(result.message);
+    // Remove from list
+    document.querySelector(`.pending-user-item[data-user-id="${userId}"]`)?.remove();
+    pendingUsersCount = Math.max(0, pendingUsersCount - 1);
+    renderSidebar();
+    // Check if list is empty
+    const listEl = document.getElementById('admin-pending-users');
+    if (!listEl.querySelector('.pending-user-item')) {
+      listEl.innerHTML = '<p style="color:#999;">承認待ちのユーザーはいません</p>';
+    }
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function rejectUser(userId) {
+  if (!confirm('このユーザーの申請を拒否しますか？')) return;
+  try {
+    const result = await api(`/api/admin/users/${userId}/reject`, { method: 'POST' });
+    notify(result.message);
+    // Remove from list
+    document.querySelector(`.pending-user-item[data-user-id="${userId}"]`)?.remove();
+    pendingUsersCount = Math.max(0, pendingUsersCount - 1);
+    renderSidebar();
+    // Check if list is empty
+    const listEl = document.getElementById('admin-pending-users');
+    if (!listEl.querySelector('.pending-user-item')) {
+      listEl.innerHTML = '<p style="color:#999;">承認待ちのユーザーはいません</p>';
+    }
+  } catch (err) {
+    notify(err.message, 'error');
   }
 }
 
@@ -1539,7 +1641,7 @@ async function loadFolders() {
 }
 
 async function loadAll() {
-  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders()]);
+  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers()]);
 }
 
 // ==================== Init ====================

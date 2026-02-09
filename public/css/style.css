@@ -309,6 +309,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
   padding: 4px 8px; font-size: 12px;
 }
 
+/* Admin panel */
+.admin-btn {
+  position: relative;
+}
+.notification-badge {
+  position: absolute; top: -5px; right: -5px;
+  background: #dc3545; color: white; font-size: 10px; font-weight: 700;
+  min-width: 16px; height: 16px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px;
+}
+.pending-user-item {
+  padding: 12px; border-bottom: 1px solid #eee;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.pending-user-item:last-child { border-bottom: none; }
+.pending-user-info {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pending-user-actions {
+  display: flex; gap: 6px; flex-shrink: 0;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
   .sidebar { width: 100%; }

@@ -171,6 +171,31 @@ export async function onRequest(context) {
       return await handleGetUsers(env, user);
     }
 
+    // Admin routes
+    if (path === '/admin/pending-users' && method === 'GET') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      return await handleGetPendingUsers(env);
+    }
+    if (path.match(/^\/admin\/users\/(\d+)\/approve$/) && method === 'POST') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const id = path.match(/^\/admin\/users\/(\d+)\/approve$/)[1];
+      return await handleApproveUser(env, id);
+    }
+    if (path.match(/^\/admin\/users\/(\d+)\/reject$/) && method === 'POST') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const id = path.match(/^\/admin\/users\/(\d+)\/reject$/)[1];
+      return await handleRejectUser(env, id);
+    }
+    if (path === '/admin/notifications' && method === 'GET') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      return await handleGetAdminNotifications(env);
+    }
+    if (path.match(/^\/admin\/notifications\/(\d+)\/read$/) && method === 'POST') {
+      if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const id = path.match(/^\/admin\/notifications\/(\d+)\/read$/)[1];
+      return await handleMarkNotificationRead(env, id);
+    }
+
     // KML Folders
     if (path === '/kml-folders' && method === 'GET') {
       return await handleGetKmlFolders(env, user);
@@ -345,18 +370,23 @@ async function handleRegister(request, env) {
   }
 
   const hash = await hashPassword(password);
+  // New users start with 'pending' status - must be approved by admin
   const result = await env.DB.prepare(
-    'INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)'
-  ).bind(username, hash, display_name || username).run();
+    'INSERT INTO users (username, password_hash, display_name, status) VALUES (?, ?, ?, ?)'
+  ).bind(username, hash, actualDisplayName, 'pending').run();
 
   const userId = result.meta.last_row_id;
-  const token = await createToken({ id: userId, username, display_name: display_name || username, is_admin: false }, env.JWT_SECRET || 'default-secret');
 
-  return json(
-    { id: userId, username, display_name: display_name || username, is_admin: false },
-    200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
-  );
+  // Create admin notification for pending approval
+  await env.DB.prepare(
+    'INSERT INTO admin_notifications (type, message, data) VALUES (?, ?, ?)'
+  ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, username, display_name: actualDisplayName })).run();
+
+  // Don't return token - user must wait for admin approval
+  return json({
+    pending: true,
+    message: 'アカウント申請を受け付けました。管理者の承認をお待ちください。'
+  });
 }
 
 async function handleLogin(request, env) {
@@ -368,6 +398,14 @@ async function handleLogin(request, env) {
   const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
+  }
+
+  // Check user approval status
+  if (user.status === 'pending') {
+    return json({ error: 'アカウントは承認待ちです。管理者の承認をお待ちください。' }, 403);
+  }
+  if (user.status === 'rejected') {
+    return json({ error: 'アカウントは承認されませんでした。' }, 403);
   }
 
   const token = await createToken({
@@ -446,9 +484,61 @@ async function handleChangePassword(request, env, user) {
 // ==================== Users Handlers ====================
 async function handleGetUsers(env, user) {
   const users = await env.DB.prepare(
-    'SELECT id, username, display_name, is_admin FROM users WHERE id != ? ORDER BY display_name'
-  ).bind(user.id).all();
+    'SELECT id, username, display_name, is_admin FROM users WHERE id != ? AND status = ? ORDER BY display_name'
+  ).bind(user.id, 'approved').all();
   return json(users.results);
+}
+
+// ==================== Admin Handlers ====================
+async function handleGetPendingUsers(env) {
+  const users = await env.DB.prepare(
+    'SELECT id, username, display_name, created_at FROM users WHERE status = ? ORDER BY created_at DESC'
+  ).bind('pending').all();
+  return json(users.results);
+}
+
+async function handleApproveUser(env, id) {
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+  if (!user) return json({ error: 'ユーザーが見つかりません' }, 404);
+  if (user.status !== 'pending') return json({ error: 'このユーザーは既に処理済みです' }, 400);
+
+  await env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind('approved', id).run();
+
+  // Mark related notifications as read
+  await env.DB.prepare(`
+    UPDATE admin_notifications SET is_read = 1
+    WHERE type = 'user_pending' AND data LIKE ?
+  `).bind(`%"user_id":${id}%`).run();
+
+  return json({ ok: true, message: `${user.display_name}を承認しました` });
+}
+
+async function handleRejectUser(env, id) {
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+  if (!user) return json({ error: 'ユーザーが見つかりません' }, 404);
+  if (user.status !== 'pending') return json({ error: 'このユーザーは既に処理済みです' }, 400);
+
+  await env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind('rejected', id).run();
+
+  // Mark related notifications as read
+  await env.DB.prepare(`
+    UPDATE admin_notifications SET is_read = 1
+    WHERE type = 'user_pending' AND data LIKE ?
+  `).bind(`%"user_id":${id}%`).run();
+
+  return json({ ok: true, message: `${user.display_name}を拒否しました` });
+}
+
+async function handleGetAdminNotifications(env) {
+  const notifications = await env.DB.prepare(
+    'SELECT * FROM admin_notifications WHERE is_read = 0 ORDER BY created_at DESC LIMIT 50'
+  ).all();
+  return json(notifications.results);
+}
+
+async function handleMarkNotificationRead(env, id) {
+  await env.DB.prepare('UPDATE admin_notifications SET is_read = 1 WHERE id = ?').bind(id).run();
+  return json({ ok: true });
 }
 
 // ==================== KML Folders Handlers ====================
