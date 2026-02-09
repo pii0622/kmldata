@@ -34,22 +34,16 @@ const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
   maxZoom: 18
 });
-const gsiRelief = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png', {
+const gsiSekishoku = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/sekishoku/{z}/{x}/{y}.png', {
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 15
-});
-const gsiHillshade = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png', {
-  attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 16,
-  opacity: 0.6
+  maxZoom: 16
 });
 
 gsiStd.addTo(map);
 L.control.layers({
   '国土地理院地図': gsiStd,
   '航空写真': gsiPhoto,
-  '色別標高図': gsiRelief,
-  '陰影起伏図': gsiHillshade
+  '赤色立体地図': gsiSekishoku
 }, {}, { position: 'topright' }).addTo(map);
 
 // Map click for pin placement
