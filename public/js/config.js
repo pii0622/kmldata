@@ -6,7 +6,7 @@ const APP_CONFIG = {
   tagline: '見つけたナニカを、notaに記録する。共有する。',
 
   // Domain (change this when domain changes)
-  domain: 'map.taishi-lab.com',
+  domain: 'fieldnota-commons.com',
 
   // Logo paths (replace with actual logos)
   logoIcon: '/images/logo-icon.svg',

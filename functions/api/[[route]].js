@@ -124,7 +124,7 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
 // Email sending via Resend (https://resend.com)
 // Free tier: 100 emails/day
 // Setup: Add RESEND_API_KEY to Cloudflare Pages environment variables
-const EMAIL_FROM = 'hello@map.taishi-lab.com';
+const EMAIL_FROM = 'hello@fieldnota-commons.com';
 const EMAIL_FROM_NAME = 'Fieldnota commons';
 
 async function sendEmail(env, to, subject, htmlBody, textBody) {
@@ -900,7 +900,7 @@ async function handleExternalMemberSync(request, env) {
 
 // Send welcome email to external member
 async function sendExternalWelcomeEmail(env, email, displayName) {
-  const appUrl = 'https://map.taishi-lab.com';
+  const appUrl = 'https://fieldnota-commons.com';
   const subject = 'Fieldnota commons へようこそ';
 
   const htmlBody = `
@@ -1107,7 +1107,7 @@ async function handleApproveUser(env, id) {
 
   // Send approval email
   if (user.email) {
-    const appUrl = 'https://map.taishi-lab.com';
+    const appUrl = 'https://fieldnota-commons.com';
     const subject = 'アカウントが承認されました - Fieldnota commons';
     const htmlBody = `
       <h2>アカウント承認のお知らせ</h2>
