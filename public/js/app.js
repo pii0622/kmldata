@@ -2202,6 +2202,72 @@ function cancelPinMode() {
   closeModal('modal-pin');
 }
 
+// Compress image to target size (default 1MB)
+async function compressImage(file, maxSizeKB = 1000, maxWidth = 1920, maxHeight = 1920) {
+  return new Promise((resolve) => {
+    // If already small enough and is JPEG, return as-is
+    if (file.size <= maxSizeKB * 1024 && file.type === 'image/jpeg') {
+      resolve(file);
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      // Scale down if larger than max dimensions
+      if (width > maxWidth || height > maxHeight) {
+        const ratio = Math.min(maxWidth / width, maxHeight / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Try different quality levels to get under target size
+      let quality = 0.9;
+      const tryCompress = () => {
+        canvas.toBlob((blob) => {
+          if (blob.size > maxSizeKB * 1024 && quality > 0.1) {
+            quality -= 0.1;
+            tryCompress();
+          } else {
+            const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            });
+            console.log(`Compressed: ${(file.size/1024).toFixed(0)}KB -> ${(compressedFile.size/1024).toFixed(0)}KB`);
+            resolve(compressedFile);
+          }
+        }, 'image/jpeg', quality);
+      };
+      tryCompress();
+    };
+
+    img.onerror = () => resolve(file); // Fallback to original
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// Compress multiple images
+async function compressImages(files) {
+  const compressed = [];
+  for (const file of files) {
+    if (file.type.startsWith('image/')) {
+      compressed.push(await compressImage(file));
+    } else {
+      compressed.push(file);
+    }
+  }
+  return compressed;
+}
+
 function previewPinImages(input) {
   const container = document.getElementById('pin-image-preview');
   container.innerHTML = '';
@@ -2223,6 +2289,10 @@ async function savePin() {
   try {
     let pin;
     if (hasImages) {
+      // Compress images before upload
+      notify('画像を圧縮中...', 'info');
+      const compressedImages = await compressImages(imageInput.files);
+
       // Use FormData for multipart upload
       const formData = new FormData();
       formData.append('title', title);
@@ -2230,7 +2300,7 @@ async function savePin() {
       formData.append('lat', pendingPinLatLng.lat);
       formData.append('lng', pendingPinLatLng.lng);
       formData.append('folder_id', document.getElementById('pin-folder').value || '');
-      for (const file of imageInput.files) {
+      for (const file of compressedImages) {
         formData.append('images', file);
       }
       pin = await apiFormData('/api/pins', formData);
@@ -2308,11 +2378,13 @@ async function updatePin() {
       })
     });
 
-    // Upload new images
+    // Upload new images (compressed)
     const imageInput = document.getElementById('edit-pin-images');
     if (imageInput.files && imageInput.files.length > 0) {
+      notify('画像を圧縮中...', 'info');
+      const compressedImages = await compressImages(imageInput.files);
       const formData = new FormData();
-      for (const f of imageInput.files) formData.append('images', f);
+      for (const f of compressedImages) formData.append('images', f);
       await apiFormData('/api/pins/' + editingPinId + '/images', formData);
     }
 

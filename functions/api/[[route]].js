@@ -173,7 +173,7 @@ function getClientIP(request) {
 
 // Allowed image types and max size
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB (client compresses to 1MB, allow margin)
 const MAX_KML_SIZE = 50 * 1024 * 1024; // 50MB
 
 function validateImageFile(file) {
