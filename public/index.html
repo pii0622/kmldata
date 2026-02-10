@@ -52,13 +52,16 @@
   <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="メニュー">
     <i class="fas fa-bars"></i>
   </button>
-  <button class="map-btn" onclick="zoomToMyLocation()" title="現在地にズーム">
-    <i class="fas fa-location-crosshairs"></i> 現在地
+  <button class="map-btn" onclick="zoomToMyLocation()" title="現在地">
+    <i class="fas fa-location-crosshairs"></i>
   </button>
-  <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピンを追加" style="display:none;">
-    <i class="fas fa-map-pin"></i> ピン追加
+  <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピン追加" style="display:none;">
+    <i class="fas fa-map-pin"></i>
   </button>
-  <button class="map-btn" id="btn-notifications" onclick="openNotificationsPopup()" title="新着コメント" style="display:none;position:relative;">
+  <button class="map-btn" onclick="location.reload()" title="リロード">
+    <i class="fas fa-sync-alt"></i>
+  </button>
+  <button class="map-btn" id="btn-notifications" onclick="openNotificationsPopup()" title="新着通知" style="display:none;position:relative;">
     <i class="fas fa-bell"></i>
     <span id="notification-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc3545;color:#fff;font-size:10px;padding:2px 5px;border-radius:10px;min-width:16px;text-align:center;">0</span>
   </button>
