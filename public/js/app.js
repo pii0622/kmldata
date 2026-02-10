@@ -304,9 +304,6 @@ function renderSidebar() {
 
   // Auth section
   if (currentUser) {
-    const pushBtnClass = pushSubscription ? 'btn-secondary' : 'btn-primary';
-    const pushBtnIcon = pushSubscription ? 'fa-bell-slash' : 'fa-bell';
-    const pushBtnText = pushSubscription ? '通知OFF' : '通知ON';
     html += `<div class="user-info">
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
@@ -314,7 +311,6 @@ function renderSidebar() {
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
         </button>` : ''}
-        <button class="btn btn-sm ${pushBtnClass}" id="push-toggle-btn" onclick="togglePushNotifications()" title="プッシュ通知"><i class="fas ${pushBtnIcon}"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
       </div>
@@ -902,6 +898,8 @@ function showAccountSettings() {
   document.getElementById('settings-confirm-password').value = '';
   document.getElementById('settings-error').style.display = 'none';
   openModal('modal-settings');
+  // Update push notification UI
+  updatePushUI();
 }
 
 async function saveAccountSettings() {
@@ -1848,17 +1846,31 @@ async function unsubscribeFromPush() {
 }
 
 function updatePushUI() {
-  const btn = document.getElementById('push-toggle-btn');
-  if (!btn) return;
+  const btn = document.getElementById('settings-push-btn');
+  const status = document.getElementById('settings-push-status');
+  const container = document.getElementById('settings-push-container');
 
-  if (pushSubscription) {
-    btn.innerHTML = '<i class="fas fa-bell-slash"></i> 通知OFF';
-    btn.classList.remove('btn-primary');
-    btn.classList.add('btn-secondary');
-  } else {
-    btn.innerHTML = '<i class="fas fa-bell"></i> 通知ON';
-    btn.classList.remove('btn-secondary');
-    btn.classList.add('btn-primary');
+  // Check if push is supported
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (status) status.textContent = 'このブラウザは対応していません';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+
+  if (btn) {
+    if (pushSubscription) {
+      btn.innerHTML = '<i class="fas fa-bell-slash"></i> OFF';
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-secondary');
+    } else {
+      btn.innerHTML = '<i class="fas fa-bell"></i> ON';
+      btn.classList.remove('btn-secondary');
+      btn.classList.add('btn-primary');
+    }
+  }
+
+  if (status) {
+    status.textContent = pushSubscription ? '通知ON' : '通知OFF';
   }
 }
 
