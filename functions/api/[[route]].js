@@ -678,6 +678,14 @@ export async function onRequest(context) {
       return await handleGetImage(env, user, key);
     }
 
+    // External Member Sync API (for WordPress/Stripe integration)
+    if (path === '/external/member-sync' && method === 'POST') {
+      return await handleExternalMemberSync(request, env);
+    }
+    if (path === '/auth/setup-password' && method === 'POST') {
+      return await handleSetupPassword(request, env);
+    }
+
     return json({ error: 'Not found' }, 404);
   } catch (err) {
     console.error(err);
@@ -786,6 +794,11 @@ async function handleLogin(request, env) {
     await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'rejected' });
     return json({ error: 'アカウントは承認されませんでした。' }, 403);
   }
+  if (user.status === 'needs_password') {
+    // External member who needs to set up password - this shouldn't happen as password won't match
+    await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'needs_password_setup' });
+    return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true, email: user.email }, 403);
+  }
 
   await logSecurityEvent(env, 'login_success', user.id, request, {});
 
@@ -804,6 +817,186 @@ async function handleLogin(request, env) {
 
 function handleLogout() {
   return json({ ok: true }, 200, { 'Set-Cookie': setCookieHeader('auth', '', { maxAge: 0 }) });
+}
+
+// External Member Sync API Handler (for WordPress/Stripe integration)
+async function handleExternalMemberSync(request, env) {
+  try {
+    const { action, email, display_name, plan, external_id, secret } = await request.json();
+
+    // Verify shared secret
+    if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
+      return json({ error: 'Unauthorized' }, 401);
+    }
+
+    if (!email) {
+      return json({ error: 'Email is required' }, 400);
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(email)) {
+      return json({ error: 'Invalid email format' }, 400);
+    }
+
+    if (action === 'create') {
+      // Check if user already exists by email
+      const existing = await env.DB.prepare('SELECT id, member_source FROM users WHERE email = ?').bind(email).first();
+
+      if (existing) {
+        if (existing.member_source === 'wordpress') {
+          // Update plan for existing external member
+          await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?').bind(plan || 'premium', existing.id).run();
+          return json({ success: true, action: 'updated', user_id: existing.id });
+        } else {
+          // User registered normally, just update their plan
+          await env.DB.prepare('UPDATE users SET plan = ?, member_source = ? WHERE id = ?')
+            .bind(plan || 'premium', 'wordpress', existing.id).run();
+          return json({ success: true, action: 'upgraded', user_id: existing.id });
+        }
+      }
+
+      // Create new external member
+      // Use email as username for external members
+      const username = email;
+      const actualDisplayName = display_name || email.split('@')[0];
+
+      // Generate random temporary password hash (user must set password on first login)
+      const tempPassword = crypto.randomUUID();
+      const hash = await hashPassword(tempPassword);
+
+      const result = await env.DB.prepare(
+        `INSERT INTO users (username, password_hash, email, display_name, status, member_source, plan, external_id)
+         VALUES (?, ?, ?, ?, 'needs_password', 'wordpress', ?, ?)`
+      ).bind(username, hash, email, actualDisplayName, plan || 'premium', external_id || null).run();
+
+      const userId = result.meta.last_row_id;
+
+      // Send welcome email with password setup link
+      await sendExternalWelcomeEmail(env, email, actualDisplayName);
+
+      return json({ success: true, action: 'created', user_id: userId });
+
+    } else if (action === 'delete') {
+      // Find and delete user by email
+      const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+
+      if (!user) {
+        return json({ success: true, action: 'not_found' });
+      }
+
+      // Delete user and all related data (cascades via foreign keys)
+      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();
+
+      return json({ success: true, action: 'deleted', user_id: user.id });
+
+    } else {
+      return json({ error: 'Invalid action. Use "create" or "delete"' }, 400);
+    }
+  } catch (err) {
+    console.error('External member sync error:', err);
+    return json({ error: err.message || 'Server error' }, 500);
+  }
+}
+
+// Send welcome email to external member
+async function sendExternalWelcomeEmail(env, email, displayName) {
+  const appUrl = 'https://map.taishi-lab.com';
+  const subject = 'Fieldnota commons へようこそ';
+
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h1 style="color: #4CAF50;">Fieldnota commons へようこそ！</h1>
+  <p>${displayName} 様</p>
+  <p>有料会員登録ありがとうございます。</p>
+  <p>Fieldnota commons をご利用いただくには、以下のリンクからパスワードを設定してください：</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="${appUrl}?setup=password&email=${encodeURIComponent(email)}"
+       style="background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+      パスワードを設定する
+    </a>
+  </p>
+  <p style="color: #666; font-size: 14px;">
+    ※ このメールに心当たりがない場合は、無視してください。
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+  <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
+</body>
+</html>
+  `;
+
+  const textBody = `
+${displayName} 様
+
+Fieldnota commons へようこそ！
+
+有料会員登録ありがとうございます。
+
+以下のリンクからパスワードを設定してください：
+${appUrl}?setup=password&email=${encodeURIComponent(email)}
+
+※ このメールに心当たりがない場合は、無視してください。
+
+Fieldnota commons
+  `;
+
+  return await sendEmail(env, email, subject, htmlBody, textBody);
+}
+
+// Handle password setup for external members
+async function handleSetupPassword(request, env) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      return json({ error: 'メールアドレスとパスワードを入力してください' }, 400);
+    }
+
+    if (password.length < 4) {
+      return json({ error: 'パスワードは4文字以上にしてください' }, 400);
+    }
+
+    // Find user by email
+    const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+
+    if (!user) {
+      return json({ error: 'ユーザーが見つかりません' }, 404);
+    }
+
+    if (user.status !== 'needs_password') {
+      return json({ error: 'このアカウントは既にパスワードが設定されています。ログインしてください。' }, 400);
+    }
+
+    // Update password and status
+    const hash = await hashPassword(password);
+    await env.DB.prepare('UPDATE users SET password_hash = ?, status = ? WHERE id = ?')
+      .bind(hash, 'approved', user.id).run();
+
+    // Create token for auto-login
+    const token = await createToken({
+      id: user.id,
+      username: user.username,
+      display_name: user.display_name || user.username,
+      is_admin: !!user.is_admin
+    }, env.JWT_SECRET || 'default-secret');
+
+    await logSecurityEvent(env, 'password_setup_complete', user.id, request, { member_source: user.member_source });
+
+    return json(
+      {
+        success: true,
+        message: 'パスワードを設定しました',
+        user: { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin }
+      },
+      200,
+      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    );
+  } catch (err) {
+    console.error('Password setup error:', err);
+    return json({ error: err.message || 'Server error' }, 500);
+  }
 }
 
 async function handleUpdateProfile(request, env, user) {

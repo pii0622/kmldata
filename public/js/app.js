@@ -269,6 +269,71 @@ async function logout() {
   updateUI();
 }
 
+// Password setup for external members
+function checkPasswordSetup() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('setup') === 'password') {
+    const email = params.get('email');
+    if (email) {
+      showPasswordSetupModal(decodeURIComponent(email));
+    }
+  }
+}
+
+function showPasswordSetupModal(email) {
+  document.getElementById('setup-email').value = email;
+  document.getElementById('setup-password').value = '';
+  document.getElementById('setup-password-confirm').value = '';
+  document.getElementById('setup-error').style.display = 'none';
+  openModal('modal-password-setup');
+}
+
+async function submitPasswordSetup() {
+  const email = document.getElementById('setup-email').value;
+  const password = document.getElementById('setup-password').value;
+  const passwordConfirm = document.getElementById('setup-password-confirm').value;
+  const errEl = document.getElementById('setup-error');
+
+  if (!password) {
+    errEl.textContent = 'パスワードを入力してください';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  if (password.length < 4) {
+    errEl.textContent = 'パスワードは4文字以上にしてください';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    errEl.textContent = 'パスワードが一致しません';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const result = await api('/api/auth/setup-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+
+    closeModal('modal-password-setup');
+    currentUser = result.user;
+    notify('パスワードを設定しました');
+
+    // Clear URL params
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    updateLoginScreen();
+    updateUI();
+    loadAll();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+}
+
 async function loadUsers() {
   if (!currentUser) { allUsers = []; return; }
   try {
@@ -2541,6 +2606,7 @@ async function getTileCacheCount() {
 async function init() {
   registerServiceWorker();
   initInstallPrompt();
+  checkPasswordSetup();
   await checkAuth();
   await loadAll();
   startWatchingLocation();
