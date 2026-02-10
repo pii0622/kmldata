@@ -10,7 +10,7 @@ const APP_CONFIG = {
 
   // Logo paths (replace with actual logos)
   logoIcon: '/images/logo-icon.svg',
-  logoTitle: '/images/logo-title.svg',
+  logoTitle: '/images/logo-title.png',
 
   // Contact/Support
   contactEmail: 'support@example.com',
