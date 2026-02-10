@@ -281,9 +281,18 @@ function updateUI() {
   document.getElementById('btn-notifications').style.display = currentUser ? '' : 'none';
   if (currentUser) {
     checkUnreadComments();
-    // Check for new comments every 60 seconds
+    // Check for new comments every 30 seconds
     if (!window.notificationInterval) {
-      window.notificationInterval = setInterval(checkUnreadComments, 60000);
+      window.notificationInterval = setInterval(checkUnreadComments, 30000);
+    }
+    // Check when app becomes visible (user returns to app)
+    if (!window.visibilityListenerAdded) {
+      window.visibilityListenerAdded = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && currentUser) {
+          checkUnreadComments();
+        }
+      });
     }
   } else {
     if (window.notificationInterval) {
@@ -1776,6 +1785,21 @@ async function initPushNotifications() {
     // Check current subscription
     pushSubscription = await registration.pushManager.getSubscription();
     updatePushUI();
+
+    // Listen for messages from service worker
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type === 'push-received') {
+        // New push notification received - refresh notification count
+        console.log('Push received, refreshing notifications');
+        checkUnreadComments();
+      } else if (event.data?.type === 'notification-click') {
+        // User clicked notification - handle navigation
+        const data = event.data?.data;
+        if (data?.type && data?.id) {
+          zoomToNotification(data.type, data.id);
+        }
+      }
+    });
   } catch (err) {
     console.error('Service Worker registration failed:', err);
   }

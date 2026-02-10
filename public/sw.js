@@ -53,7 +53,17 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    Promise.all([
+      self.registration.showNotification(data.title, options),
+      // Notify all open windows to refresh their notification count
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        clientList.forEach(client => {
+          client.postMessage({ type: 'push-received', data: data });
+        });
+      }),
+      // Update app badge
+      self.navigator?.setAppBadge?.().catch(() => {})
+    ])
   );
 });
 
