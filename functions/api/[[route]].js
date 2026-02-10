@@ -833,7 +833,14 @@ async function handleExternalMemberSync(request, env) {
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
       console.log('[Fieldnota Sync] Auth failed - secrets do not match');
-      return json({ error: 'Unauthorized' }, 401);
+      return json({
+        error: 'Unauthorized',
+        debug: {
+          env_exists: !!env.EXTERNAL_SYNC_SECRET,
+          env_preview: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.substring(0, 5) + '...' : 'NOT_SET',
+          received_preview: secret ? secret.substring(0, 5) + '...' : 'empty'
+        }
+      }, 401);
     }
 
     if (!email) {
