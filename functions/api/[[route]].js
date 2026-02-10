@@ -945,13 +945,19 @@ Fieldnota commons
   return await sendEmail(env, email, subject, htmlBody, textBody);
 }
 
-// Handle password setup for external members
+// Handle account setup for external members (username + password)
 async function handleSetupPassword(request, env) {
   try {
-    const { email, password } = await request.json();
+    const { email, username, display_name, password } = await request.json();
 
-    if (!email || !password) {
-      return json({ error: 'メールアドレスとパスワードを入力してください' }, 400);
+    if (!email || !username || !password) {
+      return json({ error: 'すべての必須項目を入力してください' }, 400);
+    }
+
+    // Validate username format (full name in Roman letters)
+    const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
+    if (!fullNamePattern.test(username.trim())) {
+      return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
     }
 
     if (password.length < 4) {
@@ -969,32 +975,47 @@ async function handleSetupPassword(request, env) {
       return json({ error: 'このアカウントは既にパスワードが設定されています。ログインしてください。' }, 400);
     }
 
-    // Update password and status
+    // Check if username is already taken (by another user)
+    const existingUsername = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')
+      .bind(username.trim(), user.id).first();
+    if (existingUsername) {
+      return json({ error: 'そのユーザー名は既に使われています' }, 400);
+    }
+
+    // Check if display name is already taken
+    const actualDisplayName = (display_name || username).trim();
+    const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
+      .bind(actualDisplayName, user.id).first();
+    if (existingDisplayName) {
+      return json({ error: 'その表示名は既に使われています' }, 400);
+    }
+
+    // Update username, display_name, password and status
     const hash = await hashPassword(password);
-    await env.DB.prepare('UPDATE users SET password_hash = ?, status = ? WHERE id = ?')
-      .bind(hash, 'approved', user.id).run();
+    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, status = ? WHERE id = ?')
+      .bind(username.trim(), actualDisplayName, hash, 'approved', user.id).run();
 
     // Create token for auto-login
     const token = await createToken({
       id: user.id,
-      username: user.username,
-      display_name: user.display_name || user.username,
+      username: username.trim(),
+      display_name: actualDisplayName,
       is_admin: !!user.is_admin
     }, env.JWT_SECRET || 'default-secret');
 
-    await logSecurityEvent(env, 'password_setup_complete', user.id, request, { member_source: user.member_source });
+    await logSecurityEvent(env, 'account_setup_complete', user.id, request, { member_source: user.member_source });
 
     return json(
       {
         success: true,
-        message: 'パスワードを設定しました',
-        user: { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin }
+        message: 'アカウントを設定しました',
+        user: { id: user.id, username: username.trim(), display_name: actualDisplayName, is_admin: !!user.is_admin }
       },
       200,
       { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
     );
   } catch (err) {
-    console.error('Password setup error:', err);
+    console.error('Account setup error:', err);
     return json({ error: err.message || 'Server error' }, 500);
   }
 }

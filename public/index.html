@@ -561,18 +561,28 @@
   </div>
 </div>
 
-<!-- Password Setup Modal (for external members) -->
+<!-- Account Setup Modal (for external members) -->
 <div class="modal-overlay" id="modal-password-setup">
   <div class="modal" style="max-width:400px;">
     <div style="text-align:center;margin-bottom:20px;">
-      <div style="font-size:48px;color:#4CAF50;margin-bottom:12px;"><i class="fas fa-key"></i></div>
-      <h3>パスワードを設定</h3>
-      <p style="color:#666;font-size:14px;">Fieldnota commons へようこそ！<br>パスワードを設定してください。</p>
+      <div style="font-size:48px;color:#4CAF50;margin-bottom:12px;"><i class="fas fa-user-plus"></i></div>
+      <h3>アカウント設定</h3>
+      <p style="color:#666;font-size:14px;">Fieldnota commons へようこそ！<br>ユーザー名とパスワードを設定してください。</p>
     </div>
     <div id="setup-error" style="color:#ff4444;margin-bottom:12px;display:none;text-align:center;"></div>
     <div class="form-group">
       <label>メールアドレス</label>
       <input type="email" id="setup-email" readonly style="background:#f5f5f5;">
+    </div>
+    <div class="form-group">
+      <label>ユーザー名 (Full Name)</label>
+      <input type="text" id="setup-username" placeholder="Taro Yamada">
+      <small style="color:#666;font-size:12px;">ローマ字のフルネームを入力してください</small>
+    </div>
+    <div class="form-group">
+      <label>表示名</label>
+      <input type="text" id="setup-display-name" placeholder="任意の表示名">
+      <small style="color:#666;font-size:12px;">アプリ内で表示される名前（任意）</small>
     </div>
     <div class="form-group">
       <label>パスワード</label>

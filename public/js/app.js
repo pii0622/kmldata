@@ -282,6 +282,8 @@ function checkPasswordSetup() {
 
 function showPasswordSetupModal(email) {
   document.getElementById('setup-email').value = email;
+  document.getElementById('setup-username').value = '';
+  document.getElementById('setup-display-name').value = '';
   document.getElementById('setup-password').value = '';
   document.getElementById('setup-password-confirm').value = '';
   document.getElementById('setup-error').style.display = 'none';
@@ -290,9 +292,25 @@ function showPasswordSetupModal(email) {
 
 async function submitPasswordSetup() {
   const email = document.getElementById('setup-email').value;
+  const username = document.getElementById('setup-username').value.trim();
+  const displayName = document.getElementById('setup-display-name').value.trim();
   const password = document.getElementById('setup-password').value;
   const passwordConfirm = document.getElementById('setup-password-confirm').value;
   const errEl = document.getElementById('setup-error');
+
+  // Validate username (full name in Roman letters)
+  if (!username) {
+    errEl.textContent = 'ユーザー名を入力してください';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
+  if (!fullNamePattern.test(username)) {
+    errEl.textContent = 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）';
+    errEl.style.display = 'block';
+    return;
+  }
 
   if (!password) {
     errEl.textContent = 'パスワードを入力してください';
@@ -315,12 +333,12 @@ async function submitPasswordSetup() {
   try {
     const result = await api('/api/auth/setup-password', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, username, display_name: displayName || username, password })
     });
 
     closeModal('modal-password-setup');
     currentUser = result.user;
-    notify('パスワードを設定しました');
+    notify('アカウントを設定しました');
 
     // Clear URL params
     window.history.replaceState({}, document.title, window.location.pathname);
