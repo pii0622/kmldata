@@ -2311,31 +2311,40 @@ async function sendWebPush(env, subscription, payload) {
     ['sign']
   );
 
-  // Sign and convert DER to raw format (r || s, each 32 bytes)
-  const derSignature = await crypto.subtle.sign(
+  // Sign the JWT
+  const signature = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     privateKey,
     new TextEncoder().encode(unsignedToken)
   );
 
-  // Convert DER signature to raw r||s format
-  const derBytes = new Uint8Array(derSignature);
-  let offset = 2; // Skip sequence tag and length
-  const rLength = derBytes[offset + 1];
-  offset += 2;
-  let r = derBytes.slice(offset, offset + rLength);
-  offset += rLength;
-  const sLength = derBytes[offset + 1];
-  offset += 2;
-  let s = derBytes.slice(offset, offset + sLength);
+  // Convert signature to raw r||s format if needed
+  const sigBytes = new Uint8Array(signature);
+  let rawSignature;
 
-  // Ensure r and s are 32 bytes each (pad or trim leading zeros)
-  if (r.length > 32) r = r.slice(r.length - 32);
-  if (s.length > 32) s = s.slice(s.length - 32);
-  if (r.length < 32) r = new Uint8Array([...new Array(32 - r.length).fill(0), ...r]);
-  if (s.length < 32) s = new Uint8Array([...new Array(32 - s.length).fill(0), ...s]);
+  if (sigBytes.length === 64) {
+    // Already in raw format (r || s, each 32 bytes)
+    rawSignature = sigBytes;
+  } else {
+    // DER format - parse it
+    let offset = 2; // Skip sequence tag and length
+    const rLength = sigBytes[offset + 1];
+    offset += 2;
+    let r = sigBytes.slice(offset, offset + rLength);
+    offset += rLength;
+    const sLength = sigBytes[offset + 1];
+    offset += 2;
+    let s = sigBytes.slice(offset, offset + sLength);
 
-  const rawSignature = new Uint8Array([...r, ...s]);
+    // Ensure r and s are 32 bytes each
+    if (r.length > 32) r = r.slice(r.length - 32);
+    if (s.length > 32) s = s.slice(s.length - 32);
+    if (r.length < 32) r = new Uint8Array([...new Array(32 - r.length).fill(0), ...r]);
+    if (s.length < 32) s = new Uint8Array([...new Array(32 - s.length).fill(0), ...s]);
+
+    rawSignature = new Uint8Array([...r, ...s]);
+  }
+
   const signatureB64 = uint8ArrayToUrlBase64(rawSignature);
   const jwt = `${unsignedToken}.${signatureB64}`;
 
