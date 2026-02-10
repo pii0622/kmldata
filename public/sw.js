@@ -1,4 +1,4 @@
-// Service Worker for map tile caching
+// Service Worker for map tile caching and push notifications
 const CACHE_NAME = 'map-tiles-v1';
 const TILE_CACHE_NAME = 'gsi-tiles-v1';
 
@@ -24,6 +24,64 @@ self.addEventListener('activate', (event) => {
     })
   );
   self.clients.claim();
+});
+
+// Push event - handle incoming push notifications
+self.addEventListener('push', (event) => {
+  let data = { title: '地図アプリ', body: '新しい更新があります', type: 'general' };
+
+  try {
+    if (event.data) {
+      data = event.data.json();
+    }
+  } catch (e) {
+    console.error('Failed to parse push data:', e);
+  }
+
+  const options = {
+    body: data.body,
+    icon: '/icons/icon-192.svg',
+    badge: '/icons/icon-192.svg',
+    vibrate: [100, 50, 100],
+    tag: data.type + '-' + (data.id || Date.now()),
+    renotify: true,
+    data: {
+      type: data.type,
+      id: data.id,
+      url: data.url || '/'
+    }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+// Notification click event
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const urlToOpen = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Check if there's already a window open
+      for (const client of clientList) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          client.focus();
+          client.postMessage({
+            type: 'notification-click',
+            data: event.notification.data
+          });
+          return;
+        }
+      }
+      // If no window is open, open a new one
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
 });
 
 // Fetch event - cache map tiles

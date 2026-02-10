@@ -15,6 +15,7 @@ let editingPinId = null;
 let authMode = 'login';
 let watchId = null;
 let pendingUsersCount = 0;
+let pushSubscription = null;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
@@ -303,6 +304,9 @@ function renderSidebar() {
 
   // Auth section
   if (currentUser) {
+    const pushBtnClass = pushSubscription ? 'btn-secondary' : 'btn-primary';
+    const pushBtnIcon = pushSubscription ? 'fa-bell-slash' : 'fa-bell';
+    const pushBtnText = pushSubscription ? '通知OFF' : '通知ON';
     html += `<div class="user-info">
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
@@ -310,6 +314,7 @@ function renderSidebar() {
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
         </button>` : ''}
+        <button class="btn btn-sm ${pushBtnClass}" id="push-toggle-btn" onclick="togglePushNotifications()" title="プッシュ通知"><i class="fas ${pushBtnIcon}"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
       </div>
@@ -1758,6 +1763,124 @@ async function deletePinComment(pinId, commentId) {
   }
 }
 
+// ==================== Push Notifications ====================
+async function initPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.log('Push notifications not supported');
+    return;
+  }
+
+  try {
+    // Register service worker
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    console.log('Service Worker registered');
+
+    // Check current subscription
+    pushSubscription = await registration.pushManager.getSubscription();
+    updatePushUI();
+  } catch (err) {
+    console.error('Service Worker registration failed:', err);
+  }
+}
+
+async function subscribeToPush() {
+  try {
+    // Get VAPID public key
+    const res = await fetch('/api/push/vapid-key');
+    if (!res.ok) {
+      notify('プッシュ通知は現在利用できません', 'error');
+      return;
+    }
+    const { vapidPublicKey } = await res.json();
+
+    const registration = await navigator.serviceWorker.ready;
+
+    // Request permission
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      notify('通知の許可が必要です', 'error');
+      return;
+    }
+
+    // Subscribe
+    pushSubscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    });
+
+    // Send subscription to server
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ subscription: pushSubscription.toJSON() })
+    });
+
+    notify('プッシュ通知を有効にしました');
+    updatePushUI();
+  } catch (err) {
+    console.error('Failed to subscribe:', err);
+    notify('プッシュ通知の設定に失敗しました', 'error');
+  }
+}
+
+async function unsubscribeFromPush() {
+  try {
+    if (pushSubscription) {
+      const endpoint = pushSubscription.endpoint;
+      await pushSubscription.unsubscribe();
+
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ endpoint })
+      });
+
+      pushSubscription = null;
+      notify('プッシュ通知を無効にしました');
+      updatePushUI();
+    }
+  } catch (err) {
+    console.error('Failed to unsubscribe:', err);
+    notify('設定の解除に失敗しました', 'error');
+  }
+}
+
+function updatePushUI() {
+  const btn = document.getElementById('push-toggle-btn');
+  if (!btn) return;
+
+  if (pushSubscription) {
+    btn.innerHTML = '<i class="fas fa-bell-slash"></i> 通知OFF';
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-secondary');
+  } else {
+    btn.innerHTML = '<i class="fas fa-bell"></i> 通知ON';
+    btn.classList.remove('btn-secondary');
+    btn.classList.add('btn-primary');
+  }
+}
+
+function togglePushNotifications() {
+  if (pushSubscription) {
+    unsubscribeFromPush();
+  } else {
+    subscribeToPush();
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 // ==================== Comment Notifications ====================
 let unreadComments = [];
 
@@ -2197,6 +2320,7 @@ async function init() {
   await checkAuth();
   await loadAll();
   startWatchingLocation();
+  initPushNotifications();
 }
 
 init();

@@ -341,6 +341,16 @@ async function ensureTablesExist(env) {
         user_id INTEGER PRIMARY KEY,
         last_read_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Push notification subscriptions
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
@@ -643,6 +653,19 @@ export async function onRequest(context) {
     if (path === '/comments/mark-read' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleMarkCommentsRead(env, user);
+    }
+
+    // Push notifications
+    if (path === '/push/vapid-key' && method === 'GET') {
+      return handleGetVapidKey(env);
+    }
+    if (path === '/push/subscribe' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePushSubscribe(request, env, user);
+    }
+    if (path === '/push/unsubscribe' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePushUnsubscribe(request, env, user);
     }
 
     // Images
@@ -1250,6 +1273,23 @@ async function handleUploadKmlFile(request, env, user) {
     'INSERT INTO kml_files (folder_id, user_id, r2_key, original_name, is_public) VALUES (?, ?, ?, ?, 0)'
   ).bind(folderId || null, user.id, r2Key, file.name).run();
 
+  // Send push notification for new KML file
+  if (folderId) {
+    try {
+      const folder = await env.DB.prepare('SELECT is_public FROM kml_folders WHERE id = ?').bind(folderId).first();
+      if (folder) {
+        await sendPushNotifications(env, 'kml', {
+          title: '新しいKMLファイル',
+          body: `${user.display_name || user.username}: ${file.name.substring(0, 30)}`,
+          id: result.meta.last_row_id,
+          creatorId: user.id
+        }, { id: folderId, is_public: folder.is_public === 1, type: 'kml' });
+      }
+    } catch (e) {
+      console.error('Push notification error:', e);
+    }
+  }
+
   return json({ id: result.meta.last_row_id, r2_key: r2Key, original_name: file.name, folder_id: folderId || null });
 }
 
@@ -1668,6 +1708,23 @@ async function handleCreatePin(request, env, user) {
     images.push({ id: imgResult.meta.last_row_id, r2_key: r2Key, original_name: file.name });
   }
 
+  // Send push notification for new pin
+  if (folder_id) {
+    try {
+      const folder = await env.DB.prepare('SELECT is_public FROM folders WHERE id = ?').bind(folder_id).first();
+      if (folder) {
+        await sendPushNotifications(env, 'pin', {
+          title: '新しいピン',
+          body: `${user.display_name || user.username}: ${title.substring(0, 30)}`,
+          id: pinId,
+          creatorId: user.id
+        }, { id: folder_id, is_public: folder.is_public === 1, type: 'pin' });
+      }
+    } catch (e) {
+      console.error('Push notification error:', e);
+    }
+  }
+
   return json({ id: pinId, title, description, lat, lng, folder_id, user_id: user.id, images });
 }
 
@@ -1862,6 +1919,18 @@ async function handleCreatePinComment(request, env, user, pinId) {
     WHERE c.id = ?
   `).bind(result.meta.last_row_id).first();
 
+  // Send push notification
+  try {
+    await sendPushNotifications(env, 'comment', {
+      title: '新しいコメント',
+      body: `${user.display_name || user.username}: ${content.trim().substring(0, 30)}`,
+      id: pinId,
+      creatorId: user.id
+    }, { id: pin.folder_id, is_public: folderIsPublic, type: 'pin' });
+  } catch (e) {
+    console.error('Push notification error:', e);
+  }
+
   return json(newComment, 201);
 }
 
@@ -1971,6 +2040,266 @@ async function handleMarkCommentsRead(env, user) {
   `).bind(user.id).run();
 
   return json({ ok: true });
+}
+
+// ==================== Push Notification Handlers ====================
+function handleGetVapidKey(env) {
+  const vapidPublicKey = env.VAPID_PUBLIC_KEY;
+  if (!vapidPublicKey) {
+    return json({ error: 'Push notifications not configured' }, 503);
+  }
+  return json({ vapidPublicKey });
+}
+
+async function handlePushSubscribe(request, env, user) {
+  const { subscription } = await request.json();
+
+  if (!subscription || !subscription.endpoint || !subscription.keys) {
+    return json({ error: 'Invalid subscription' }, 400);
+  }
+
+  // Delete any existing subscription with this endpoint
+  await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+    .bind(subscription.endpoint).run();
+
+  // Insert new subscription
+  await env.DB.prepare(
+    'INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)'
+  ).bind(user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth).run();
+
+  return json({ ok: true });
+}
+
+async function handlePushUnsubscribe(request, env, user) {
+  const { endpoint } = await request.json();
+
+  if (!endpoint) {
+    return json({ error: 'Endpoint required' }, 400);
+  }
+
+  await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+    .bind(endpoint, user.id).run();
+
+  return json({ ok: true });
+}
+
+// Send push notification to users who have access to a folder
+async function sendPushNotifications(env, type, data, folderInfo) {
+  const vapidPublicKey = env.VAPID_PUBLIC_KEY;
+  const vapidPrivateKey = env.VAPID_PRIVATE_KEY;
+
+  if (!vapidPublicKey || !vapidPrivateKey) {
+    console.log('VAPID keys not configured, skipping push notifications');
+    return;
+  }
+
+  // Get users who should receive this notification
+  let targetUserIds = [];
+
+  if (folderInfo.is_public) {
+    // Public folder - get all users with push subscriptions except the creator
+    const users = await env.DB.prepare(
+      'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?'
+    ).bind(data.creatorId).all();
+    targetUserIds = users.results.map(u => u.user_id);
+  } else if (folderInfo.id) {
+    // Shared folder - get users who have been shared this folder
+    const tableName = folderInfo.type === 'kml' ? 'kml_folder_shares' : 'folder_shares';
+    const columnName = folderInfo.type === 'kml' ? 'kml_folder_id' : 'folder_id';
+    const shares = await env.DB.prepare(
+      `SELECT shared_with_user_id FROM ${tableName} WHERE ${columnName} = ?`
+    ).bind(folderInfo.id).all();
+    targetUserIds = shares.results.map(s => s.shared_with_user_id);
+  }
+
+  if (targetUserIds.length === 0) return;
+
+  // Get subscriptions for target users
+  const placeholders = targetUserIds.map(() => '?').join(',');
+  const subscriptions = await env.DB.prepare(
+    `SELECT * FROM push_subscriptions WHERE user_id IN (${placeholders})`
+  ).bind(...targetUserIds).all();
+
+  // Build notification payload
+  const payload = JSON.stringify({
+    title: data.title,
+    body: data.body,
+    type: type,
+    id: data.id,
+    url: '/'
+  });
+
+  // Send to each subscription
+  for (const sub of subscriptions.results) {
+    try {
+      await sendWebPush(env, {
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.p256dh, auth: sub.auth }
+      }, payload);
+    } catch (err) {
+      console.error('Failed to send push:', err);
+      // Remove invalid subscription
+      if (err.status === 410 || err.status === 404) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(sub.id).run();
+      }
+    }
+  }
+}
+
+// Web Push implementation for Cloudflare Workers
+async function sendWebPush(env, subscription, payload) {
+  const vapidPublicKey = env.VAPID_PUBLIC_KEY;
+  const vapidPrivateKey = env.VAPID_PRIVATE_KEY;
+
+  // Import crypto functions
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const endpoint = new URL(subscription.endpoint);
+  const audience = `${endpoint.protocol}//${endpoint.host}`;
+
+  // Create JWT for VAPID
+  const header = { typ: 'JWT', alg: 'ES256' };
+  const now = Math.floor(Date.now() / 1000);
+  const jwtPayload = {
+    aud: audience,
+    exp: now + 86400,
+    sub: 'mailto:hello@map.taishi-lab.com'
+  };
+
+  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const payloadB64 = btoa(JSON.stringify(jwtPayload)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const unsignedToken = `${headerB64}.${payloadB64}`;
+
+  // Import private key and sign
+  const privateKeyData = urlBase64ToUint8Array(vapidPrivateKey);
+  const privateKey = await crypto.subtle.importKey(
+    'raw',
+    privateKeyData,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    privateKey,
+    new TextEncoder().encode(unsignedToken)
+  );
+
+  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const jwt = `${unsignedToken}.${signatureB64}`;
+
+  // Encrypt payload
+  const userPublicKey = urlBase64ToUint8Array(subscription.keys.p256dh);
+  const userAuth = urlBase64ToUint8Array(subscription.keys.auth);
+
+  // Generate local key pair
+  const localKeyPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+
+  const localPublicKeyRaw = await crypto.subtle.exportKey('raw', localKeyPair.publicKey);
+
+  // Import user's public key
+  const userKey = await crypto.subtle.importKey(
+    'raw',
+    userPublicKey,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+
+  // Derive shared secret
+  const sharedSecret = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: userKey },
+    localKeyPair.privateKey,
+    256
+  );
+
+  // Derive encryption key using HKDF
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  const authInfo = new TextEncoder().encode('Content-Encoding: auth\0');
+  const keyInfo = new Uint8Array([
+    ...new TextEncoder().encode('Content-Encoding: aes128gcm\0'),
+    ...new Uint8Array(65),
+    ...new Uint8Array(localPublicKeyRaw)
+  ]);
+
+  const prk = await crypto.subtle.importKey('raw', sharedSecret, { name: 'HKDF' }, false, ['deriveBits']);
+  const ikm = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: userAuth, info: authInfo },
+    prk,
+    256
+  );
+
+  const ikmKey = await crypto.subtle.importKey('raw', new Uint8Array(ikm), { name: 'HKDF' }, false, ['deriveBits']);
+  const contentEncryptionKey = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: salt, info: keyInfo },
+    ikmKey,
+    128
+  );
+
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce\0');
+  const nonce = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: salt, info: nonceInfo },
+    ikmKey,
+    96
+  );
+
+  // Encrypt payload
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    new Uint8Array(contentEncryptionKey),
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt']
+  );
+
+  const paddedPayload = new Uint8Array([...new Uint8Array([0, 0]), ...new TextEncoder().encode(payload)]);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: new Uint8Array(nonce) },
+    aesKey,
+    paddedPayload
+  );
+
+  // Build body
+  const body = new Uint8Array([
+    ...salt,
+    0, 0, 0, 65,
+    ...new Uint8Array(localPublicKeyRaw),
+    ...new Uint8Array(encrypted)
+  ]);
+
+  // Send push
+  const response = await fetch(subscription.endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `vapid t=${jwt}, k=${vapidPublicKey}`,
+      'Content-Encoding': 'aes128gcm',
+      'Content-Type': 'application/octet-stream',
+      'TTL': '86400'
+    },
+    body: body
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Push failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
 }
 
 async function handleGetImage(env, user, key) {
