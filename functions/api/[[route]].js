@@ -824,8 +824,15 @@ async function handleExternalMemberSync(request, env) {
   try {
     const { action, email, display_name, plan, external_id, secret } = await request.json();
 
+    // Debug log (一時的)
+    console.log('[Fieldnota Sync] Received request:', { action, email, display_name, external_id });
+    console.log('[Fieldnota Sync] Secret received:', secret ? `${secret.substring(0, 5)}...` : 'empty');
+    console.log('[Fieldnota Sync] Env secret exists:', !!env.EXTERNAL_SYNC_SECRET);
+    console.log('[Fieldnota Sync] Env secret value:', env.EXTERNAL_SYNC_SECRET ? `${env.EXTERNAL_SYNC_SECRET.substring(0, 5)}...` : 'NOT SET');
+
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
+      console.log('[Fieldnota Sync] Auth failed - secrets do not match');
       return json({ error: 'Unauthorized' }, 401);
     }
 
