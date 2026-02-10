@@ -335,6 +335,12 @@ async function ensureTablesExist(env) {
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Comment read status - tracks when user last checked notifications
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS comment_read_status (
+        user_id INTEGER PRIMARY KEY,
+        last_read_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
@@ -618,6 +624,15 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const match = path.match(/^\/pins\/(\d+)\/comments\/(\d+)$/);
       return await handleDeletePinComment(env, user, match[1], match[2]);
+    }
+    // Comment notifications
+    if (path === '/comments/unread' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetUnreadComments(env, user);
+    }
+    if (path === '/comments/mark-read' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleMarkCommentsRead(env, user);
     }
 
     // Images
@@ -1799,6 +1814,51 @@ async function handleDeletePinComment(env, user, pinId, commentId) {
   }
 
   await env.DB.prepare('DELETE FROM pin_comments WHERE id = ?').bind(commentId).run();
+
+  return json({ ok: true });
+}
+
+async function handleGetUnreadComments(env, user) {
+  // Get user's last read time
+  const readStatus = await env.DB.prepare(
+    'SELECT last_read_at FROM comment_read_status WHERE user_id = ?'
+  ).bind(user.id).first();
+
+  const lastReadAt = readStatus?.last_read_at || '1970-01-01 00:00:00';
+
+  // Get all comments created after last read time, on pins the user has access to
+  // Access: public folders, shared folders, or user's own pins
+  const comments = await env.DB.prepare(`
+    SELECT c.*, p.id as pin_id, p.title as pin_title, p.lat, p.lng,
+           u.display_name as author_name, f.name as folder_name
+    FROM pin_comments c
+    JOIN pins p ON c.pin_id = p.id
+    JOIN users u ON c.user_id = u.id
+    LEFT JOIN folders f ON p.folder_id = f.id
+    WHERE c.created_at > ?
+      AND c.user_id != ?
+      AND (
+        f.is_public = 1
+        OR f.user_id = ?
+        OR EXISTS (
+          SELECT 1 FROM folder_shares fs
+          WHERE fs.folder_id = f.id AND fs.shared_with_user_id = ?
+        )
+      )
+    ORDER BY c.created_at DESC
+    LIMIT 50
+  `).bind(lastReadAt, user.id, user.id, user.id).all();
+
+  return json(comments.results);
+}
+
+async function handleMarkCommentsRead(env, user) {
+  // Upsert the read status
+  await env.DB.prepare(`
+    INSERT INTO comment_read_status (user_id, last_read_at)
+    VALUES (?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET last_read_at = datetime('now')
+  `).bind(user.id).run();
 
   return json({ ok: true });
 }

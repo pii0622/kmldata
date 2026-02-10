@@ -266,6 +266,19 @@ async function loadUsers() {
 // ==================== UI ====================
 function updateUI() {
   document.getElementById('btn-add-pin').style.display = currentUser ? '' : 'none';
+  document.getElementById('btn-notifications').style.display = currentUser ? '' : 'none';
+  if (currentUser) {
+    checkUnreadComments();
+    // Check for new comments every 60 seconds
+    if (!window.notificationInterval) {
+      window.notificationInterval = setInterval(checkUnreadComments, 60000);
+    }
+  } else {
+    if (window.notificationInterval) {
+      clearInterval(window.notificationInterval);
+      window.notificationInterval = null;
+    }
+  }
   renderSidebar();
 }
 
@@ -1652,6 +1665,94 @@ async function deletePinComment(pinId, commentId) {
     loadPinComments(pinId);
   } catch (err) {
     notify(err.message, 'error');
+  }
+}
+
+// ==================== Comment Notifications ====================
+let unreadComments = [];
+
+async function checkUnreadComments() {
+  if (!currentUser) return;
+
+  try {
+    const res = await fetch('/api/comments/unread', { credentials: 'include' });
+    if (!res.ok) return;
+
+    unreadComments = await res.json();
+    updateNotificationBadge();
+  } catch (err) {
+    console.error('Failed to check unread comments:', err);
+  }
+}
+
+function updateNotificationBadge() {
+  const badge = document.getElementById('notification-badge');
+  const btn = document.getElementById('btn-notifications');
+  if (!badge || !btn) return;
+
+  if (unreadComments.length > 0) {
+    badge.textContent = unreadComments.length > 99 ? '99+' : unreadComments.length;
+    badge.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function openNotificationsPopup() {
+  const list = document.getElementById('notifications-list');
+  if (!list) return;
+
+  openModal('modal-notifications');
+
+  if (unreadComments.length === 0) {
+    list.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">新着コメントはありません</div>';
+    return;
+  }
+
+  list.innerHTML = unreadComments.map(c => {
+    const dateStr = c.created_at ? c.created_at.replace('T', ' ').substring(0, 16) : '';
+    return `<div onclick="zoomToCommentPin(${c.lat}, ${c.lng}, ${c.pin_id})" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-weight:bold;color:#007bff;"><i class="fas fa-map-pin"></i> ${escHtml(c.pin_title)}</span>
+        <span style="font-size:11px;color:#999;">${dateStr}</span>
+      </div>
+      <div style="font-size:12px;color:#666;margin-bottom:4px;">
+        <span style="font-weight:bold;">${escHtml(c.author_name)}</span>: ${escHtml(c.content)}
+      </div>
+      <div style="font-size:11px;color:#999;">
+        <i class="fas fa-folder"></i> ${escHtml(c.folder_name || '未分類')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function closeNotificationsPopup() {
+  closeModal('modal-notifications');
+
+  // Mark all comments as read
+  if (unreadComments.length > 0) {
+    try {
+      await fetch('/api/comments/mark-read', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      unreadComments = [];
+      updateNotificationBadge();
+    } catch (err) {
+      console.error('Failed to mark comments as read:', err);
+    }
+  }
+}
+
+function zoomToCommentPin(lat, lng, pinId) {
+  closeModal('modal-notifications');
+  map.setView([lat, lng], 16);
+
+  // Open the pin popup if marker exists
+  if (pinMarkers[pinId]) {
+    setTimeout(() => {
+      pinMarkers[pinId].openPopup();
+    }, 300);
   }
 }
 

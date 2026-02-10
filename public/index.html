@@ -52,6 +52,10 @@
   <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピンを追加" style="display:none;">
     <i class="fas fa-map-pin"></i> ピン追加
   </button>
+  <button class="map-btn" id="btn-notifications" onclick="openNotificationsPopup()" title="新着コメント" style="display:none;position:relative;">
+    <i class="fas fa-bell"></i>
+    <span id="notification-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc3545;color:#fff;font-size:10px;padding:2px 5px;border-radius:10px;min-width:16px;text-align:center;">0</span>
+  </button>
 </div>
 
 <div id="map"></div>
@@ -466,6 +470,19 @@
     </p>
     <div class="modal-actions" style="justify-content:center;">
       <button class="btn btn-primary" onclick="closeModal('modal-register-success')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Comments Notification Modal -->
+<div class="modal-overlay" id="modal-notifications">
+  <div class="modal" style="max-width:400px;">
+    <h3><i class="fas fa-bell"></i> 新着コメント</h3>
+    <div id="notifications-list" style="max-height:400px;overflow-y:auto;">
+      <div style="color:#999;text-align:center;padding:20px;">読み込み中...</div>
+    </div>
+    <div class="modal-actions" style="justify-content:center;">
+      <button class="btn btn-primary" onclick="closeNotificationsPopup()">閉じる</button>
     </div>
   </div>
 </div>
