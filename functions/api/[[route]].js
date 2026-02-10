@@ -325,6 +325,16 @@ async function ensureTablesExist(env) {
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (folder_id) REFERENCES kml_folders(id) ON DELETE SET NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Pin comments
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS pin_comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
@@ -594,6 +604,21 @@ export async function onRequest(context) {
       const id = path.match(/^\/pins\/(\d+)\/move$/)[1];
       return await handleMovePin(request, env, user, id);
     }
+    // Pin comments
+    if (path.match(/^\/pins\/(\d+)\/comments$/) && method === 'GET') {
+      const id = path.match(/^\/pins\/(\d+)\/comments$/)[1];
+      return await handleGetPinComments(env, user, id);
+    }
+    if (path.match(/^\/pins\/(\d+)\/comments$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/pins\/(\d+)\/comments$/)[1];
+      return await handleCreatePinComment(request, env, user, id);
+    }
+    if (path.match(/^\/pins\/(\d+)\/comments\/(\d+)$/) && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const match = path.match(/^\/pins\/(\d+)\/comments\/(\d+)$/);
+      return await handleDeletePinComment(env, user, match[1], match[2]);
+    }
 
     // Images
     if (path.match(/^\/images\/(.+)$/) && method === 'GET') {
@@ -816,16 +841,21 @@ async function handleApproveUser(env, id) {
 
   // Send approval email
   if (user.email) {
+    const appUrl = 'https://map.taishi-lab.com';
     const subject = 'アカウントが承認されました - 地図アプリ';
     const htmlBody = `
       <h2>アカウント承認のお知らせ</h2>
       <p>${user.display_name || user.username} 様</p>
       <p>地図アプリへのアカウント申請が承認されました。</p>
-      <p>ログインしてご利用ください。</p>
+      <p>以下のリンクからログインしてご利用ください。</p>
+      <p><a href="${appUrl}">${appUrl}</a></p>
+      <br>
+      <p><strong>※ユーザー名はフルネーム（ローマ字）で登録されています。</strong></p>
+      <p>例: Taro Yamada</p>
       <br>
       <p>地図アプリ</p>
     `;
-    const textBody = `${user.display_name || user.username} 様\n\n地図アプリへのアカウント申請が承認されました。\nログインしてご利用ください。\n\n地図アプリ`;
+    const textBody = `${user.display_name || user.username} 様\n\n地図アプリへのアカウント申請が承認されました。\n以下のリンクからログインしてご利用ください。\n\n${appUrl}\n\n※ユーザー名はフルネーム（ローマ字）で登録されています。\n例: Taro Yamada\n\n地図アプリ`;
     await sendEmail(env, user.email, subject, htmlBody, textBody);
   }
 
@@ -1664,6 +1694,112 @@ async function handleMovePin(request, env, user, id) {
 
   await env.DB.prepare('UPDATE pins SET folder_id = ? WHERE id = ?')
     .bind(folder_id || null, id).run();
+  return json({ ok: true });
+}
+
+// ==================== Pin Comments Handlers ====================
+async function handleGetPinComments(env, user, pinId) {
+  // Check if pin exists and user has access
+  const pin = await env.DB.prepare(`
+    SELECT p.*, f.is_public as folder_is_public, f.user_id as folder_user_id
+    FROM pins p
+    LEFT JOIN folders f ON p.folder_id = f.id
+    WHERE p.id = ?
+  `).bind(pinId).first();
+
+  if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
+
+  // Check access: owner, admin, public folder, or shared folder
+  const folderIsPublic = pin.folder_is_public === 1;
+  const isOwner = user && pin.user_id === user.id;
+  const isAdmin = user && user.is_admin;
+
+  let hasAccess = isOwner || isAdmin || folderIsPublic;
+
+  if (!hasAccess && user && pin.folder_id) {
+    const share = await env.DB.prepare(
+      'SELECT * FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
+    ).bind(pin.folder_id, user.id).first();
+    hasAccess = !!share;
+  }
+
+  if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
+
+  const comments = await env.DB.prepare(`
+    SELECT c.*, u.display_name as author_name
+    FROM pin_comments c
+    JOIN users u ON c.user_id = u.id
+    WHERE c.pin_id = ?
+    ORDER BY c.created_at ASC
+  `).bind(pinId).all();
+
+  return json(comments.results);
+}
+
+async function handleCreatePinComment(request, env, user, pinId) {
+  const { content } = await request.json();
+
+  if (!content || content.trim().length === 0) {
+    return json({ error: 'コメントを入力してください' }, 400);
+  }
+  if (content.length > 50) {
+    return json({ error: 'コメントは50文字以内で入力してください' }, 400);
+  }
+
+  // Check if pin exists and user has access to view it
+  const pin = await env.DB.prepare(`
+    SELECT p.*, f.is_public as folder_is_public
+    FROM pins p
+    LEFT JOIN folders f ON p.folder_id = f.id
+    WHERE p.id = ?
+  `).bind(pinId).first();
+
+  if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
+
+  // Check access: owner, admin, public folder, or shared folder
+  const folderIsPublic = pin.folder_is_public === 1;
+  const isOwner = pin.user_id === user.id;
+  const isAdmin = user.is_admin;
+
+  let hasAccess = isOwner || isAdmin || folderIsPublic;
+
+  if (!hasAccess && pin.folder_id) {
+    const share = await env.DB.prepare(
+      'SELECT * FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
+    ).bind(pin.folder_id, user.id).first();
+    hasAccess = !!share;
+  }
+
+  if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
+
+  const result = await env.DB.prepare(
+    'INSERT INTO pin_comments (pin_id, user_id, content) VALUES (?, ?, ?)'
+  ).bind(pinId, user.id, content.trim()).run();
+
+  const newComment = await env.DB.prepare(`
+    SELECT c.*, u.display_name as author_name
+    FROM pin_comments c
+    JOIN users u ON c.user_id = u.id
+    WHERE c.id = ?
+  `).bind(result.meta.last_row_id).first();
+
+  return json(newComment, 201);
+}
+
+async function handleDeletePinComment(env, user, pinId, commentId) {
+  const comment = await env.DB.prepare(
+    'SELECT * FROM pin_comments WHERE id = ? AND pin_id = ?'
+  ).bind(commentId, pinId).first();
+
+  if (!comment) return json({ error: 'コメントが見つかりません' }, 404);
+
+  // Only comment author or admin can delete
+  if (comment.user_id !== user.id && !user.is_admin) {
+    return json({ error: '削除権限がありません' }, 403);
+  }
+
+  await env.DB.prepare('DELETE FROM pin_comments WHERE id = ?').bind(commentId).run();
+
   return json({ ok: true });
 }
 

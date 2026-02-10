@@ -1521,7 +1521,7 @@ function renderPinMarkers() {
 
 function createPinPopup(pin) {
   const div = document.createElement('div');
-  div.style.cssText = 'max-width:250px;';
+  div.style.cssText = 'max-width:280px;';
   const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${vis}</h4>`;
@@ -1544,8 +1544,115 @@ function createPinPopup(pin) {
       <button class="btn btn-sm btn-danger" onclick="deletePin(${pin.id})"><i class="fas fa-trash"></i> 削除</button>
     </div>`;
   }
+
+  // Comments section
+  html += `<div style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;">
+    <div style="font-size:12px;font-weight:bold;margin-bottom:6px;"><i class="fas fa-comments"></i> コメント</div>
+    <div id="pin-comments-${pin.id}" style="max-height:120px;overflow-y:auto;font-size:11px;">
+      <div style="color:#999;">読み込み中...</div>
+    </div>`;
+
+  if (currentUser) {
+    html += `<div style="margin-top:6px;display:flex;gap:4px;">
+      <input type="text" id="comment-input-${pin.id}" maxlength="50" placeholder="コメント（50文字以内）" style="flex:1;font-size:11px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;">
+      <button class="btn btn-sm btn-primary" onclick="addPinComment(${pin.id})" style="padding:4px 8px;"><i class="fas fa-paper-plane"></i></button>
+    </div>`;
+  }
+  html += '</div>';
+
   div.innerHTML = html;
+
+  // Load comments after popup is created
+  setTimeout(() => loadPinComments(pin.id), 100);
+
   return div;
+}
+
+async function loadPinComments(pinId) {
+  const container = document.getElementById(`pin-comments-${pinId}`);
+  if (!container) return;
+
+  try {
+    const res = await fetch(`/api/pins/${pinId}/comments`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Failed to load comments');
+    const comments = await res.json();
+
+    if (comments.length === 0) {
+      container.innerHTML = '<div style="color:#999;">コメントはありません</div>';
+      return;
+    }
+
+    container.innerHTML = comments.map(c => {
+      const canDelete = currentUser && (c.user_id === currentUser.id || currentUser.is_admin);
+      const dateStr = c.created_at ? c.created_at.split('T')[0] : '';
+      return `<div style="margin-bottom:6px;padding:4px;background:#f8f9fa;border-radius:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:start;">
+          <div style="flex:1;">
+            <span style="font-weight:bold;color:#333;">${escHtml(c.author_name)}</span>
+            <span style="color:#999;margin-left:4px;">${dateStr}</span>
+          </div>
+          ${canDelete ? `<button onclick="deletePinComment(${pinId}, ${c.id})" style="background:none;border:none;color:#dc3545;cursor:pointer;padding:0 2px;font-size:10px;"><i class="fas fa-times"></i></button>` : ''}
+        </div>
+        <div style="color:#555;margin-top:2px;">${escHtml(c.content)}</div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = '<div style="color:#dc3545;">読み込みエラー</div>';
+  }
+}
+
+async function addPinComment(pinId) {
+  const input = document.getElementById(`comment-input-${pinId}`);
+  if (!input) return;
+
+  const content = input.value.trim();
+  if (!content) {
+    notify('コメントを入力してください', 'error');
+    return;
+  }
+  if (content.length > 50) {
+    notify('コメントは50文字以内で入力してください', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/pins/${pinId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ content })
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Failed to add comment');
+    }
+
+    input.value = '';
+    loadPinComments(pinId);
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function deletePinComment(pinId, commentId) {
+  if (!confirm('このコメントを削除しますか？')) return;
+
+  try {
+    const res = await fetch(`/api/pins/${pinId}/comments/${commentId}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Failed to delete comment');
+    }
+
+    loadPinComments(pinId);
+  } catch (err) {
+    notify(err.message, 'error');
+  }
 }
 
 function startPinMode() {
