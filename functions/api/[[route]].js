@@ -2087,54 +2087,124 @@ async function handlePushUnsubscribe(request, env, user) {
   return json({ ok: true });
 }
 
-// Test push notification - sends directly to user's subscription
+// Test push notification - sends directly to user's subscription with detailed debugging
 async function handlePushTest(request, env, user) {
   const vapidPublicKey = env.VAPID_PUBLIC_KEY;
   const vapidPrivateKey = env.VAPID_PRIVATE_KEY;
-
-  if (!vapidPublicKey || !vapidPrivateKey) {
-    return json({ error: 'VAPID keys not configured', hasPublic: !!vapidPublicKey, hasPrivate: !!vapidPrivateKey }, 500);
-  }
-
-  // Check key lengths
-  const keyInfo = {
-    publicKeyLength: vapidPublicKey.length,
-    privateKeyLength: vapidPrivateKey.length,
-    expectedPublicLength: '87 chars (65 bytes base64url)',
-    expectedPrivateLength: '43 chars (32 bytes base64url)'
-  };
-
-  // Get user's subscriptions
-  const subscriptions = await env.DB.prepare(
-    'SELECT * FROM push_subscriptions WHERE user_id = ?'
-  ).bind(user.id).all();
-
-  if (subscriptions.results.length === 0) {
-    return json({ error: 'No push subscription found', keyInfo }, 400);
-  }
-
-  const sub = subscriptions.results[0];
-  const payload = JSON.stringify({
-    title: 'テスト通知',
-    body: 'プッシュ通知のテストです',
-    type: 'test',
-    id: null,
-    url: '/'
-  });
+  const debug = { steps: [] };
 
   try {
+    debug.steps.push('1. Checking VAPID keys');
+    if (!vapidPublicKey || !vapidPrivateKey) {
+      return json({ error: 'VAPID keys not configured', hasPublic: !!vapidPublicKey, hasPrivate: !!vapidPrivateKey }, 500);
+    }
+
+    const keyInfo = {
+      publicKeyLength: vapidPublicKey.length,
+      privateKeyLength: vapidPrivateKey.length
+    };
+    debug.keyInfo = keyInfo;
+
+    debug.steps.push('2. Getting subscription from DB');
+    const subscriptions = await env.DB.prepare(
+      'SELECT * FROM push_subscriptions WHERE user_id = ?'
+    ).bind(user.id).all();
+
+    if (subscriptions.results.length === 0) {
+      return json({ error: 'No push subscription found', debug }, 400);
+    }
+
+    const sub = subscriptions.results[0];
+    debug.steps.push('3. Subscription found: ' + sub.endpoint.substring(0, 50));
+
+    // Helper function
+    const urlBase64ToUint8Array = (base64String) => {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    };
+
+    const uint8ArrayToUrlBase64 = (uint8Array) => {
+      return btoa(String.fromCharCode(...uint8Array))
+        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    };
+
+    debug.steps.push('4. Decoding VAPID keys');
+    const privateKeyBytes = urlBase64ToUint8Array(vapidPrivateKey);
+    const publicKeyBytes = urlBase64ToUint8Array(vapidPublicKey);
+    debug.decodedKeyLengths = { private: privateKeyBytes.length, public: publicKeyBytes.length };
+
+    debug.steps.push('5. Creating JWK');
+    const jwk = {
+      kty: 'EC',
+      crv: 'P-256',
+      x: uint8ArrayToUrlBase64(publicKeyBytes.slice(1, 33)),
+      y: uint8ArrayToUrlBase64(publicKeyBytes.slice(33, 65)),
+      d: uint8ArrayToUrlBase64(privateKeyBytes)
+    };
+    debug.jwkLengths = { x: jwk.x.length, y: jwk.y.length, d: jwk.d.length };
+
+    debug.steps.push('6. Importing private key');
+    const privateKey = await crypto.subtle.importKey(
+      'jwk',
+      jwk,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign']
+    );
+    debug.steps.push('7. Private key imported successfully');
+
+    debug.steps.push('8. Creating JWT');
+    const endpoint = new URL(sub.endpoint);
+    const audience = `${endpoint.protocol}//${endpoint.host}`;
+    const header = { typ: 'JWT', alg: 'ES256' };
+    const now = Math.floor(Date.now() / 1000);
+    const jwtPayload = { aud: audience, exp: now + 86400, sub: 'mailto:noreply@example.com' };
+
+    const headerB64 = uint8ArrayToUrlBase64(new TextEncoder().encode(JSON.stringify(header)));
+    const payloadB64 = uint8ArrayToUrlBase64(new TextEncoder().encode(JSON.stringify(jwtPayload)));
+    const unsignedToken = `${headerB64}.${payloadB64}`;
+
+    debug.steps.push('9. Signing JWT');
+    const derSignature = await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      privateKey,
+      new TextEncoder().encode(unsignedToken)
+    );
+    debug.signatureLength = derSignature.byteLength;
+    debug.steps.push('10. JWT signed, DER length: ' + derSignature.byteLength);
+
+    // Now try full push
+    debug.steps.push('11. Sending full push notification');
+    const payload = JSON.stringify({
+      title: 'テスト通知',
+      body: 'プッシュ通知のテストです',
+      type: 'test',
+      id: null,
+      url: '/'
+    });
+
     await sendWebPush(env, {
       endpoint: sub.endpoint,
       keys: { p256dh: sub.p256dh, auth: sub.auth }
     }, payload);
-    return json({ ok: true, message: 'Push sent successfully', keyInfo });
+
+    debug.steps.push('12. Push sent successfully!');
+    return json({ ok: true, message: 'Push sent successfully', debug });
+
   } catch (err) {
+    debug.steps.push('ERROR: ' + err.message);
+    debug.errorStack = err.stack;
     return json({
       error: 'Push failed',
       message: err.message,
       status: err.status,
-      keyInfo,
-      subscriptionEndpoint: sub.endpoint.substring(0, 50) + '...'
+      debug
     }, 500);
   }
 }
