@@ -1948,11 +1948,21 @@ function updateNotificationBadge() {
   const btn = document.getElementById('btn-notifications');
   if (!badge || !btn) return;
 
-  if (unreadComments.length > 0) {
-    badge.textContent = unreadComments.length > 99 ? '99+' : unreadComments.length;
+  const count = unreadComments.length;
+
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : count;
     badge.style.display = 'block';
+    // Set app badge on home screen icon
+    if ('setAppBadge' in navigator) {
+      navigator.setAppBadge(count).catch(() => {});
+    }
   } else {
     badge.style.display = 'none';
+    // Clear app badge
+    if ('clearAppBadge' in navigator) {
+      navigator.clearAppBadge().catch(() => {});
+    }
   }
 }
 
