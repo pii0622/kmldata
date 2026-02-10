@@ -2151,7 +2151,7 @@ async function sendWebPush(env, subscription, payload) {
   const vapidPublicKey = env.VAPID_PUBLIC_KEY;
   const vapidPrivateKey = env.VAPID_PRIVATE_KEY;
 
-  // Import crypto functions
+  // Helper functions
   const urlBase64ToUint8Array = (base64String) => {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -2163,6 +2163,11 @@ async function sendWebPush(env, subscription, payload) {
     return outputArray;
   };
 
+  const uint8ArrayToUrlBase64 = (uint8Array) => {
+    return btoa(String.fromCharCode(...uint8Array))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  };
+
   const endpoint = new URL(subscription.endpoint);
   const audience = `${endpoint.protocol}//${endpoint.host}`;
 
@@ -2172,45 +2177,74 @@ async function sendWebPush(env, subscription, payload) {
   const jwtPayload = {
     aud: audience,
     exp: now + 86400,
-    sub: 'mailto:hello@map.taishi-lab.com'
+    sub: 'mailto:noreply@example.com'
   };
 
-  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const payloadB64 = btoa(JSON.stringify(jwtPayload)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const headerB64 = uint8ArrayToUrlBase64(new TextEncoder().encode(JSON.stringify(header)));
+  const payloadB64 = uint8ArrayToUrlBase64(new TextEncoder().encode(JSON.stringify(jwtPayload)));
   const unsignedToken = `${headerB64}.${payloadB64}`;
 
-  // Import private key and sign
-  const privateKeyData = urlBase64ToUint8Array(vapidPrivateKey);
+  // Import private key as JWK (VAPID private key is raw 32-byte value)
+  const privateKeyBytes = urlBase64ToUint8Array(vapidPrivateKey);
+  const publicKeyBytes = urlBase64ToUint8Array(vapidPublicKey);
+
+  // Create JWK from raw keys
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    x: uint8ArrayToUrlBase64(publicKeyBytes.slice(1, 33)),
+    y: uint8ArrayToUrlBase64(publicKeyBytes.slice(33, 65)),
+    d: uint8ArrayToUrlBase64(privateKeyBytes)
+  };
+
   const privateKey = await crypto.subtle.importKey(
-    'raw',
-    privateKeyData,
+    'jwk',
+    jwk,
     { name: 'ECDSA', namedCurve: 'P-256' },
     false,
     ['sign']
   );
 
-  const signature = await crypto.subtle.sign(
+  // Sign and convert DER to raw format (r || s, each 32 bytes)
+  const derSignature = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     privateKey,
     new TextEncoder().encode(unsignedToken)
   );
 
-  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  // Convert DER signature to raw r||s format
+  const derBytes = new Uint8Array(derSignature);
+  let offset = 2; // Skip sequence tag and length
+  const rLength = derBytes[offset + 1];
+  offset += 2;
+  let r = derBytes.slice(offset, offset + rLength);
+  offset += rLength;
+  const sLength = derBytes[offset + 1];
+  offset += 2;
+  let s = derBytes.slice(offset, offset + sLength);
+
+  // Ensure r and s are 32 bytes each (pad or trim leading zeros)
+  if (r.length > 32) r = r.slice(r.length - 32);
+  if (s.length > 32) s = s.slice(s.length - 32);
+  if (r.length < 32) r = new Uint8Array([...new Array(32 - r.length).fill(0), ...r]);
+  if (s.length < 32) s = new Uint8Array([...new Array(32 - s.length).fill(0), ...s]);
+
+  const rawSignature = new Uint8Array([...r, ...s]);
+  const signatureB64 = uint8ArrayToUrlBase64(rawSignature);
   const jwt = `${unsignedToken}.${signatureB64}`;
 
-  // Encrypt payload
+  // Encrypt payload using aes128gcm
   const userPublicKey = urlBase64ToUint8Array(subscription.keys.p256dh);
   const userAuth = urlBase64ToUint8Array(subscription.keys.auth);
 
-  // Generate local key pair
+  // Generate local key pair for ECDH
   const localKeyPair = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
     ['deriveBits']
   );
 
-  const localPublicKeyRaw = await crypto.subtle.exportKey('raw', localKeyPair.publicKey);
+  const localPublicKeyRaw = new Uint8Array(await crypto.subtle.exportKey('raw', localKeyPair.publicKey));
 
   // Import user's public key
   const userKey = await crypto.subtle.importKey(
@@ -2222,65 +2256,73 @@ async function sendWebPush(env, subscription, payload) {
   );
 
   // Derive shared secret
-  const sharedSecret = await crypto.subtle.deriveBits(
+  const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
     { name: 'ECDH', public: userKey },
     localKeyPair.privateKey,
     256
-  );
+  ));
 
-  // Derive encryption key using HKDF
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-
-  const authInfo = new TextEncoder().encode('Content-Encoding: auth\0');
-  const keyInfo = new Uint8Array([
-    ...new TextEncoder().encode('Content-Encoding: aes128gcm\0'),
-    ...new Uint8Array(65),
-    ...new Uint8Array(localPublicKeyRaw)
+  // HKDF to derive IKM
+  const authInfo = new Uint8Array([
+    ...new TextEncoder().encode('WebPush: info\0'),
+    ...userPublicKey,
+    ...localPublicKeyRaw
   ]);
 
-  const prk = await crypto.subtle.importKey('raw', sharedSecret, { name: 'HKDF' }, false, ['deriveBits']);
-  const ikm = await crypto.subtle.deriveBits(
+  const prkKey = await crypto.subtle.importKey('raw', sharedSecret, { name: 'HKDF' }, false, ['deriveBits']);
+  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: userAuth, info: authInfo },
-    prk,
+    prkKey,
     256
-  );
+  ));
 
-  const ikmKey = await crypto.subtle.importKey('raw', new Uint8Array(ikm), { name: 'HKDF' }, false, ['deriveBits']);
-  const contentEncryptionKey = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt: salt, info: keyInfo },
+  // Generate salt
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  // Derive content encryption key and nonce
+  const ikmKey = await crypto.subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveBits']);
+
+  const cekInfo = new TextEncoder().encode('Content-Encoding: aes128gcm\0');
+  const contentEncryptionKey = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: salt, info: cekInfo },
     ikmKey,
     128
-  );
+  ));
 
   const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce\0');
-  const nonce = await crypto.subtle.deriveBits(
+  const nonce = new Uint8Array(await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: salt, info: nonceInfo },
     ikmKey,
     96
-  );
+  ));
 
-  // Encrypt payload
+  // Encrypt payload with padding
   const aesKey = await crypto.subtle.importKey(
     'raw',
-    new Uint8Array(contentEncryptionKey),
+    contentEncryptionKey,
     { name: 'AES-GCM' },
     false,
     ['encrypt']
   );
 
-  const paddedPayload = new Uint8Array([...new Uint8Array([0, 0]), ...new TextEncoder().encode(payload)]);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: new Uint8Array(nonce) },
+  // Add padding delimiter (0x02) to payload
+  const payloadBytes = new TextEncoder().encode(payload);
+  const paddedPayload = new Uint8Array([...payloadBytes, 2]);
+
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce },
     aesKey,
     paddedPayload
-  );
+  ));
 
-  // Build body
+  // Build aes128gcm body: salt (16) + rs (4) + idlen (1) + keyid (65) + encrypted
+  const rs = 4096;
   const body = new Uint8Array([
     ...salt,
-    0, 0, 0, 65,
-    ...new Uint8Array(localPublicKeyRaw),
-    ...new Uint8Array(encrypted)
+    (rs >> 24) & 0xff, (rs >> 16) & 0xff, (rs >> 8) & 0xff, rs & 0xff,
+    65,
+    ...localPublicKeyRaw,
+    ...encrypted
   ]);
 
   // Send push
@@ -2296,6 +2338,8 @@ async function sendWebPush(env, subscription, payload) {
   });
 
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Push failed:', response.status, errorText);
     const error = new Error(`Push failed: ${response.status}`);
     error.status = response.status;
     throw error;
