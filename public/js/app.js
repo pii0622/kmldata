@@ -1903,10 +1903,11 @@ async function testPushNotification() {
 
     if (res.ok) {
       resultEl.style.color = '#28a745';
-      resultEl.textContent = '✓ 送信成功！通知が届くか確認してください';
+      resultEl.innerHTML = '✓ 送信成功！通知が届くか確認してください<br><small>Steps: ' + (data.debug?.steps?.length || 0) + '</small>';
     } else {
       resultEl.style.color = '#dc3545';
-      resultEl.innerHTML = `✗ エラー: ${data.error || data.message}<br><small>${JSON.stringify(data.keyInfo || {})}</small>`;
+      const steps = data.debug?.steps?.join('<br>') || '';
+      resultEl.innerHTML = `✗ エラー: ${data.error || data.message}<br><small style="white-space:pre-wrap;">${steps}</small>`;
     }
   } catch (err) {
     resultEl.style.color = '#dc3545';
