@@ -949,7 +949,8 @@ async function handleGetKmlFolders(env, user) {
     folders = await env.DB.prepare(`
       SELECT kf.*, u.display_name as owner_name,
         CASE WHEN kf.user_id = ? THEN 1 ELSE 0 END as is_owner,
-        COALESCE(kfv.is_visible, 1) as is_visible
+        COALESCE(kfv.is_visible, 1) as is_visible,
+        CASE WHEN EXISTS (SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = kf.id) THEN 1 ELSE 0 END as is_shared
       FROM kml_folders kf
       LEFT JOIN users u ON kf.user_id = u.id
       LEFT JOIN kml_folder_visibility kfv ON kf.id = kfv.kml_folder_id AND kfv.user_id = ?
@@ -959,7 +960,7 @@ async function handleGetKmlFolders(env, user) {
     `).bind(user.id, user.id, user.id, user.id).all();
   } else {
     folders = await env.DB.prepare(`
-      SELECT kf.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible
+      SELECT kf.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible, 0 as is_shared
       FROM kml_folders kf
       LEFT JOIN users u ON kf.user_id = u.id
       WHERE kf.is_public = 1
@@ -1289,7 +1290,7 @@ async function handleGetFolders(env, user) {
   if (!user) {
     // Non-logged in users can see public folders
     const folders = await env.DB.prepare(`
-      SELECT f.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible
+      SELECT f.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible, 0 as is_shared
       FROM folders f
       LEFT JOIN users u ON f.user_id = u.id
       WHERE f.is_public = 1
@@ -1301,7 +1302,8 @@ async function handleGetFolders(env, user) {
   const folders = await env.DB.prepare(`
     SELECT f.*, u.display_name as owner_name,
       CASE WHEN f.user_id = ? THEN 1 ELSE 0 END as is_owner,
-      COALESCE(fv.is_visible, 1) as is_visible
+      COALESCE(fv.is_visible, 1) as is_visible,
+      CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = f.id) THEN 1 ELSE 0 END as is_shared
     FROM folders f
     LEFT JOIN users u ON f.user_id = u.id
     LEFT JOIN folder_visibility fv ON f.id = fv.folder_id AND fv.user_id = ?
@@ -1497,7 +1499,8 @@ async function handleGetPins(env, user) {
     // Admin sees all pins
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author,
-        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
+        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
@@ -1507,7 +1510,8 @@ async function handleGetPins(env, user) {
     // User sees: own pins, pins in public folders, pins in shared folders
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author,
-        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public
+        CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
+        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
@@ -1519,7 +1523,7 @@ async function handleGetPins(env, user) {
   } else {
     // Non-logged in users see only pins in public folders
     pins = await env.DB.prepare(`
-      SELECT p.*, u.display_name as author, 1 as is_public
+      SELECT p.*, u.display_name as author, 1 as is_public, 0 as is_shared
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id

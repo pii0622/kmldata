@@ -106,6 +106,17 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
+// Get visibility badge based on public/shared status
+function getVisibilityBadge(isPublic, isShared) {
+  if (isPublic) {
+    return '<span class="badge badge-public">公開</span>';
+  } else if (isShared) {
+    return '<span class="badge badge-shared">共有</span>';
+  } else {
+    return '<span class="badge badge-private">非公開</span>';
+  }
+}
+
 // ==================== Auth ====================
 let loginMode = 'login';
 
@@ -365,12 +376,11 @@ function renderKmlFolderNode(folder, depth) {
   const childFolders = kmlFolders.filter(f => f.parent_id === folder.id);
   const isOwner = folder.is_owner;
   const isVisible = folder.is_visible;
-  const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
-  const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
+  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared);
   const totalCount = files.length + childFolders.length;
 
   let html = `<div class="kml-folder-item" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
-    <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
+    <div class="folder-name-row">${escHtml(folder.name)} ${visBadge} <span class="folder-count">(${totalCount})</span></div>
     <div class="kml-folder-header" onclick="toggleKmlFolder(${folder.id})">
       <i class="fas fa-chevron-right toggle-icon"></i>
       <i class="fas fa-folder folder-icon"></i>
@@ -1091,12 +1101,11 @@ function renderFolderNode(folder, folderPins, depth) {
   const childFolders = folders.filter(f => f.parent_id === folder.id);
   const isOwner = folder.is_owner;
   const isVisible = folder.is_visible;
-  const sharedBadge = folder.shared_with ? '<span class="badge badge-shared">共有</span>' : '';
-  const publicBadge = folder.is_public ? '<span class="badge badge-public">公開</span>' : '';
+  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared);
   const totalCount = pinsInFolder.length + childFolders.length;
 
   let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
-    <div class="folder-name-row">${escHtml(folder.name)} ${publicBadge}${sharedBadge} <span class="folder-count">(${totalCount})</span></div>
+    <div class="folder-name-row">${escHtml(folder.name)} ${visBadge} <span class="folder-count">(${totalCount})</span></div>
     <div class="pin-folder-header" onclick="togglePinFolder(${folder.id})">
       <i class="fas fa-chevron-right toggle-icon"></i>
       <i class="fas fa-folder folder-icon"></i>
@@ -1209,12 +1218,12 @@ function addPinMarker(pin) {
 }
 
 function renderPinItem(pin) {
-  const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
+  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared);
   const canEdit = currentUser && (pin.user_id === currentUser.id || currentUser.is_admin);
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   return `<div class="pin-item" data-pin-id="${pin.id}">
     <div class="pin-item-header" onclick="focusPin(${pin.id})">
-      <h4>${escHtml(pin.title)} ${vis}</h4>
+      <h4>${escHtml(pin.title)} ${visBadge}</h4>
       <p>${escHtml(pin.description || '').substring(0, 60)}</p>
     </div>
     <div class="pin-meta">
@@ -1535,9 +1544,9 @@ function renderPinMarkers() {
 function createPinPopup(pin) {
   const div = document.createElement('div');
   div.style.cssText = 'max-width:280px;';
-  const vis = pin.is_public ? '<span class="badge badge-public">公開</span>' : '<span class="badge badge-private">非公開</span>';
+  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared);
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
-  let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${vis}</h4>`;
+  let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${visBadge}</h4>`;
   html += `<p style="font-size:12px;color:#666;margin:0 0 4px;">${escHtml(pin.description || '')}</p>`;
   html += `<p style="font-size:11px;color:#999;">作成者: ${escHtml(pin.author || '')} | ${dateStr}</p>`;
 
