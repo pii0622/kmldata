@@ -1745,7 +1745,7 @@ async function handleGetPinComments(env, user, pinId) {
     FROM pin_comments c
     JOIN users u ON c.user_id = u.id
     WHERE c.pin_id = ?
-    ORDER BY c.created_at ASC
+    ORDER BY c.created_at DESC
   `).bind(pinId).all();
 
   return json(comments.results);
