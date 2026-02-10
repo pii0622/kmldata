@@ -4,315 +4,680 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fieldnota commons - 見つけたナニカを、notaに記録する。共有する。</title>
-  <meta name="description" content="Fieldnota commonsは、フィールドで見つけた情報を地図上に記録・共有できるウェブアプリです。">
+  <meta name="description" content="ピンとKMLをフォルダ単位で仲間と共有できる地図アプリ。SNSではない、選択的な共有のための記録ツール。">
   <link rel="icon" href="/images/logo-icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="/images/logo-icon.svg">
   <style>
+    :root {
+      --color-primary: #4CAF50;
+      --color-primary-dark: #2E7D32;
+      --color-text: #333;
+      --color-text-muted: #666;
+      --color-bg: #f5f7f5;
+      --color-white: #fff;
+      --color-border: #e0e0e0;
+      --shadow-card: 0 2px 8px rgba(0,0,0,0.08);
+      --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.12);
+      --max-width-content: 720px;
+      --max-width-wide: 960px;
+      --spacing-section: 80px;
+      --radius: 12px;
+    }
+
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
     }
 
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      line-height: 1.6;
-      color: #333;
-      background: #f8f9fa;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+      line-height: 1.7;
+      color: var(--color-text);
+      background: var(--color-bg);
+      -webkit-font-smoothing: antialiased;
     }
 
+    /* Layout */
     .container {
-      max-width: 800px;
+      max-width: var(--max-width-wide);
       margin: 0 auto;
-      padding: 20px;
+      padding: 0 20px;
     }
 
-    /* Header */
-    header {
-      background: linear-gradient(135deg, #4CAF50, #2E7D32);
-      color: white;
-      padding: 60px 20px;
+    .container--narrow {
+      max-width: var(--max-width-content);
+    }
+
+    section {
+      padding: var(--spacing-section) 0;
+    }
+
+    /* Typography */
+    h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); font-weight: 700; }
+    h2 { font-size: clamp(1.25rem, 4vw, 1.75rem); font-weight: 600; margin-bottom: 24px; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+    p { margin-bottom: 16px; }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+      color: var(--color-white);
+      padding: 60px 0 80px;
       text-align: center;
     }
 
-    .logo {
+    .hero__logo {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 16px;
+      filter: brightness(0) invert(1);
+    }
+
+    .hero h1 {
+      margin-bottom: 12px;
+    }
+
+    .hero__tagline {
+      font-size: clamp(1rem, 3vw, 1.25rem);
+      opacity: 0.95;
+      margin-bottom: 16px;
+    }
+
+    .hero__desc {
+      font-size: 1rem;
+      opacity: 0.9;
+      max-width: 480px;
+      margin: 0 auto 32px;
+      line-height: 1.8;
+    }
+
+    .hero__actions {
       display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 15px;
-      margin-bottom: 20px;
-    }
-
-    .logo-icon {
-      width: 60px;
-      height: 60px;
-    }
-
-    .logo-title {
-      height: 50px;
-    }
-
-    .tagline {
-      font-size: 1.3rem;
-      opacity: 0.95;
-      margin-bottom: 30px;
-    }
-
-    .cta-button {
-      display: inline-block;
-      background: white;
-      color: #2E7D32;
-      padding: 15px 40px;
+      padding: 14px 28px;
       border-radius: 30px;
-      text-decoration: none;
+      font-size: 1rem;
       font-weight: 600;
-      font-size: 1.1rem;
+      text-decoration: none;
       transition: transform 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+      border: none;
     }
 
-    .cta-button:hover {
+    .btn:focus {
+      outline: 3px solid rgba(255,255,255,0.5);
+      outline-offset: 2px;
+    }
+
+    .btn--primary {
+      background: var(--color-white);
+      color: var(--color-primary-dark);
+    }
+
+    .btn--primary:hover {
       transform: translateY(-2px);
-      box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
     }
 
-    /* Sections */
-    section {
-      background: white;
-      margin: 30px auto;
-      padding: 40px;
-      border-radius: 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    .btn--secondary {
+      background: transparent;
+      color: var(--color-white);
+      border: 2px solid rgba(255,255,255,0.6);
     }
 
-    h1 {
-      font-size: 2rem;
-      margin-bottom: 10px;
+    .btn--secondary:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--color-white);
     }
 
-    h2 {
-      color: #2E7D32;
-      font-size: 1.5rem;
-      margin-bottom: 20px;
-      padding-bottom: 10px;
-      border-bottom: 2px solid #e0e0e0;
+    /* Cards */
+    .card {
+      background: var(--color-white);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: var(--shadow-card);
+      transition: box-shadow 0.2s;
     }
 
-    h3 {
-      color: #333;
-      font-size: 1.2rem;
-      margin: 25px 0 10px;
-    }
-
-    p {
-      margin-bottom: 15px;
-      color: #555;
-    }
-
-    ul {
-      margin: 15px 0;
-      padding-left: 25px;
-    }
-
-    li {
-      margin-bottom: 10px;
-      color: #555;
+    .card:hover {
+      box-shadow: var(--shadow-card-hover);
     }
 
     /* Features */
     .features {
+      background: var(--color-white);
+    }
+
+    .features__grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 25px;
-      margin-top: 20px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
     }
 
-    .feature {
+    .feature-card {
       text-align: center;
-      padding: 20px;
+      padding: 32px 24px;
+      background: var(--color-bg);
     }
 
-    .feature-icon {
+    .feature-card__icon {
       font-size: 2.5rem;
-      margin-bottom: 15px;
+      margin-bottom: 16px;
     }
 
-    .feature h3 {
-      margin: 10px 0;
-      color: #2E7D32;
+    .feature-card h3 {
+      color: var(--color-primary-dark);
     }
 
-    /* Footer */
-    footer {
+    .feature-card p {
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* How to use */
+    .how {
+      background: var(--color-bg);
+    }
+
+    .how__steps {
+      display: grid;
+      gap: 20px;
+    }
+
+    .step {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    .step__number {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      background: var(--color-primary);
+      color: var(--color-white);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .step__content {
+      flex: 1;
+      padding-top: 6px;
+    }
+
+    .step__content h3 {
+      margin-bottom: 4px;
+    }
+
+    .step__content p {
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* Policy */
+    .policy {
+      background: var(--color-white);
+    }
+
+    .policy__box {
+      background: linear-gradient(135deg, #f8faf8 0%, #f0f4f0 100%);
+      border-left: 4px solid var(--color-primary);
+      padding: 28px 32px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    .policy__box h2 {
+      color: var(--color-primary-dark);
+      margin-bottom: 20px;
+    }
+
+    .policy__list {
+      list-style: none;
+    }
+
+    .policy__list li {
+      position: relative;
+      padding-left: 24px;
+      margin-bottom: 12px;
+      color: var(--color-text);
+    }
+
+    .policy__list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 8px;
+      height: 8px;
+      background: var(--color-primary);
+      border-radius: 50%;
+    }
+
+    .policy__list li:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Map sources */
+    .map-sources {
+      background: var(--color-bg);
+      padding: 40px 0;
+    }
+
+    .map-sources__inner {
       text-align: center;
-      padding: 30px;
-      color: #666;
+      color: var(--color-text-muted);
       font-size: 0.9rem;
     }
 
-    footer a {
-      color: #2E7D32;
+    .map-sources__inner strong {
+      color: var(--color-text);
+    }
+
+    /* FAQ */
+    .faq {
+      background: var(--color-white);
+    }
+
+    .faq__list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .faq__item {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .faq__question {
+      width: 100%;
+      background: none;
+      border: none;
+      padding: 20px 24px;
+      text-align: left;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--color-text);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+
+    .faq__question:hover {
+      background: var(--color-bg);
+    }
+
+    .faq__question:focus {
+      outline: 2px solid var(--color-primary);
+      outline-offset: -2px;
+    }
+
+    .faq__icon {
+      font-size: 1.25rem;
+      transition: transform 0.3s;
+      color: var(--color-primary);
+    }
+
+    .faq__item[open] .faq__icon {
+      transform: rotate(45deg);
+    }
+
+    .faq__answer {
+      padding: 0 24px 20px;
+      color: var(--color-text-muted);
+      line-height: 1.8;
+    }
+
+    /* Footer */
+    .footer {
+      background: var(--color-primary-dark);
+      color: var(--color-white);
+      padding: 40px 0;
+    }
+
+    .footer__inner {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .footer__links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .footer__links a {
+      color: rgba(255,255,255,0.85);
       text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .footer__links a:hover {
+      color: var(--color-white);
+    }
+
+    .footer__copy {
+      font-size: 0.85rem;
+      opacity: 0.7;
+    }
+
+    .footer__app-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.15);
+      padding: 10px 20px;
+      border-radius: 20px;
+      color: var(--color-white);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .footer__app-link:hover {
+      background: rgba(255,255,255,0.25);
     }
 
     /* Responsive */
     @media (max-width: 600px) {
-      header {
-        padding: 40px 20px;
+      :root {
+        --spacing-section: 60px;
       }
 
-      .tagline {
-        font-size: 1.1rem;
+      .hero {
+        padding: 48px 0 64px;
       }
 
-      section {
-        padding: 25px;
-        margin: 20px 10px;
+      .hero__logo {
+        width: 52px;
+        height: 52px;
       }
 
-      h2 {
-        font-size: 1.3rem;
+      .hero__actions {
+        flex-direction: column;
+        padding: 0 20px;
       }
+
+      .btn {
+        width: 100%;
+      }
+
+      .step {
+        gap: 16px;
+      }
+
+      .step__number {
+        width: 36px;
+        height: 36px;
+        font-size: 1rem;
+      }
+
+      .policy__box {
+        padding: 24px;
+      }
+
+      .footer__inner {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .footer__links {
+        justify-content: center;
+      }
+    }
+
+    /* Accessibility */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      border: 0;
     }
   </style>
 </head>
 <body>
 
-<header>
-  <div class="logo">
-    <img src="/images/logo-icon.svg" alt="Fieldnota" class="logo-icon">
+<!-- Hero -->
+<header class="hero">
+  <div class="container">
+    <img src="/images/logo-icon.svg" alt="" class="hero__logo" aria-hidden="true">
     <h1>Fieldnota commons</h1>
+    <p class="hero__tagline">見つけたナニカを、notaに記録する。共有する。</p>
+    <p class="hero__desc">
+      ピン（写真・タイトル・メモ）とKMLを、<br>
+      フォルダ単位で仲間と共有できる地図アプリ。
+    </p>
+    <div class="hero__actions">
+      <a href="/" class="btn btn--primary">アプリを開く</a>
+      <a href="#how" class="btn btn--secondary">使い方を見る</a>
+    </div>
   </div>
-  <p class="tagline">見つけたナニカを、notaに記録する。共有する。</p>
-  <a href="/" class="cta-button">アプリを開く</a>
 </header>
 
-<div class="container">
+<!-- Features -->
+<section class="features" aria-labelledby="features-heading">
+  <div class="container">
+    <h2 id="features-heading" class="visually-hidden">主な機能</h2>
+    <div class="features__grid">
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">📍</div>
+        <h3>ピンを残す</h3>
+        <p>写真・タイトル・テキストで場所を記録。コメントでやりとりもできます。</p>
+      </article>
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">📁</div>
+        <h3>フォルダで共有</h3>
+        <p>階層化OK。フォルダ作成者が共有相手を選ぶので、見せたい人だけに共有。</p>
+      </article>
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">🗺️</div>
+        <h3>KMLを扱う</h3>
+        <p>作業範囲・ルート・ポイントをインポートして地図に重ねて表示。</p>
+      </article>
+    </div>
+  </div>
+</section>
 
-  <section>
-    <h2>Fieldnota commonsとは</h2>
-    <p>Fieldnota commonsは、フィールドワークや探索で見つけた情報を地図上に記録し、仲間と共有できるウェブアプリです。</p>
-    <p>写真付きのピンを地図上に配置し、コメントを通じてコミュニケーションできます。KMLファイルのインポートにも対応し、専門的な地理情報も扱えます。</p>
-
-    <div class="features">
-      <div class="feature">
-        <div class="feature-icon">📍</div>
-        <h3>ピンで記録</h3>
-        <p>発見した場所に写真付きのピンを設置</p>
+<!-- How to use -->
+<section class="how" id="how" aria-labelledby="how-heading">
+  <div class="container container--narrow">
+    <h2 id="how-heading">使い方</h2>
+    <div class="how__steps">
+      <div class="step">
+        <div class="step__number" aria-hidden="true">1</div>
+        <div class="step__content">
+          <h3>アカウント作成・ログイン</h3>
+          <p>管理者の承認後、利用を開始できます。</p>
+        </div>
       </div>
-      <div class="feature">
-        <div class="feature-icon">👥</div>
-        <h3>共有・コラボ</h3>
-        <p>フォルダ単位でメンバーと情報を共有</p>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">2</div>
+        <div class="step__content">
+          <h3>フォルダを作る</h3>
+          <p>ピンやKMLを整理するフォルダを作成。階層化もできます。</p>
+        </div>
       </div>
-      <div class="feature">
-        <div class="feature-icon">🗺️</div>
-        <h3>KML対応</h3>
-        <p>KML/KMZファイルをインポートして表示</p>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">3</div>
+        <div class="step__content">
+          <h3>ピン追加 / KMLアップロード</h3>
+          <p>地図をタップしてピンを設置、またはKMLファイルをアップロード。</p>
+        </div>
       </div>
-      <div class="feature">
-        <div class="feature-icon">🔔</div>
-        <h3>通知機能</h3>
-        <p>新着コメントやピンをプッシュ通知</p>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">4</div>
+        <div class="step__content">
+          <h3>フォルダを共有</h3>
+          <p>共有したい相手だけを選んで、フォルダ単位で共有します。</p>
+        </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <section>
-    <h2>利用方法</h2>
+<!-- Sharing Policy -->
+<section class="policy" aria-labelledby="policy-heading">
+  <div class="container container--narrow">
+    <div class="policy__box">
+      <h2 id="policy-heading">共有の考え方</h2>
+      <ul class="policy__list">
+        <li><strong>SNSではありません。</strong>タイムラインも拡散もありません。</li>
+        <li><strong>共有はフォルダ単位。</strong>フォルダ作成者が共有者を選びます。</li>
+        <li><strong>目的は「見せる」より「残す」「使う」「引き継ぐ」。</strong></li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-    <h3>1. アカウント登録</h3>
-    <p>アプリを開き、「ログイン / アカウント作成」からアカウントを登録します。管理者の承認後、利用可能になります。</p>
+<!-- Map Sources -->
+<section class="map-sources" aria-labelledby="map-sources-heading">
+  <div class="container">
+    <p class="map-sources__inner" id="map-sources-heading">
+      <strong>地図データ：</strong>国土地理院の等高線地図・航空写真を使用しています。
+    </p>
+  </div>
+</section>
 
-    <h3>2. フォルダを作成</h3>
-    <p>ピンやKMLファイルを整理するためのフォルダを作成します。フォルダは「公開」「共有」「非公開」の設定が可能です。</p>
+<!-- FAQ -->
+<section class="faq" aria-labelledby="faq-heading">
+  <div class="container container--narrow">
+    <h2 id="faq-heading">よくある質問</h2>
+    <div class="faq__list">
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>投稿したピンは誰に見えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          フォルダの設定によります。「非公開」なら自分だけ、「共有」なら選んだメンバーだけ、「公開」なら全ユーザーが閲覧できます。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>ピンには何を付けられますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          タイトル、説明テキスト、写真（複数可）を付けられます。他のユーザーはコメントを残すこともできます。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>KMLファイルは何に使えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          Google Earth等で作成した作業エリア、ルート、ポイント群を地図上に重ねて表示できます。調査範囲の共有などに便利です。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>SNS的な機能はありますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          いいね、フォロー、タイムラインなどのSNS機能はありません。必要な情報を、必要な人と共有するためのツールです。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>スマホで使えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          はい。ブラウザで動作し、ホーム画面に追加すればアプリのように使えます。プッシュ通知にも対応しています。
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
 
-    <h3>3. ピンを追加</h3>
-    <p>ヘッダーのピンアイコンをタップし、地図上の任意の場所をタップしてピンを設置します。タイトル、説明、写真を追加できます。</p>
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer__inner">
+      <ul class="footer__links">
+        <li><a href="#terms">利用規約</a></li>
+        <li><a href="#privacy">プライバシーポリシー</a></li>
+        <li><a href="mailto:support@example.com">お問い合わせ</a></li>
+      </ul>
+      <a href="/" class="footer__app-link">
+        <img src="/images/logo-icon.svg" alt="" width="20" height="20" style="filter:brightness(0) invert(1);">
+        アプリを開く
+      </a>
+    </div>
+    <div style="text-align:center;margin-top:24px;">
+      <p class="footer__copy">&copy; 2024 Fieldnota commons</p>
+    </div>
+  </div>
+</footer>
 
-    <h3>4. KMLファイルをアップロード</h3>
-    <p>KMLフォルダにKML/KMZファイルをアップロードすると、地図上にレイヤーとして表示されます。</p>
-
-    <h3>5. 共有する</h3>
-    <p>フォルダの共有ボタンから、特定のユーザーとフォルダを共有できます。共有されたユーザーはフォルダ内のピンやKMLを閲覧できます。</p>
-
-    <h3>6. 通知を受け取る</h3>
-    <p>設定画面からプッシュ通知をONにすると、新着コメントやピンがあった時に通知を受け取れます。</p>
-  </section>
-
-  <section>
+<!-- Terms & Privacy (hidden sections, linked from footer) -->
+<section id="terms" style="background:#fff;padding:60px 0;">
+  <div class="container container--narrow">
     <h2>利用規約</h2>
-
     <h3>第1条（適用）</h3>
-    <p>本規約は、本サービス「Fieldnota commons」（以下「本サービス」）の利用条件を定めるものです。ユーザーは本規約に同意した上で本サービスを利用するものとします。</p>
-
+    <p>本規約は、本サービス「Fieldnota commons」の利用条件を定めるものです。ユーザーは本規約に同意した上で本サービスを利用するものとします。</p>
     <h3>第2条（アカウント）</h3>
-    <ul>
-      <li>ユーザーはアカウント登録時に正確な情報を提供する必要があります。</li>
-      <li>アカウントの管理責任はユーザーにあります。</li>
-      <li>アカウントの第三者への譲渡・貸与は禁止します。</li>
-    </ul>
-
+    <p>ユーザーはアカウント登録時に正確な情報を提供する必要があります。アカウントの管理責任はユーザーにあり、第三者への譲渡・貸与は禁止します。</p>
     <h3>第3条（禁止事項）</h3>
-    <p>以下の行為を禁止します：</p>
-    <ul>
-      <li>法令または公序良俗に違反する行為</li>
-      <li>他のユーザーへの迷惑行為・嫌がらせ</li>
-      <li>虚偽の情報の投稿</li>
-      <li>著作権・プライバシー等の権利を侵害する投稿</li>
-      <li>サービスの運営を妨害する行為</li>
-      <li>その他、運営者が不適切と判断する行為</li>
-    </ul>
-
+    <p>法令・公序良俗に違反する行為、他のユーザーへの迷惑行為、虚偽情報の投稿、著作権等の権利侵害、サービス運営の妨害行為を禁止します。</p>
     <h3>第4条（投稿データ）</h3>
-    <ul>
-      <li>ユーザーが投稿したデータの著作権はユーザーに帰属します。</li>
-      <li>運営者はサービス提供のために投稿データを利用できます。</li>
-      <li>公開設定のデータは他のユーザーから閲覧可能になります。</li>
-    </ul>
-
+    <p>投稿データの著作権はユーザーに帰属します。運営者はサービス提供のために投稿データを利用できます。公開設定のデータは他のユーザーから閲覧可能になります。</p>
     <h3>第5条（免責事項）</h3>
-    <ul>
-      <li>本サービスは現状有姿で提供され、特定目的への適合性を保証しません。</li>
-      <li>投稿された情報の正確性について運営者は責任を負いません。</li>
-      <li>サービスの中断・終了によって生じた損害について責任を負いません。</li>
-    </ul>
-
+    <p>本サービスは現状有姿で提供され、特定目的への適合性を保証しません。投稿情報の正確性、サービスの中断・終了による損害について運営者は責任を負いません。</p>
     <h3>第6条（規約の変更）</h3>
     <p>運営者は必要に応じて本規約を変更できます。変更後の規約は本ページに掲載した時点で効力を生じます。</p>
+  </div>
+</section>
 
-    <h3>第7条（準拠法）</h3>
-    <p>本規約は日本法に準拠し、解釈されるものとします。</p>
-  </section>
-
-  <section>
+<section id="privacy" style="background:#f5f7f5;padding:60px 0;">
+  <div class="container container--narrow">
     <h2>プライバシーポリシー</h2>
-
     <h3>収集する情報</h3>
-    <ul>
-      <li>アカウント情報（ユーザー名、メールアドレス）</li>
-      <li>投稿データ（ピン、コメント、画像、KMLファイル）</li>
-      <li>位置情報（現在地表示機能使用時）</li>
-      <li>アクセスログ（セキュリティ目的）</li>
-    </ul>
-
+    <p>アカウント情報（ユーザー名、メールアドレス）、投稿データ（ピン、コメント、画像、KMLファイル）、位置情報（現在地表示機能使用時）、アクセスログ（セキュリティ目的）を収集します。</p>
     <h3>情報の利用目的</h3>
-    <ul>
-      <li>サービスの提供・運営</li>
-      <li>ユーザーサポート</li>
-      <li>サービス改善</li>
-      <li>不正利用の防止</li>
-    </ul>
-
+    <p>サービスの提供・運営、ユーザーサポート、サービス改善、不正利用の防止に利用します。</p>
     <h3>情報の第三者提供</h3>
     <p>法令に基づく場合を除き、ユーザーの同意なく個人情報を第三者に提供することはありません。</p>
-  </section>
-
-</div>
-
-<footer>
-  <p>&copy; 2024 Fieldnota commons. All rights reserved.</p>
-  <p><a href="/">アプリに戻る</a></p>
-</footer>
+  </div>
+</section>
 
 </body>
 </html>
