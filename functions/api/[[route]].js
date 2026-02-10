@@ -499,6 +499,11 @@ export async function onRequest(context) {
       const id = path.match(/^\/kml-folders\/(\d+)\/visibility$/)[1];
       return await handleKmlFolderVisibility(request, env, user, id);
     }
+    if (path.match(/^\/kml-folders\/(\d+)\/shares$/) && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/kml-folders\/(\d+)\/shares$/)[1];
+      return await handleGetKmlFolderShares(env, user, id);
+    }
     if (path.match(/^\/kml-folders\/(\d+)\/share$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/kml-folders\/(\d+)\/share$/)[1];
@@ -555,6 +560,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/folders\/(\d+)$/)[1];
       return await handleDeleteFolder(env, user, id);
+    }
+    if (path.match(/^\/folders\/(\d+)\/shares$/) && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/folders\/(\d+)\/shares$/)[1];
+      return await handleGetFolderShares(env, user, id);
     }
     if (path.match(/^\/folders\/(\d+)\/share$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
@@ -1050,10 +1060,35 @@ async function handleKmlFolderVisibility(request, env, user, id) {
   return json({ ok: true });
 }
 
+async function handleGetKmlFolderShares(env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+
+  // User must be owner, admin, or shared with this folder
+  const isOwner = folder.user_id === user.id;
+  const isAdmin = user.is_admin;
+  const isSharedWith = await env.DB.prepare(
+    'SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id = ?'
+  ).bind(id, user.id).first();
+
+  if (!isOwner && !isAdmin && !isSharedWith) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const shares = await env.DB.prepare(`
+    SELECT kfs.shared_with_user_id, u.username, u.display_name
+    FROM kml_folder_shares kfs
+    JOIN users u ON kfs.shared_with_user_id = u.id
+    WHERE kfs.kml_folder_id = ?
+  `).bind(id).all();
+
+  return json(shares.results);
+}
+
 async function handleShareKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id) return json({ error: '権限がありません' }, 403);
+  if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await request.json();
   await env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id = ?').bind(id).run();
@@ -1384,10 +1419,35 @@ async function handleDeleteFolder(env, user, id) {
   return json({ ok: true });
 }
 
+async function handleGetFolderShares(env, user, id) {
+  const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
+  if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
+
+  // User must be owner, admin, or shared with this folder
+  const isOwner = folder.user_id === user.id;
+  const isAdmin = user.is_admin;
+  const isSharedWith = await env.DB.prepare(
+    'SELECT 1 FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
+  ).bind(id, user.id).first();
+
+  if (!isOwner && !isAdmin && !isSharedWith) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const shares = await env.DB.prepare(`
+    SELECT fs.shared_with_user_id, u.username, u.display_name
+    FROM folder_shares fs
+    JOIN users u ON fs.shared_with_user_id = u.id
+    WHERE fs.folder_id = ?
+  `).bind(id).all();
+
+  return json(shares.results);
+}
+
 async function handleShareFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id) return json({ error: '権限がありません' }, 403);
+  if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await request.json();
   await env.DB.prepare('DELETE FROM folder_shares WHERE folder_id = ?').bind(id).run();

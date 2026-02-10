@@ -388,9 +388,9 @@ function renderKmlFolderNode(folder, depth) {
         <button onclick="toggleKmlFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
         ${isOwner ? `<button onclick="showRenameKmlFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
         <button onclick="showMoveKmlFolderModal(${folder.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
-        <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>
-        <button onclick="showShareKmlFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
-        <button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
+        <button onclick="showKmlUploadModal(${folder.id})" title="追加" class="icon-btn"><i class="fas fa-plus"></i></button>` : ''}
+        ${(isOwner || folder.is_shared) ? `<button onclick="showShareKmlFolderModal(${folder.id})" title="${isOwner ? '共有' : 'メンバー確認'}" class="icon-btn"><i class="fas fa-share-alt"></i></button>` : ''}
+        ${isOwner ? `<button onclick="deleteKmlFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
       </div>
     </div>
     <div class="kml-folder-files" id="kml-folder-files-${folder.id}">`;
@@ -773,14 +773,54 @@ async function deleteKmlFile(fileId) {
 
 let shareKmlSharedWith = [];
 
-function showShareKmlFolderModal(folderId) {
+async function showShareKmlFolderModal(folderId) {
   document.getElementById('share-kml-folder-id').value = folderId;
   const folder = kmlFolders.find(f => f.id === folderId);
-  shareKmlSharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
+  const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
 
-  document.getElementById('share-kml-search').value = '';
-  renderShareKmlUserList('');
+  // Fetch shared members
+  try {
+    const shares = await api(`/api/kml-folders/${folderId}/shares`);
+    shareKmlSharedWith = shares.map(s => s.shared_with_user_id);
+    renderShareKmlMembers(shares);
+  } catch (err) {
+    shareKmlSharedWith = [];
+    document.getElementById('share-kml-members').innerHTML = '<p style="color:#999;">共有メンバーはいません</p>';
+  }
+
+  // Show/hide owner controls
+  const ownerControls = document.getElementById('share-kml-owner-controls');
+  const saveBtn = document.getElementById('share-kml-save-btn');
+  const title = document.getElementById('share-kml-title');
+
+  if (isOwner) {
+    ownerControls.style.display = '';
+    saveBtn.style.display = '';
+    title.textContent = 'KMLフォルダを共有';
+    document.getElementById('share-kml-search').value = '';
+    renderShareKmlUserList('');
+  } else {
+    ownerControls.style.display = 'none';
+    saveBtn.style.display = 'none';
+    title.textContent = '共有メンバー確認';
+  }
+
   openModal('modal-share-kml');
+}
+
+function renderShareKmlMembers(shares) {
+  const container = document.getElementById('share-kml-members');
+  if (!shares || shares.length === 0) {
+    container.innerHTML = '<p style="color:#999;margin:0;">共有メンバーはいません</p>';
+    return;
+  }
+
+  container.innerHTML = shares.map(s => `
+    <div style="display:flex;align-items:center;padding:4px 0;">
+      <i class="fas fa-user" style="color:#666;margin-right:8px;"></i>
+      <span>${escHtml(s.display_name || s.username)}</span>
+    </div>
+  `).join('');
 }
 
 function filterShareKmlUsers() {
@@ -1112,8 +1152,9 @@ function renderFolderNode(folder, folderPins, depth) {
       <div class="folder-actions" onclick="event.stopPropagation()">
         <button onclick="toggleFolderVisibilityBtn(${folder.id})" title="表示切替" class="icon-btn ${isVisible ? 'active' : ''}"><i class="fas fa-eye"></i></button>
         ${isOwner ? `<button onclick="showRenameFolderModal(${folder.id})" title="名前変更" class="icon-btn"><i class="fas fa-edit"></i></button>
-        <button onclick="showMoveFolderModal(${folder.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>
-        <button onclick="showShareFolderModal(${folder.id})" title="共有" class="icon-btn"><i class="fas fa-share-alt"></i></button>
+        <button onclick="showMoveFolderModal(${folder.id})" title="移動" class="icon-btn"><i class="fas fa-arrows-alt"></i></button>` : ''}
+        ${(isOwner || folder.is_shared) ? `<button onclick="showShareFolderModal(${folder.id})" title="${isOwner ? '共有' : 'メンバー確認'}" class="icon-btn"><i class="fas fa-share-alt"></i></button>` : ''}
+        ${isOwner ? `
         <button onclick="deleteFolder(${folder.id})" title="削除" class="icon-btn delete"><i class="fas fa-trash"></i></button>` : ''}
       </div>
     </div>
@@ -1314,14 +1355,54 @@ async function renameFolder() {
 
 let shareFolderSharedWith = [];
 
-function showShareFolderModal(folderId) {
+async function showShareFolderModal(folderId) {
   document.getElementById('share-folder-id').value = folderId;
   const folder = folders.find(f => f.id === folderId);
-  shareFolderSharedWith = folder?.shared_with ? folder.shared_with.split(',').map(Number) : [];
+  const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
 
-  document.getElementById('share-folder-search').value = '';
-  renderShareFolderUserList('');
+  // Fetch shared members
+  try {
+    const shares = await api(`/api/folders/${folderId}/shares`);
+    shareFolderSharedWith = shares.map(s => s.shared_with_user_id);
+    renderShareFolderMembers(shares);
+  } catch (err) {
+    shareFolderSharedWith = [];
+    document.getElementById('share-folder-members').innerHTML = '<p style="color:#999;">共有メンバーはいません</p>';
+  }
+
+  // Show/hide owner controls
+  const ownerControls = document.getElementById('share-folder-owner-controls');
+  const saveBtn = document.getElementById('share-folder-save-btn');
+  const title = document.getElementById('share-folder-title');
+
+  if (isOwner) {
+    ownerControls.style.display = '';
+    saveBtn.style.display = '';
+    title.textContent = 'ピンフォルダを共有';
+    document.getElementById('share-folder-search').value = '';
+    renderShareFolderUserList('');
+  } else {
+    ownerControls.style.display = 'none';
+    saveBtn.style.display = 'none';
+    title.textContent = '共有メンバー確認';
+  }
+
   openModal('modal-share-folder');
+}
+
+function renderShareFolderMembers(shares) {
+  const container = document.getElementById('share-folder-members');
+  if (!shares || shares.length === 0) {
+    container.innerHTML = '<p style="color:#999;margin:0;">共有メンバーはいません</p>';
+    return;
+  }
+
+  container.innerHTML = shares.map(s => `
+    <div style="display:flex;align-items:center;padding:4px 0;">
+      <i class="fas fa-user" style="color:#666;margin-right:8px;"></i>
+      <span>${escHtml(s.display_name || s.username)}</span>
+    </div>
+  `).join('');
 }
 
 function filterShareFolderUsers() {

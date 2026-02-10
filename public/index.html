@@ -210,18 +210,28 @@
 <!-- Share KML folder modal -->
 <div class="modal-overlay" id="modal-share-kml">
   <div class="modal">
-    <h3><i class="fas fa-share-alt"></i> KMLフォルダを共有</h3>
+    <h3><i class="fas fa-share-alt"></i> <span id="share-kml-title">KMLフォルダを共有</span></h3>
     <input type="hidden" id="share-kml-folder-id">
-    <div class="form-group">
-      <input type="text" id="share-kml-search" placeholder="表示名で検索..." oninput="filterShareKmlUsers()">
+    <!-- Current members section (always visible) -->
+    <div id="share-kml-members-section">
+      <p style="font-size:13px;color:#666;margin-bottom:8px;"><i class="fas fa-users"></i> 共有メンバー</p>
+      <div id="share-kml-members" style="max-height:120px;overflow-y:auto;margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:4px;">
+        <!-- Dynamic member list -->
+      </div>
     </div>
-    <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
-    <div class="user-select-list" id="share-kml-user-list">
-      <!-- Dynamic user list -->
+    <!-- Owner controls (only for folder owner) -->
+    <div id="share-kml-owner-controls">
+      <div class="form-group">
+        <input type="text" id="share-kml-search" placeholder="表示名で検索..." oninput="filterShareKmlUsers()">
+      </div>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
+      <div class="user-select-list" id="share-kml-user-list">
+        <!-- Dynamic user list -->
+      </div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('modal-share-kml')">キャンセル</button>
-      <button class="btn btn-primary" onclick="shareKmlFolder()">保存</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-share-kml')">閉じる</button>
+      <button class="btn btn-primary" id="share-kml-save-btn" onclick="shareKmlFolder()">保存</button>
     </div>
   </div>
 </div>
@@ -250,18 +260,28 @@
 <!-- Share pin folder modal -->
 <div class="modal-overlay" id="modal-share-folder">
   <div class="modal">
-    <h3><i class="fas fa-share-alt"></i> ピンフォルダを共有</h3>
+    <h3><i class="fas fa-share-alt"></i> <span id="share-folder-title">ピンフォルダを共有</span></h3>
     <input type="hidden" id="share-folder-id">
-    <div class="form-group">
-      <input type="text" id="share-folder-search" placeholder="表示名で検索..." oninput="filterShareFolderUsers()">
+    <!-- Current members section (always visible) -->
+    <div id="share-folder-members-section">
+      <p style="font-size:13px;color:#666;margin-bottom:8px;"><i class="fas fa-users"></i> 共有メンバー</p>
+      <div id="share-folder-members" style="max-height:120px;overflow-y:auto;margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:4px;">
+        <!-- Dynamic member list -->
+      </div>
     </div>
-    <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
-    <div class="user-select-list" id="share-folder-user-list">
-      <!-- Dynamic user list -->
+    <!-- Owner controls (only for folder owner) -->
+    <div id="share-folder-owner-controls">
+      <div class="form-group">
+        <input type="text" id="share-folder-search" placeholder="表示名で検索..." oninput="filterShareFolderUsers()">
+      </div>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
+      <div class="user-select-list" id="share-folder-user-list">
+        <!-- Dynamic user list -->
+      </div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('modal-share-folder')">キャンセル</button>
-      <button class="btn btn-primary" onclick="shareFolder()">保存</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-share-folder')">閉じる</button>
+      <button class="btn btn-primary" id="share-folder-save-btn" onclick="shareFolder()">保存</button>
     </div>
   </div>
 </div>
