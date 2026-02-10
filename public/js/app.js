@@ -16,6 +16,7 @@ let authMode = 'login';
 let watchId = null;
 let pendingUsersCount = 0;
 let pushSubscription = null;
+let deferredInstallPrompt = null;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
@@ -909,6 +910,8 @@ function showAccountSettings() {
   openModal('modal-settings');
   // Update push notification UI
   updatePushUI();
+  // Update install UI
+  updateInstallUI();
 }
 
 async function saveAccountSettings() {
@@ -1939,6 +1942,75 @@ async function testPushNotification() {
   }
 }
 
+// ==================== App Install ====================
+function initInstallPrompt() {
+  // Capture the install prompt event
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    console.log('Install prompt captured');
+  });
+
+  // Detect when app is installed
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    console.log('App installed');
+  });
+}
+
+function updateInstallUI() {
+  const availableEl = document.getElementById('install-available');
+  const iosEl = document.getElementById('install-ios');
+  const installedEl = document.getElementById('install-installed');
+
+  if (!availableEl || !iosEl || !installedEl) return;
+
+  // Hide all first
+  availableEl.style.display = 'none';
+  iosEl.style.display = 'none';
+  installedEl.style.display = 'none';
+
+  // Check if already installed (standalone mode)
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                       window.navigator.standalone === true;
+
+  if (isStandalone) {
+    installedEl.style.display = 'block';
+    return;
+  }
+
+  // Check if iOS
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (isIOS) {
+    iosEl.style.display = 'block';
+    return;
+  }
+
+  // Check if install prompt is available
+  if (deferredInstallPrompt) {
+    availableEl.style.display = 'block';
+  } else {
+    // Not installable or already installed
+    installedEl.style.display = 'block';
+  }
+}
+
+async function installApp() {
+  if (!deferredInstallPrompt) {
+    notify('インストールプロンプトが利用できません', 'error');
+    return;
+  }
+
+  deferredInstallPrompt.prompt();
+  const { outcome } = await deferredInstallPrompt.userChoice;
+
+  if (outcome === 'accepted') {
+    notify('アプリをインストールしました！');
+    deferredInstallPrompt = null;
+    updateInstallUI();
+  }
+}
+
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -2396,6 +2468,7 @@ async function getTileCacheCount() {
 // ==================== Init ====================
 async function init() {
   registerServiceWorker();
+  initInstallPrompt();
   await checkAuth();
   await loadAll();
   startWatchingLocation();

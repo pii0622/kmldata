@@ -455,6 +455,22 @@
       <small style="color:#666;margin-top:4px;display:block;">新着コメント・ピン・KMLの通知を受け取ります</small>
       <div id="settings-push-result" style="margin-top:8px;font-size:12px;display:none;"></div>
     </div>
+    <div class="section-title" style="margin-top:16px;">アプリをインストール</div>
+    <div class="form-group" id="settings-install-container">
+      <div id="install-available" style="display:none;">
+        <button class="btn btn-primary" onclick="installApp()">
+          <i class="fas fa-download"></i> ホーム画面に追加
+        </button>
+      </div>
+      <div id="install-ios" style="display:none;">
+        <small style="color:#666;">
+          <i class="fas fa-share-square"></i> Safariの共有ボタン → 「ホーム画面に追加」をタップ
+        </small>
+      </div>
+      <div id="install-installed" style="display:none;">
+        <small style="color:#28a745;"><i class="fas fa-check"></i> インストール済み</small>
+      </div>
+    </div>
     <div id="settings-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-settings')">キャンセル</button>
