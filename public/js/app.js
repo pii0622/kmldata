@@ -1771,7 +1771,7 @@ async function checkUnreadComments() {
     unreadComments = await res.json();
     updateNotificationBadge();
   } catch (err) {
-    console.error('Failed to check unread comments:', err);
+    console.error('Failed to check notifications:', err);
   }
 }
 
@@ -1795,24 +1795,63 @@ async function openNotificationsPopup() {
   openModal('modal-notifications');
 
   if (unreadComments.length === 0) {
-    list.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">新着コメントはありません</div>';
+    list.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">新着通知はありません</div>';
     return;
   }
 
-  list.innerHTML = unreadComments.map(c => {
-    const dateStr = c.created_at ? c.created_at.replace('T', ' ').substring(0, 16) : '';
-    return `<div onclick="zoomToCommentPin(${c.lat}, ${c.lng}, ${c.pin_id})" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-        <span style="font-weight:bold;color:#007bff;"><i class="fas fa-map-pin"></i> ${escHtml(c.pin_title)}</span>
-        <span style="font-size:11px;color:#999;">${dateStr}</span>
-      </div>
-      <div style="font-size:12px;color:#666;margin-bottom:4px;">
-        <span style="font-weight:bold;">${escHtml(c.author_name)}</span>: ${escHtml(c.content)}
-      </div>
-      <div style="font-size:11px;color:#999;">
-        <i class="fas fa-folder"></i> ${escHtml(c.folder_name || '未分類')}
-      </div>
-    </div>`;
+  list.innerHTML = unreadComments.map(item => {
+    const dateStr = item.created_at ? item.created_at.replace('T', ' ').substring(0, 16) : '';
+
+    if (item.type === 'comment') {
+      return `<div onclick="zoomToNotification('pin', ${item.lat}, ${item.lng}, ${item.pin_id})" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#17a2b8;"><i class="fas fa-comment"></i> コメント</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          <i class="fas fa-map-pin" style="color:#007bff;"></i> ${escHtml(item.pin_title)}
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:4px;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span>: ${escHtml(item.content)}
+        </div>
+        <div style="font-size:11px;color:#999;">
+          <i class="fas fa-folder"></i> ${escHtml(item.folder_name || '未分類')}
+        </div>
+      </div>`;
+    } else if (item.type === 'pin') {
+      return `<div onclick="zoomToNotification('pin', ${item.lat}, ${item.lng}, ${item.pin_id})" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#28a745;"><i class="fas fa-map-pin"></i> 新規ピン</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          ${escHtml(item.pin_title)}
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:4px;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span>${item.content ? ': ' + escHtml(item.content.substring(0, 50)) : ''}
+        </div>
+        <div style="font-size:11px;color:#999;">
+          <i class="fas fa-folder"></i> ${escHtml(item.folder_name || '未分類')}
+        </div>
+      </div>`;
+    } else if (item.type === 'kml') {
+      return `<div onclick="zoomToNotification('kml', 0, 0, ${item.kml_id})" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#fd7e14;"><i class="fas fa-file"></i> 新規KML</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          ${escHtml(item.title)}
+        </div>
+        <div style="font-size:12px;color:#666;margin-bottom:4px;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span>
+        </div>
+        <div style="font-size:11px;color:#999;">
+          <i class="fas fa-folder"></i> ${escHtml(item.folder_name || '未分類')}
+        </div>
+      </div>`;
+    }
+    return '';
   }).join('');
 }
 
@@ -1835,14 +1874,39 @@ async function closeNotificationsPopup() {
 }
 
 function zoomToCommentPin(lat, lng, pinId) {
-  closeModal('modal-notifications');
-  map.setView([lat, lng], 16);
+  zoomToNotification('pin', lat, lng, pinId);
+}
 
-  // Open the pin popup if marker exists
-  if (pinMarkers[pinId]) {
-    setTimeout(() => {
-      pinMarkers[pinId].openPopup();
-    }, 300);
+function zoomToNotification(type, lat, lng, id) {
+  closeModal('modal-notifications');
+
+  if (type === 'pin') {
+    map.setView([lat, lng], 16);
+    // Open the pin popup if marker exists
+    if (pinMarkers[id]) {
+      setTimeout(() => {
+        pinMarkers[id].openPopup();
+      }, 300);
+    }
+  } else if (type === 'kml') {
+    // Zoom to KML file bounds
+    const kmlLayer = kmlLayers[id];
+    if (kmlLayer) {
+      try {
+        const bounds = kmlLayer.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds, { padding: [50, 50] });
+        }
+      } catch (e) {
+        console.error('Failed to zoom to KML:', e);
+      }
+    } else {
+      // If layer not visible, try to load and zoom
+      const file = kmlFiles.find(f => f.id === id);
+      if (file) {
+        focusKmlFile(id);
+      }
+    }
   }
 }
 

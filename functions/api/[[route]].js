@@ -1890,10 +1890,10 @@ async function handleGetUnreadComments(env, user) {
 
   const lastReadAt = readStatus?.last_read_at || '1970-01-01 00:00:00';
 
-  // Get all comments created after last read time, on pins the user has access to
-  // Access: public folders, shared folders, or user's own pins
+  // Get new comments on accessible pins
   const comments = await env.DB.prepare(`
-    SELECT c.*, p.id as pin_id, p.title as pin_title, p.lat, p.lng,
+    SELECT 'comment' as type, c.id, c.content, c.created_at,
+           p.id as pin_id, p.title as pin_title, p.lat, p.lng,
            u.display_name as author_name, f.name as folder_name
     FROM pin_comments c
     JOIN pins p ON c.pin_id = p.id
@@ -1910,10 +1910,56 @@ async function handleGetUnreadComments(env, user) {
         )
       )
     ORDER BY c.created_at DESC
-    LIMIT 50
+    LIMIT 20
   `).bind(lastReadAt, user.id, user.id, user.id).all();
 
-  return json(comments.results);
+  // Get new pins in accessible folders (not user's own)
+  const pins = await env.DB.prepare(`
+    SELECT 'pin' as type, p.id, p.title, p.description as content, p.created_at,
+           p.id as pin_id, p.title as pin_title, p.lat, p.lng,
+           u.display_name as author_name, f.name as folder_name
+    FROM pins p
+    JOIN users u ON p.user_id = u.id
+    LEFT JOIN folders f ON p.folder_id = f.id
+    WHERE p.created_at > ?
+      AND p.user_id != ?
+      AND (
+        f.is_public = 1
+        OR EXISTS (
+          SELECT 1 FROM folder_shares fs
+          WHERE fs.folder_id = f.id AND fs.shared_with_user_id = ?
+        )
+      )
+    ORDER BY p.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id, user.id).all();
+
+  // Get new KML files in accessible folders (not user's own)
+  const kmlFiles = await env.DB.prepare(`
+    SELECT 'kml' as type, k.id, k.original_name as title, '' as content, k.created_at,
+           k.id as kml_id, k.original_name as kml_name,
+           u.display_name as author_name, kf.name as folder_name
+    FROM kml_files k
+    JOIN users u ON k.user_id = u.id
+    LEFT JOIN kml_folders kf ON k.folder_id = kf.id
+    WHERE k.created_at > ?
+      AND k.user_id != ?
+      AND (
+        kf.is_public = 1
+        OR EXISTS (
+          SELECT 1 FROM kml_folder_shares kfs
+          WHERE kfs.kml_folder_id = kf.id AND kfs.shared_with_user_id = ?
+        )
+      )
+    ORDER BY k.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id, user.id).all();
+
+  // Combine and sort by created_at
+  const all = [...comments.results, ...pins.results, ...kmlFiles.results];
+  all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  return json(all.slice(0, 50));
 }
 
 async function handleMarkCommentsRead(env, user) {
