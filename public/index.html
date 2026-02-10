@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="地図アプリ">
-  <meta name="theme-color" content="#007bff">
-  <title>地図アプリ</title>
+  <meta name="apple-mobile-web-app-title" content="Fieldnota">
+  <meta name="theme-color" content="#4CAF50">
+  <title>Fieldnota commons</title>
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" href="/images/logo-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.svg">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="stylesheet" href="/css/style.css" />
@@ -19,7 +20,11 @@
 <!-- Login screen (shown when not logged in) -->
 <div class="login-screen" id="login-screen">
   <div class="login-card">
-    <h1><i class="fas fa-map"></i> 地図アプリ</h1>
+    <div class="login-logo">
+      <img src="/images/logo-icon.svg" alt="Fieldnota" style="width:50px;height:50px;">
+      <h1>Fieldnota commons</h1>
+    </div>
+    <p class="login-tagline">見つけたナニカを、notaに記録する。共有する。</p>
     <p class="login-subtitle">続けるにはログインしてください</p>
     <div id="login-form">
       <div class="form-group">
@@ -72,7 +77,10 @@
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <h2><i class="fas fa-map"></i> 地図アプリ</h2>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <img src="/images/logo-icon.svg" alt="Fieldnota" style="width:28px;height:28px;">
+      <h2 style="margin:0;">Fieldnota</h2>
+    </div>
     <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
   </div>
   <div class="sidebar-content" id="sidebar-content">
@@ -476,6 +484,11 @@
       <button class="btn btn-secondary" onclick="closeModal('modal-settings')">キャンセル</button>
       <button class="btn btn-primary" onclick="saveAccountSettings()">保存</button>
     </div>
+    <div style="margin-top:16px;text-align:center;border-top:1px solid #eee;padding-top:16px;">
+      <a href="/about.html" target="_blank" style="color:#666;font-size:13px;text-decoration:none;">
+        <i class="fas fa-info-circle"></i> 利用規約・プライバシーポリシー
+      </a>
+    </div>
   </div>
 </div>
 
@@ -550,6 +563,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
+<script src="/js/config.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

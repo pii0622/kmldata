@@ -1,21 +1,21 @@
 {
-  "name": "地図アプリ",
-  "short_name": "地図アプリ",
-  "description": "KMLファイルとピンを管理できる地図アプリケーション",
+  "name": "Fieldnota commons",
+  "short_name": "Fieldnota",
+  "description": "見つけたナニカを、notaに記録する。共有する。",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#007bff",
+  "theme_color": "#4CAF50",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/icons/icon-192.svg",
+      "src": "/images/logo-icon.svg",
       "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-192.svg",
+      "src": "/images/logo-icon.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"

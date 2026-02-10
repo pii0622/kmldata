@@ -28,7 +28,7 @@ self.addEventListener('activate', (event) => {
 
 // Push event - handle incoming push notifications
 self.addEventListener('push', (event) => {
-  let data = { title: '地図アプリ', body: '新しい更新があります', type: 'general' };
+  let data = { title: 'Fieldnota', body: '新しい更新があります', type: 'general' };
 
   try {
     if (event.data) {

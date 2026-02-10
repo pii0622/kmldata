@@ -125,7 +125,7 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
 // Free tier: 100 emails/day
 // Setup: Add RESEND_API_KEY to Cloudflare Pages environment variables
 const EMAIL_FROM = 'hello@map.taishi-lab.com';
-const EMAIL_FROM_NAME = '地図アプリ';
+const EMAIL_FROM_NAME = 'Fieldnota commons';
 
 async function sendEmail(env, to, subject, htmlBody, textBody) {
   // Check if Resend API key is configured
@@ -894,20 +894,20 @@ async function handleApproveUser(env, id) {
   // Send approval email
   if (user.email) {
     const appUrl = 'https://map.taishi-lab.com';
-    const subject = 'アカウントが承認されました - 地図アプリ';
+    const subject = 'アカウントが承認されました - Fieldnota commons';
     const htmlBody = `
       <h2>アカウント承認のお知らせ</h2>
       <p>${user.display_name || user.username} 様</p>
-      <p>地図アプリへのアカウント申請が承認されました。</p>
+      <p>Fieldnota commonsへのアカウント申請が承認されました。</p>
       <p>以下のリンクからログインしてご利用ください。</p>
       <p><a href="${appUrl}">${appUrl}</a></p>
       <br>
       <p><strong>※ユーザー名はフルネーム（ローマ字）で登録されています。</strong></p>
       <p>例: Taro Yamada</p>
       <br>
-      <p>地図アプリ</p>
+      <p>Fieldnota commons</p>
     `;
-    const textBody = `${user.display_name || user.username} 様\n\n地図アプリへのアカウント申請が承認されました。\n以下のリンクからログインしてご利用ください。\n\n${appUrl}\n\n※ユーザー名はフルネーム（ローマ字）で登録されています。\n例: Taro Yamada\n\n地図アプリ`;
+    const textBody = `${user.display_name || user.username} 様\n\nFieldnota commonsへのアカウント申請が承認されました。\n以下のリンクからログインしてご利用ください。\n\n${appUrl}\n\n※ユーザー名はフルネーム（ローマ字）で登録されています。\n例: Taro Yamada\n\nFieldnota commons`;
     await sendEmail(env, user.email, subject, htmlBody, textBody);
   }
 
@@ -922,16 +922,16 @@ async function handleRejectUser(env, id) {
   // Send rejection email first (before deleting user)
   let emailSent = false;
   if (user.email) {
-    const subject = 'アカウント申請について - 地図アプリ';
+    const subject = 'アカウント申請について - Fieldnota commons';
     const htmlBody = `
       <h2>アカウント申請のお知らせ</h2>
       <p>${user.display_name || user.username} 様</p>
-      <p>申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。</p>
+      <p>申し訳ございませんが、Fieldnota commonsへのアカウント申請は承認されませんでした。</p>
       <p>ご不明な点がございましたら、管理者までお問い合わせください。</p>
       <br>
-      <p>地図アプリ</p>
+      <p>Fieldnota commons</p>
     `;
-    const textBody = `${user.display_name || user.username} 様\n\n申し訳ございませんが、地図アプリへのアカウント申請は承認されませんでした。\nご不明な点がございましたら、管理者までお問い合わせください。\n\n地図アプリ`;
+    const textBody = `${user.display_name || user.username} 様\n\n申し訳ございませんが、Fieldnota commonsへのアカウント申請は承認されませんでした。\nご不明な点がございましたら、管理者までお問い合わせください。\n\nFieldnota commons`;
     emailSent = await sendEmail(env, user.email, subject, htmlBody, textBody);
   }
 
