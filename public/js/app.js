@@ -1857,6 +1857,8 @@ function updatePushUI() {
     return;
   }
 
+  const testBtn = document.getElementById('settings-push-test');
+
   if (btn) {
     if (pushSubscription) {
       btn.innerHTML = '<i class="fas fa-bell-slash"></i> OFF';
@@ -1869,6 +1871,10 @@ function updatePushUI() {
     }
   }
 
+  if (testBtn) {
+    testBtn.style.display = pushSubscription ? 'inline-block' : 'none';
+  }
+
   if (status) {
     status.textContent = pushSubscription ? '通知ON' : '通知OFF';
   }
@@ -1879,6 +1885,32 @@ function togglePushNotifications() {
     unsubscribeFromPush();
   } else {
     subscribeToPush();
+  }
+}
+
+async function testPushNotification() {
+  const resultEl = document.getElementById('settings-push-result');
+  resultEl.style.display = 'block';
+  resultEl.style.color = '#666';
+  resultEl.textContent = 'テスト送信中...';
+
+  try {
+    const res = await fetch('/api/push/test', {
+      method: 'POST',
+      credentials: 'include'
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      resultEl.style.color = '#28a745';
+      resultEl.textContent = '✓ 送信成功！通知が届くか確認してください';
+    } else {
+      resultEl.style.color = '#dc3545';
+      resultEl.innerHTML = `✗ エラー: ${data.error || data.message}<br><small>${JSON.stringify(data.keyInfo || {})}</small>`;
+    }
+  } catch (err) {
+    resultEl.style.color = '#dc3545';
+    resultEl.textContent = '✗ 通信エラー: ' + err.message;
   }
 }
 

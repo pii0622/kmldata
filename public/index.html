@@ -443,11 +443,17 @@
     <div class="form-group" id="settings-push-container">
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <span id="settings-push-status">読み込み中...</span>
-        <button class="btn btn-sm" id="settings-push-btn" onclick="togglePushNotifications()">
-          <i class="fas fa-bell"></i> ON
-        </button>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-sm" id="settings-push-btn" onclick="togglePushNotifications()">
+            <i class="fas fa-bell"></i> ON
+          </button>
+          <button class="btn btn-sm btn-secondary" id="settings-push-test" onclick="testPushNotification()" style="display:none;">
+            テスト
+          </button>
+        </div>
       </div>
       <small style="color:#666;margin-top:4px;display:block;">新着コメント・ピン・KMLの通知を受け取ります</small>
+      <div id="settings-push-result" style="margin-top:8px;font-size:12px;display:none;"></div>
     </div>
     <div id="settings-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
     <div class="modal-actions">

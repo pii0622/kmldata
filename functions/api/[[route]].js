@@ -667,6 +667,10 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handlePushUnsubscribe(request, env, user);
     }
+    if (path === '/push/test' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePushTest(request, env, user);
+    }
 
     // Images
     if (path.match(/^\/images\/(.+)$/) && method === 'GET') {
@@ -2081,6 +2085,58 @@ async function handlePushUnsubscribe(request, env, user) {
     .bind(endpoint, user.id).run();
 
   return json({ ok: true });
+}
+
+// Test push notification - sends directly to user's subscription
+async function handlePushTest(request, env, user) {
+  const vapidPublicKey = env.VAPID_PUBLIC_KEY;
+  const vapidPrivateKey = env.VAPID_PRIVATE_KEY;
+
+  if (!vapidPublicKey || !vapidPrivateKey) {
+    return json({ error: 'VAPID keys not configured', hasPublic: !!vapidPublicKey, hasPrivate: !!vapidPrivateKey }, 500);
+  }
+
+  // Check key lengths
+  const keyInfo = {
+    publicKeyLength: vapidPublicKey.length,
+    privateKeyLength: vapidPrivateKey.length,
+    expectedPublicLength: '87 chars (65 bytes base64url)',
+    expectedPrivateLength: '43 chars (32 bytes base64url)'
+  };
+
+  // Get user's subscriptions
+  const subscriptions = await env.DB.prepare(
+    'SELECT * FROM push_subscriptions WHERE user_id = ?'
+  ).bind(user.id).all();
+
+  if (subscriptions.results.length === 0) {
+    return json({ error: 'No push subscription found', keyInfo }, 400);
+  }
+
+  const sub = subscriptions.results[0];
+  const payload = JSON.stringify({
+    title: 'テスト通知',
+    body: 'プッシュ通知のテストです',
+    type: 'test',
+    id: null,
+    url: '/'
+  });
+
+  try {
+    await sendWebPush(env, {
+      endpoint: sub.endpoint,
+      keys: { p256dh: sub.p256dh, auth: sub.auth }
+    }, payload);
+    return json({ ok: true, message: 'Push sent successfully', keyInfo });
+  } catch (err) {
+    return json({
+      error: 'Push failed',
+      message: err.message,
+      status: err.status,
+      keyInfo,
+      subscriptionEndpoint: sub.endpoint.substring(0, 50) + '...'
+    }, 500);
+  }
 }
 
 // Send push notification to users who have access to a folder
