@@ -23,7 +23,10 @@ let userUsageData = null;
 const map = L.map('map', {
   center: [35.0, 135.0],
   zoom: 6,
-  zoomControl: false
+  zoomControl: false,
+  minZoom: 2,
+  maxBounds: [[-90, -180], [90, 180]],
+  maxBoundsViscosity: 1.0
 });
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -31,11 +34,13 @@ L.control.zoom({ position: 'bottomright' }).addTo(map);
 // GSI Tiles
 const gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 18
+  maxZoom: 18,
+  noWrap: true
 });
 const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 18
+  maxZoom: 18,
+  noWrap: true
 });
 
 gsiStd.addTo(map);
