@@ -848,11 +848,15 @@ export async function onRequest(context) {
     }
     if (path === '/stripe/create-portal-session' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      return await handleCreatePortalSession(env, user);
+      return await handleCreatePortalSession(request, env, user);
     }
     if (path === '/subscription/cancel' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleCancelSubscription(env, user);
+    }
+    if (path === '/usage' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetUsage(env, user);
     }
 
     return json({ error: 'Not found' }, 404);
@@ -1220,6 +1224,51 @@ async function handleGetSubscription(env, user) {
   });
 }
 
+// Get current usage counts for free tier limits display
+async function handleGetUsage(env, user) {
+  const dbUser = await env.DB.prepare(
+    'SELECT plan, is_admin FROM users WHERE id = ?'
+  ).bind(user.id).first();
+
+  if (!dbUser) {
+    return json({ error: 'ユーザーが見つかりません' }, 404);
+  }
+
+  const plan = dbUser.plan || 'free';
+  const isAdmin = !!dbUser.is_admin;
+
+  // Premium and admin users have no limits
+  if (plan === 'premium' || isAdmin) {
+    return json({
+      plan,
+      is_admin: isAdmin,
+      has_limits: false
+    });
+  }
+
+  // Free users - get current usage counts
+  const [kmlFolders, pinFolders, kmlFiles, pins, shares] = await Promise.all([
+    getUserKmlFolderCount(env, user.id),
+    getUserPinFolderCount(env, user.id),
+    getUserKmlFileCount(env, user.id),
+    getUserPinCount(env, user.id),
+    getUserShareCount(env, user.id)
+  ]);
+
+  return json({
+    plan,
+    is_admin: isAdmin,
+    has_limits: true,
+    usage: {
+      kmlFolders: { current: kmlFolders, max: FREE_TIER_LIMITS.kmlFolders },
+      pinFolders: { current: pinFolders, max: FREE_TIER_LIMITS.pinFolders },
+      kmlFiles: { current: kmlFiles, max: FREE_TIER_LIMITS.kmlFiles },
+      pins: { current: pins, max: FREE_TIER_LIMITS.pins },
+      shares: { current: shares, max: FREE_TIER_LIMITS.shares }
+    }
+  });
+}
+
 // Create Stripe Checkout Session for new subscription
 async function handleCreateCheckoutSession(request, env, user) {
   try {
@@ -1477,15 +1526,28 @@ async function verifyStripeWebhookSignature(payload, signature, secret) {
 }
 
 // Create Stripe Customer Portal session for subscription management
-async function handleCreatePortalSession(env, user) {
+async function handleCreatePortalSession(request, env, user) {
   try {
     if (!env.STRIPE_SECRET_KEY) {
       return json({ error: 'Stripe is not configured' }, 500);
     }
 
+    // Require password verification for security
+    const body = await request.json().catch(() => ({}));
+    const { password } = body;
+
+    if (!password) {
+      return json({ error: 'パスワードが必要です' }, 400);
+    }
+
     const dbUser = await env.DB.prepare(
-      'SELECT stripe_customer_id, member_source FROM users WHERE id = ?'
+      'SELECT stripe_customer_id, member_source, password_hash FROM users WHERE id = ?'
     ).bind(user.id).first();
+
+    // Verify password
+    if (!dbUser.password_hash || !(await verifyPassword(password, dbUser.password_hash))) {
+      return json({ error: 'パスワードが正しくありません' }, 401);
+    }
 
     if (dbUser.member_source === 'wordpress') {
       return json({ error: 'WordPress経由の会員はWordPress側で管理してください' }, 400);

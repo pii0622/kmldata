@@ -17,6 +17,7 @@ let watchId = null;
 let pendingUsersCount = 0;
 let pushSubscription = null;
 let deferredInstallPrompt = null;
+let userUsageData = null;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
@@ -264,6 +265,7 @@ async function submitAuth() {
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' });
   currentUser = null;
+  userUsageData = null;
   notify('ログアウトしました');
   updateLoginScreen();
   updateUI();
@@ -397,9 +399,15 @@ function renderSidebar() {
 
   // Auth section
   if (currentUser) {
+    const tierBadge = userUsageData
+      ? (userUsageData.plan === 'premium' || userUsageData.is_admin
+          ? '<span class="badge badge-premium">Premium</span>'
+          : '<span class="badge badge-free">Free</span>')
+      : '';
     html += `<div class="user-info">
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
+      ${tierBadge}
       <div style="float:right;display:flex;gap:4px;">
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
@@ -442,6 +450,39 @@ function renderSidebar() {
       </button>
     </div>`;
     html += renderPinFolderList();
+  }
+
+  // Usage limits footer for free tier users
+  if (currentUser && userUsageData && userUsageData.has_limits) {
+    const u = userUsageData.usage;
+    html += `<div class="sidebar-usage-footer">
+      <div class="usage-title"><i class="fas fa-chart-pie"></i> 無料プラン使用状況</div>
+      <div class="usage-items">
+        <div class="usage-item">
+          <span class="usage-label">KMLフォルダ</span>
+          <span class="usage-value ${u.kmlFolders.current >= u.kmlFolders.max ? 'at-limit' : ''}">${u.kmlFolders.current}/${u.kmlFolders.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">ピンフォルダ</span>
+          <span class="usage-value ${u.pinFolders.current >= u.pinFolders.max ? 'at-limit' : ''}">${u.pinFolders.current}/${u.pinFolders.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">KMLファイル</span>
+          <span class="usage-value ${u.kmlFiles.current >= u.kmlFiles.max ? 'at-limit' : ''}">${u.kmlFiles.current}/${u.kmlFiles.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">ピン</span>
+          <span class="usage-value ${u.pins.current >= u.pins.max ? 'at-limit' : ''}">${u.pins.current}/${u.pins.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">共有</span>
+          <span class="usage-value ${u.shares.current >= u.shares.max ? 'at-limit' : ''}">${u.shares.current}/${u.shares.max}</span>
+        </div>
+      </div>
+      <a href="#" onclick="showAccountSettings();return false;" class="upgrade-link">
+        <i class="fas fa-crown"></i> プレミアムにアップグレード
+      </a>
+    </div>`;
   }
 
   c.innerHTML = html;
@@ -659,7 +700,9 @@ async function createKmlFolder() {
     });
     closeModal('modal-kml-folder');
     notify('KMLフォルダを作成しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -682,7 +725,9 @@ async function deleteKmlFolder(folderId) {
   try {
     await api(`/api/kml-folders/${folderId}`, { method: 'DELETE' });
     notify('KMLフォルダを削除しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -852,7 +897,9 @@ async function uploadKmlFile() {
     await apiFormData('/api/kml-files/upload', formData);
     closeModal('modal-kml-upload');
     notify('KMLをアップロードしました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -861,7 +908,9 @@ async function deleteKmlFile(fileId) {
   try {
     await api(`/api/kml-files/${fileId}`, { method: 'DELETE' });
     notify('KMLを削除しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -979,7 +1028,9 @@ async function shareKmlFolder() {
     });
     closeModal('modal-share-kml');
     notify('共有設定を更新しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -1167,9 +1218,16 @@ async function upgradeToPremium() {
 }
 
 async function openStripePortal() {
+  // Prompt for password verification
+  const password = prompt('セキュリティ確認のため、パスワードを入力してください');
+  if (!password) {
+    return;
+  }
+
   try {
     const data = await api('/api/stripe/create-portal-session', {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({ password })
     });
 
     if (data.url) {
@@ -1196,6 +1254,20 @@ async function cancelSubscription() {
     loadPlanInfo();
   } catch (err) {
     notify(err.message, 'error');
+  }
+}
+
+// ==================== Usage Data ====================
+async function loadUsageData() {
+  if (!currentUser) {
+    userUsageData = null;
+    return;
+  }
+  try {
+    userUsageData = await api('/api/usage');
+  } catch (err) {
+    console.error('Failed to load usage data:', err);
+    userUsageData = null;
   }
 }
 
@@ -1540,7 +1612,9 @@ async function createFolder() {
     });
     closeModal('modal-folder');
     notify('フォルダを作成しました');
-    loadFolders();
+    await loadFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -1563,8 +1637,10 @@ async function deleteFolder(folderId) {
   try {
     await api('/api/folders/' + folderId, { method: 'DELETE' });
     notify('フォルダを削除しました');
-    loadFolders();
-    loadPins();
+    await loadFolders();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -1699,7 +1775,9 @@ async function shareFolder() {
     });
     closeModal('modal-share-folder');
     notify('共有設定を更新しました');
-    loadFolders();
+    await loadFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2548,7 +2626,9 @@ async function savePin() {
     }
     cancelPinMode();
     notify('ピンを作成しました');
-    loadPins();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2628,7 +2708,9 @@ async function deletePin(pinId) {
   try {
     await api('/api/pins/' + pinId, { method: 'DELETE' });
     notify('ピンを削除しました');
-    loadPins();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2718,7 +2800,7 @@ async function loadFolders() {
 }
 
 async function loadAll() {
-  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers()]);
+  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers(), loadUsageData()]);
 }
 
 // ==================== Service Worker ====================
