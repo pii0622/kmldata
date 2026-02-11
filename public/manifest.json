@@ -1,7 +1,7 @@
 {
   "name": "Fieldnota commons",
   "short_name": "Fieldnota",
-  "description": "見つけたナニカを、notaに記録する。共有する。",
+  "description": "見つけたナニカを、notaに記録する。共有する。（日本版）",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
