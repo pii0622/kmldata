@@ -85,6 +85,15 @@ const RATE_LIMITS = {
   default: { maxRequests: 100, windowSeconds: 60 }    // 100 requests per minute
 };
 
+// Free tier limits (premium users have no limits)
+const FREE_TIER_LIMITS = {
+  kmlFolders: 2,      // Max KML folders
+  pinFolders: 2,      // Max pin folders
+  kmlFiles: 1,        // Max KML files
+  pins: 20,           // Max pins
+  shares: 1           // Max folder shares (given + received, excluding admin shares)
+};
+
 async function checkRateLimit(env, ip, endpoint) {
   const config = RATE_LIMITS[endpoint] || RATE_LIMITS.default;
   const key = `${ip}:${endpoint}`;
@@ -106,6 +115,143 @@ async function checkRateLimit(env, ip, endpoint) {
   }
 
   return { allowed: true };
+}
+
+// Free tier limit checking functions
+// These exclude content in admin's public/shared folders from user's quota
+
+async function isUserFreeTier(user) {
+  // Admin and premium users have no limits
+  return !user.is_admin && user.plan !== 'premium';
+}
+
+async function getUserKmlFolderCount(env, userId) {
+  // Count only user's own KML folders
+  const result = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM kml_folders WHERE user_id = ?'
+  ).bind(userId).first();
+  return result.count;
+}
+
+async function getUserPinFolderCount(env, userId) {
+  // Count only user's own pin folders
+  const result = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM folders WHERE user_id = ?'
+  ).bind(userId).first();
+  return result.count;
+}
+
+async function getUserKmlFileCount(env, userId) {
+  // Count user's KML files, excluding those in admin's public/shared folders
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM kml_files kf
+    WHERE kf.user_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM kml_folders f
+        JOIN users u ON f.user_id = u.id
+        WHERE f.id = kf.folder_id
+          AND u.is_admin = 1
+          AND (f.is_public = 1 OR EXISTS (
+            SELECT 1 FROM kml_folder_shares kfs WHERE kfs.kml_folder_id = f.id AND kfs.shared_with_user_id = ?
+          ))
+      )
+  `).bind(userId, userId).first();
+  return result.count;
+}
+
+async function getUserPinCount(env, userId) {
+  // Count user's pins, excluding those in admin's public/shared folders
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM pins p
+    WHERE p.user_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM folders f
+        JOIN users u ON f.user_id = u.id
+        WHERE f.id = p.folder_id
+          AND u.is_admin = 1
+          AND (f.is_public = 1 OR EXISTS (
+            SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.shared_with_user_id = ?
+          ))
+      )
+  `).bind(userId, userId).first();
+  return result.count;
+}
+
+async function getUserShareCount(env, userId) {
+  // Count shares given and received by user, excluding admin's shares
+  // Given: user's folders shared with others
+  const givenKml = await env.DB.prepare(`
+    SELECT COUNT(DISTINCT kfs.kml_folder_id) as count FROM kml_folder_shares kfs
+    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
+    WHERE kf.user_id = ?
+  `).bind(userId).first();
+
+  const givenPin = await env.DB.prepare(`
+    SELECT COUNT(DISTINCT fs.folder_id) as count FROM folder_shares fs
+    JOIN folders f ON fs.folder_id = f.id
+    WHERE f.user_id = ?
+  `).bind(userId).first();
+
+  // Received: folders shared with user (excluding admin's folders)
+  const receivedKml = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM kml_folder_shares kfs
+    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
+    JOIN users u ON kf.user_id = u.id
+    WHERE kfs.shared_with_user_id = ? AND u.is_admin = 0
+  `).bind(userId).first();
+
+  const receivedPin = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM folder_shares fs
+    JOIN folders f ON fs.folder_id = f.id
+    JOIN users u ON f.user_id = u.id
+    WHERE fs.shared_with_user_id = ? AND u.is_admin = 0
+  `).bind(userId).first();
+
+  return givenKml.count + givenPin.count + receivedKml.count + receivedPin.count;
+}
+
+async function checkFreeTierLimit(env, user, limitType) {
+  if (!await isUserFreeTier(user)) {
+    return { allowed: true };
+  }
+
+  let currentCount, maxLimit, message;
+
+  switch (limitType) {
+    case 'kmlFolder':
+      currentCount = await getUserKmlFolderCount(env, user.id);
+      maxLimit = FREE_TIER_LIMITS.kmlFolders;
+      message = `無料プランではKMLフォルダは${maxLimit}個までです`;
+      break;
+    case 'pinFolder':
+      currentCount = await getUserPinFolderCount(env, user.id);
+      maxLimit = FREE_TIER_LIMITS.pinFolders;
+      message = `無料プランではピンフォルダは${maxLimit}個までです`;
+      break;
+    case 'kmlFile':
+      currentCount = await getUserKmlFileCount(env, user.id);
+      maxLimit = FREE_TIER_LIMITS.kmlFiles;
+      message = `無料プランではKMLファイルは${maxLimit}個までです`;
+      break;
+    case 'pin':
+      currentCount = await getUserPinCount(env, user.id);
+      maxLimit = FREE_TIER_LIMITS.pins;
+      message = `無料プランではピンは${maxLimit}個までです`;
+      break;
+    case 'share':
+      currentCount = await getUserShareCount(env, user.id);
+      maxLimit = FREE_TIER_LIMITS.shares;
+      message = `無料プランでは共有フォルダは${maxLimit}個までです`;
+      break;
+    default:
+      return { allowed: true };
+  }
+
+  if (currentCount >= maxLimit) {
+    return { allowed: false, message, currentCount, maxLimit };
+  }
+
+  return { allowed: true, currentCount, maxLimit };
 }
 
 async function logSecurityEvent(env, eventType, userId, request, details = {}) {
@@ -1225,6 +1371,12 @@ async function handleCreateKmlFolder(request, env, user) {
   const { name, is_public, parent_id } = await request.json();
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
+  // Check free tier limit
+  const limitCheck = await checkFreeTierLimit(env, user, 'kmlFolder');
+  if (!limitCheck.allowed) {
+    return json({ error: limitCheck.message }, 403);
+  }
+
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ? AND user_id = ?')
       .bind(parent_id, user.id).first();
@@ -1332,9 +1484,27 @@ async function handleShareKmlFolder(request, env, user, id) {
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await request.json();
+  const newUserIds = user_ids || [];
+
+  // Check free tier limit for folder owner (admin can share without limits)
+  if (!user.is_admin && newUserIds.length > 0) {
+    // Get current existing shares for this folder
+    const existingShares = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM kml_folder_shares WHERE kml_folder_id = ?'
+    ).bind(id).first();
+
+    // If adding new shares (not just updating existing ones), check limit
+    if (newUserIds.length > existingShares.count) {
+      const limitCheck = await checkFreeTierLimit(env, user, 'share');
+      if (!limitCheck.allowed) {
+        return json({ error: limitCheck.message }, 403);
+      }
+    }
+  }
+
   await env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id = ?').bind(id).run();
 
-  for (const uid of (user_ids || [])) {
+  for (const uid of newUserIds) {
     await env.DB.prepare(
       'INSERT INTO kml_folder_shares (kml_folder_id, shared_with_user_id) VALUES (?, ?)'
     ).bind(id, uid).run();
@@ -1476,6 +1646,27 @@ async function handleUploadKmlFile(request, env, user) {
     return json({ error: 'ファイルサイズが大きすぎます（最大50MB）' }, 400);
   }
 
+  // Check free tier limit (skip if uploading to admin's public/shared folder)
+  let isAdminFolder = false;
+  if (folderId) {
+    const folder = await env.DB.prepare(`
+      SELECT f.*, u.is_admin FROM kml_folders f
+      JOIN users u ON f.user_id = u.id
+      WHERE f.id = ?
+    `).bind(folderId).first();
+    if (folder && folder.is_admin) {
+      isAdminFolder = folder.is_public === 1 ||
+        await env.DB.prepare('SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id = ?')
+          .bind(folderId, user.id).first();
+    }
+  }
+  if (!isAdminFolder) {
+    const limitCheck = await checkFreeTierLimit(env, user, 'kmlFile');
+    if (!limitCheck.allowed) {
+      return json({ error: limitCheck.message }, 403);
+    }
+  }
+
   const r2Key = `kml/${crypto.randomUUID()}.${ext}`;
   let content = await file.text();
   if (ext === 'kml') {
@@ -1611,6 +1802,12 @@ async function handleCreateFolder(request, env, user) {
   const { name, parent_id, is_public } = await request.json();
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
+  // Check free tier limit
+  const limitCheck = await checkFreeTierLimit(env, user, 'pinFolder');
+  if (!limitCheck.allowed) {
+    return json({ error: limitCheck.message }, 403);
+  }
+
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?')
       .bind(parent_id, user.id).first();
@@ -1708,9 +1905,27 @@ async function handleShareFolder(request, env, user, id) {
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await request.json();
+  const newUserIds = user_ids || [];
+
+  // Check free tier limit for folder owner (admin can share without limits)
+  if (!user.is_admin && newUserIds.length > 0) {
+    // Get current existing shares for this folder
+    const existingShares = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM folder_shares WHERE folder_id = ?'
+    ).bind(id).first();
+
+    // If adding new shares (not just updating existing ones), check limit
+    if (newUserIds.length > existingShares.count) {
+      const limitCheck = await checkFreeTierLimit(env, user, 'share');
+      if (!limitCheck.allowed) {
+        return json({ error: limitCheck.message }, 403);
+      }
+    }
+  }
+
   await env.DB.prepare('DELETE FROM folder_shares WHERE folder_id = ?').bind(id).run();
 
-  for (const uid of (user_ids || [])) {
+  for (const uid of newUserIds) {
     await env.DB.prepare(
       'INSERT INTO folder_shares (folder_id, shared_with_user_id) VALUES (?, ?)'
     ).bind(id, uid).run();
@@ -1883,6 +2098,27 @@ async function handleCreatePin(request, env, user) {
 
   if (!title || lat == null || lng == null) {
     return json({ error: 'タイトルと座標は必須です' }, 400);
+  }
+
+  // Check free tier limit (skip if creating in admin's public/shared folder)
+  let isAdminFolder = false;
+  if (folder_id) {
+    const folder = await env.DB.prepare(`
+      SELECT f.*, u.is_admin FROM folders f
+      JOIN users u ON f.user_id = u.id
+      WHERE f.id = ?
+    `).bind(folder_id).first();
+    if (folder && folder.is_admin) {
+      isAdminFolder = folder.is_public === 1 ||
+        await env.DB.prepare('SELECT 1 FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?')
+          .bind(folder_id, user.id).first();
+    }
+  }
+  if (!isAdminFolder) {
+    const limitCheck = await checkFreeTierLimit(env, user, 'pin');
+    if (!limitCheck.allowed) {
+      return json({ error: limitCheck.message }, 403);
+    }
   }
 
   // Verify folder access if folder_id is specified
