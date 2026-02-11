@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fieldnota commons - 見つけたナニカを、notaに記録する。共有する。</title>
+  <meta name="description" content="ピンとKMLをフォルダ単位で仲間と共有できる地図アプリ。SNSではない、選択的な共有のための記録ツール。">
+  <link rel="icon" href="/images/logo-icon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/images/logo-icon.png">
+  <style>
+    :root {
+      --color-primary: #4CAF50;
+      --color-primary-dark: #2E7D32;
+      --color-text: #333;
+      --color-text-muted: #666;
+      --color-bg: #f5f7f5;
+      --color-white: #fff;
+      --color-border: #e0e0e0;
+      --shadow-card: 0 2px 8px rgba(0,0,0,0.08);
+      --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.12);
+      --max-width-content: 720px;
+      --max-width-wide: 960px;
+      --spacing-section: 80px;
+      --radius: 12px;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+      line-height: 1.7;
+      color: var(--color-text);
+      background: var(--color-bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Layout */
+    .container {
+      max-width: var(--max-width-wide);
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .container--narrow {
+      max-width: var(--max-width-content);
+    }
+
+    section {
+      padding: var(--spacing-section) 0;
+    }
+
+    /* Typography */
+    h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); font-weight: 700; }
+    h2 { font-size: clamp(1.25rem, 4vw, 1.75rem); font-weight: 600; margin-bottom: 24px; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+    p { margin-bottom: 16px; }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+      color: var(--color-white);
+      padding: 60px 0 80px;
+      text-align: center;
+    }
+
+    .hero__logo {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 16px;
+      filter: brightness(0) invert(1);
+    }
+
+    .hero h1 {
+      margin-bottom: 12px;
+    }
+
+    .hero__tagline {
+      font-size: clamp(1rem, 3vw, 1.25rem);
+      opacity: 0.95;
+      margin-bottom: 16px;
+    }
+
+    .hero__desc {
+      font-size: 1rem;
+      opacity: 0.9;
+      max-width: 480px;
+      margin: 0 auto 32px;
+      line-height: 1.8;
+    }
+
+    .hero__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px 28px;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn:focus {
+      outline: 3px solid rgba(255,255,255,0.5);
+      outline-offset: 2px;
+    }
+
+    .btn--primary {
+      background: var(--color-white);
+      color: var(--color-primary-dark);
+    }
+
+    .btn--primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    }
+
+    .btn--secondary {
+      background: transparent;
+      color: var(--color-white);
+      border: 2px solid rgba(255,255,255,0.6);
+    }
+
+    .btn--secondary:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--color-white);
+    }
+
+    /* Cards */
+    .card {
+      background: var(--color-white);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: var(--shadow-card);
+      transition: box-shadow 0.2s;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    /* Features */
+    .features {
+      background: var(--color-white);
+    }
+
+    .features__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+    }
+
+    .feature-card {
+      text-align: center;
+      padding: 32px 24px;
+      background: var(--color-bg);
+    }
+
+    .feature-card__icon {
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+
+    .feature-card h3 {
+      color: var(--color-primary-dark);
+    }
+
+    .feature-card p {
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* How to use */
+    .how {
+      background: var(--color-bg);
+    }
+
+    .how__steps {
+      display: grid;
+      gap: 20px;
+    }
+
+    .step {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    .step__number {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      background: var(--color-primary);
+      color: var(--color-white);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .step__content {
+      flex: 1;
+      padding-top: 6px;
+    }
+
+    .step__content h3 {
+      margin-bottom: 4px;
+    }
+
+    .step__content p {
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* Policy */
+    .policy {
+      background: var(--color-white);
+    }
+
+    .policy__box {
+      background: linear-gradient(135deg, #f8faf8 0%, #f0f4f0 100%);
+      border-left: 4px solid var(--color-primary);
+      padding: 28px 32px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    .policy__box h2 {
+      color: var(--color-primary-dark);
+      margin-bottom: 20px;
+    }
+
+    .policy__list {
+      list-style: none;
+    }
+
+    .policy__list li {
+      position: relative;
+      padding-left: 24px;
+      margin-bottom: 12px;
+      color: var(--color-text);
+    }
+
+    .policy__list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 8px;
+      height: 8px;
+      background: var(--color-primary);
+      border-radius: 50%;
+    }
+
+    .policy__list li:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Map sources */
+    .map-sources {
+      background: var(--color-bg);
+      padding: 40px 0;
+    }
+
+    .map-sources__inner {
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+    }
+
+    .map-sources__inner strong {
+      color: var(--color-text);
+    }
+
+    /* FAQ */
+    .faq {
+      background: var(--color-white);
+    }
+
+    .faq__list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .faq__item {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .faq__question {
+      width: 100%;
+      background: none;
+      border: none;
+      padding: 20px 24px;
+      text-align: left;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--color-text);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+
+    .faq__question:hover {
+      background: var(--color-bg);
+    }
+
+    .faq__question:focus {
+      outline: 2px solid var(--color-primary);
+      outline-offset: -2px;
+    }
+
+    .faq__icon {
+      font-size: 1.25rem;
+      transition: transform 0.3s;
+      color: var(--color-primary);
+    }
+
+    .faq__item[open] .faq__icon {
+      transform: rotate(45deg);
+    }
+
+    .faq__answer {
+      padding: 0 24px 20px;
+      color: var(--color-text-muted);
+      line-height: 1.8;
+    }
+
+    /* Footer */
+    .footer {
+      background: var(--color-primary-dark);
+      color: var(--color-white);
+      padding: 40px 0;
+    }
+
+    .footer__inner {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .footer__links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .footer__links a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .footer__links a:hover {
+      color: var(--color-white);
+    }
+
+    .footer__copy {
+      font-size: 0.85rem;
+      opacity: 0.7;
+    }
+
+    .footer__app-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.15);
+      padding: 10px 20px;
+      border-radius: 20px;
+      color: var(--color-white);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .footer__app-link:hover {
+      background: rgba(255,255,255,0.25);
+    }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      :root {
+        --spacing-section: 60px;
+      }
+
+      .hero {
+        padding: 48px 0 64px;
+      }
+
+      .hero__logo {
+        width: 52px;
+        height: 52px;
+      }
+
+      .hero__actions {
+        flex-direction: column;
+        padding: 0 20px;
+      }
+
+      .btn {
+        width: 100%;
+      }
+
+      .step {
+        gap: 16px;
+      }
+
+      .step__number {
+        width: 36px;
+        height: 36px;
+        font-size: 1rem;
+      }
+
+      .policy__box {
+        padding: 24px;
+      }
+
+      .footer__inner {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .footer__links {
+        justify-content: center;
+      }
+    }
+
+    /* Accessibility */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="container">
+    <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:16px;">
+      <img src="/images/logo-icon.png" alt="Fieldnota" style="width:64px;height:64px;filter:brightness(0) invert(1);">
+      <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:46px;filter:brightness(0) invert(1);">
+    </div>
+    <p class="hero__tagline">見つけたナニカを、notaに記録する。共有する。</p>
+    <p class="hero__desc">
+      ピン（写真・タイトル・メモ）とKMLを、<br>
+      フォルダ単位で仲間と共有できる地図アプリ。
+    </p>
+    <div class="hero__actions">
+      <a href="/" class="btn btn--primary">アプリを開く</a>
+      <a href="#how" class="btn btn--secondary">使い方を見る</a>
+    </div>
+  </div>
+</header>
+
+<!-- Features -->
+<section class="features" aria-labelledby="features-heading">
+  <div class="container">
+    <h2 id="features-heading" class="visually-hidden">主な機能</h2>
+    <div class="features__grid">
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">📍</div>
+        <h3>ピンを残す</h3>
+        <p>写真・タイトル・テキストで場所を記録。コメントでやりとりもできます。</p>
+      </article>
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">📁</div>
+        <h3>フォルダで共有</h3>
+        <p>階層化OK。フォルダ作成者が共有相手を選ぶので、見せたい人だけに共有。</p>
+      </article>
+      <article class="card feature-card">
+        <div class="feature-card__icon" aria-hidden="true">🗺️</div>
+        <h3>KMLを扱う</h3>
+        <p>作業範囲・ルート・ポイントをインポートして地図に重ねて表示。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- How to use -->
+<section class="how" id="how" aria-labelledby="how-heading">
+  <div class="container container--narrow">
+    <h2 id="how-heading">使い方</h2>
+    <div class="how__steps">
+      <div class="step">
+        <div class="step__number" aria-hidden="true">1</div>
+        <div class="step__content">
+          <h3>アカウント作成・ログイン</h3>
+          <p>管理者の承認後、利用を開始できます。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">2</div>
+        <div class="step__content">
+          <h3>フォルダを作る</h3>
+          <p>ピンやKMLを整理するフォルダを作成。階層化もできます。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">3</div>
+        <div class="step__content">
+          <h3>ピン追加 / KMLアップロード</h3>
+          <p>地図をタップしてピンを設置、またはKMLファイルをアップロード。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step__number" aria-hidden="true">4</div>
+        <div class="step__content">
+          <h3>フォルダを共有</h3>
+          <p>共有したい相手だけを選んで、フォルダ単位で共有します。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Sharing Policy -->
+<section class="policy" aria-labelledby="policy-heading">
+  <div class="container container--narrow">
+    <div class="policy__box">
+      <h2 id="policy-heading">共有の考え方</h2>
+      <ul class="policy__list">
+        <li><strong>SNSではありません。</strong>タイムラインも拡散もありません。</li>
+        <li><strong>共有はフォルダ単位。</strong>フォルダ作成者が共有者を選びます。</li>
+        <li><strong>目的は「見せる」より「残す」「使う」「引き継ぐ」。</strong></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- Map Sources -->
+<section class="map-sources" aria-labelledby="map-sources-heading">
+  <div class="container">
+    <p class="map-sources__inner" id="map-sources-heading">
+      <strong>地図データ：</strong>国土地理院の等高線地図・航空写真を使用しています。
+    </p>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq" aria-labelledby="faq-heading">
+  <div class="container container--narrow">
+    <h2 id="faq-heading">よくある質問</h2>
+    <div class="faq__list">
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>投稿したピンは誰に見えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          フォルダの設定によります。「非公開」なら自分だけ、「共有」なら選んだメンバーだけ、「公開」なら全ユーザーが閲覧できます。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>ピンには何を付けられますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          タイトル、説明テキスト、写真（複数可）を付けられます。他のユーザーはコメントを残すこともできます。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>KMLファイルは何に使えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          Google Earth等で作成した作業エリア、ルート、ポイント群を地図上に重ねて表示できます。調査範囲の共有などに便利です。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>SNS的な機能はありますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          いいね、フォロー、タイムラインなどのSNS機能はありません。必要な情報を、必要な人と共有するためのツールです。
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__question">
+          <span>スマホで使えますか？</span>
+          <span class="faq__icon" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq__answer">
+          はい。ブラウザで動作し、ホーム画面に追加すればアプリのように使えます。プッシュ通知にも対応しています。
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer__inner">
+      <ul class="footer__links">
+        <li><a href="#terms">利用規約</a></li>
+        <li><a href="#privacy">プライバシーポリシー</a></li>
+        <li><a href="mailto:hello@fieldnota-commons.com">お問い合わせ</a></li>
+        <li><a href="https://alaharasu-yafo.com" target="_blank" rel="noopener">運営会社 alaharasuyafo</a></li>
+      </ul>
+      <a href="/" class="footer__app-link">
+        <img src="/images/logo-icon.png" alt="Fieldnota" width="20" height="20" style="filter:brightness(0) invert(1);">
+        <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:14px;filter:brightness(0) invert(1);">
+      </a>
+    </div>
+    <div style="text-align:center;margin-top:24px;">
+      <p class="footer__copy">&copy; 2024 Fieldnota commons</p>
+    </div>
+  </div>
+</footer>
+
+<!-- Terms & Privacy (hidden sections, linked from footer) -->
+<section id="terms" style="background:#fff;padding:60px 0;">
+  <div class="container container--narrow">
+
+    <div style="background:#f5f7f5;border-left:4px solid #6b8e6b;padding:16px 20px;margin:24px 0;">
+  <strong>このサービスを使う前に知っておいてほしいこと</strong>
+  <p style="margin-top:8px;">
+    Fieldnota commons は、フィールドワークや探索、観察、調査で見つけた情報を記録・共有するためのツールです。<br>
+    本サービスに掲載される情報は、現地の安全性、合法性、正確性を保証するものではありません。
+  </p>
+  <p>
+    現地での行動や判断は、必ずご自身の責任で行ってください。<br>
+    立入制限、私有地、自然環境への配慮、法令遵守についても、各自で十分に確認することを前提とします。
+  </p>
+</div>
+    
+    <h2>利用規約</h2>
+
+    <h3>第1条（適用）</h3>
+    <p>
+      本利用規約（以下「本規約」といいます。）は、本サービス「Fieldnota commons」（以下「本サービス」といいます。）の利用条件を定めるものです。
+      ユーザーは、本規約に同意したうえで本サービスを利用するものとします。
+    </p>
+
+    <h3>第2条（定義）</h3>
+    <p>
+      本規約において、以下の用語は次の意味を有します。
+    </p>
+    <p>
+      「ユーザー」とは、本サービスに登録し、または利用するすべての者をいいます。<br>
+      「投稿データ」とは、ユーザーが本サービス上に投稿・アップロードするピン、テキスト、コメント、画像、KML/KMZファイルその他の情報をいいます。<br>
+      「公開設定」とは、投稿データまたはフォルダに対してユーザーが設定する公開・共有・非公開の状態をいいます。
+    </p>
+
+    <h3>第3条（アカウント登録・管理）</h3>
+    <p>
+      本サービスの利用には、運営者が承認したアカウント登録が必要です。
+      ユーザーは、登録時に正確かつ最新の情報を提供するものとします。
+    </p>
+    <p>
+      アカウントおよびログイン情報の管理責任はユーザーにあり、第三者への譲渡、貸与、共有をしてはなりません。
+      アカウントの不正利用により生じた損害について、運営者は責任を負いません。
+    </p>
+
+    <h3>第4条（禁止事項）</h3>
+    <p>
+      ユーザーは、本サービスの利用にあたり、以下の行為をしてはなりません。
+    </p>
+    <p>
+      法令または公序良俗に違反する行為。<br>
+      他のユーザーまたは第三者に不利益、損害、不快感を与える行為。<br>
+      虚偽または誤解を招く情報の投稿。<br>
+      第三者の著作権、肖像権、プライバシーその他の権利を侵害する行為。<br>
+      立入禁止区域、違法行為、危険行為を助長または示唆する情報の投稿。<br>
+      本サービスの運営を妨害する行為、不正アクセス、過度な負荷をかける行為。<br>
+      その他、運営者が不適切と判断する行為。
+    </p>
+
+    <h3>第5条（投稿データの取扱い）</h3>
+    <p>
+      投稿データの著作権は、当該投稿を行ったユーザーに帰属します。
+      ユーザーは、運営者に対し、本サービスの提供・運営・改善・表示・保存の目的に限り、
+      投稿データを無償かつ非独占的に利用する権利を許諾するものとします。
+    </p>
+    <p>
+      投稿データの内容については、ユーザー自身が一切の責任を負うものとします。
+      投稿データに起因して第三者との間に紛争が生じた場合、ユーザーは自己の責任と費用によりこれを解決するものとし、
+      運営者は責任を負いません。
+    </p>
+
+    <h3>第6条（公開設定・共有）</h3>
+    <p>
+      投稿データの公開範囲は、ユーザー自身が設定するものとします。
+      公開または共有された投稿データは、他のユーザーが閲覧、保存、参照できる場合があります。
+    </p>
+    <p>
+      公開設定によって生じた情報の拡散、第三者による利用について、運営者は責任を負いません。
+    </p>
+
+    <h3>第7条（フィールド情報・位置情報に関する免責）</h3>
+    <p>
+      本サービスは、フィールドワーク、探索、観察、調査等を支援するための情報記録・共有ツールであり、
+      現地での安全性、合法性、正確性を保証するものではありません。
+    </p>
+    <p>
+      ユーザーは、自身の判断と責任において現地行動を行うものとします。
+      本サービスの利用に起因して発生した事故、損害、トラブルについて、運営者は一切責任を負いません。
+    </p>
+
+    <h3>第8条（サービスの変更・停止）</h3>
+    <p>
+      運営者は、事前の通知なく、本サービスの内容を変更、追加、停止、または終了することがあります。
+      これによりユーザーに生じた損害について、運営者は責任を負いません。
+    </p>
+
+    <h3>第9条（免責事項）</h3>
+    <p>
+      本サービスは現状有姿で提供され、特定の目的への適合性、正確性、完全性、有用性を保証しません。
+      通信障害、システム障害、データ消失、第三者サービスの不具合による損害について、運営者は責任を負いません。
+    </p>
+
+    <h3>第10条（規約の変更）</h3>
+    <p>
+      運営者は、必要に応じて本規約を変更できます。
+      変更後の規約は、本ページに掲載した時点で効力を生じます。
+    </p>
+
+    <h3>第11条（準拠法・管轄）</h3>
+    <p>
+      本規約は日本法を準拠法とし、本サービスに関して生じた紛争については、
+      運営者所在地を管轄する日本の裁判所を専属的合意管轄とします。
+    </p>
+  </div>
+</section>
+
+<section id="privacy" style="background:#f5f7f5;padding:60px 0;">
+  <div class="container container--narrow">
+    <h2>プライバシーポリシー</h2>
+
+    <h3>1. 収集する情報</h3>
+    <p>
+      本サービスでは、以下の情報を取得します。
+    </p>
+    <p>
+      アカウント情報（ユーザー名、メールアドレス）。<br>
+      投稿データ（ピン、コメント、説明文、画像、KML/KMZファイル）。<br>
+      位置情報（現在地表示機能を使用した場合）。<br>
+      アクセスログ、IPアドレス、端末情報（セキュリティおよび運営目的）。
+    </p>
+
+    <h3>2. 情報の利用目的</h3>
+    <p>
+      取得した情報は、以下の目的で利用します。
+    </p>
+    <p>
+      本サービスの提供および運営。<br>
+      ユーザー認証およびアカウント管理。<br>
+      ユーザーサポート対応。<br>
+      サービスの改善および品質向上。<br>
+      不正利用の防止およびセキュリティ確保。
+    </p>
+
+    <h3>3. 情報の第三者提供</h3>
+    <p>
+      法令に基づく場合を除き、ユーザーの同意なく個人情報を第三者に提供することはありません。
+      ただし、本サービスの運営に必要な範囲で、クラウドサービス事業者等に業務を委託する場合があります。
+    </p>
+
+    <h3>4. 情報の管理</h3>
+    <p>
+      運営者は、取得した情報の漏えい、滅失、改ざんを防止するため、合理的な安全管理措置を講じます。
+      ただし、完全な安全性を保証するものではありません。
+    </p>
+
+    <h3>5. 情報の保存期間</h3>
+    <p>
+      個人情報は、アカウントが有効である期間および利用目的達成に必要な期間保存します。
+      退会後は、合理的な期間内に削除または匿名化します。
+    </p>
+
+    <h3>6. ユーザーの権利</h3>
+    <p>
+      ユーザーは、自己の個人情報について、開示、訂正、削除を求めることができます。
+      これらの請求は、運営者が定める方法により受け付けます。
+    </p>
+
+    <h3>7. プライバシーポリシーの変更</h3>
+    <p>
+      本ポリシーは、必要に応じて変更されることがあります。
+      変更後の内容は、本ページに掲載した時点で効力を生じます。
+    </p>
+  </div>
+</section>
+
+
+</body>
+</html>

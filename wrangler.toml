@@ -1,0 +1,20 @@
+# Cloudflare Pages configuration
+name = "kmldata"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "./public"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "kmldata-db"
+database_id = "e2fa2089-2382-442e-b5b9-7e8048094ca4"
+
+# R2 Storage binding for file uploads
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "kmldata-files"
+
+# Environment variables
+[vars]
+# ALLOWED_ORIGIN = "https://yourdomain.com"
+

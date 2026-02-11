@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- Migration notice for old domain -->
+  <script>
+    if (location.hostname === 'map.taishi-lab.com') {
+      document.addEventListener('DOMContentLoaded', function() {
+        document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f5;font-family:system-ui,sans-serif;"><div style="background:white;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;max-width:400px;margin:20px;"><div style="font-size:48px;margin-bottom:20px;">🏠</div><h1 style="color:#333;font-size:24px;margin-bottom:16px;">移転しました</h1><p style="color:#666;line-height:1.6;margin-bottom:24px;">Fieldnota commons は<br>新しいURLに移転しました。</p><a href="https://fieldnota-commons.com" style="display:inline-block;background:#4CAF50;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">新しいサイトへ</a><p style="color:#999;font-size:12px;margin-top:20px;">https://fieldnota-commons.com</p></div></div>';
+      });
+    }
+  </script>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Fieldnota">
+  <meta name="theme-color" content="#4CAF50">
+  <title>Fieldnota commons</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/images/logo-icon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/images/logo-icon.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<!-- Login screen (shown when not logged in) -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <img src="/images/logo-icon.svg" alt="Fieldnota" style="width:50px;height:50px;">
+      <h1>Fieldnota commons</h1>
+    </div>
+    <p class="login-tagline">見つけたナニカを、notaに記録する。共有する。</p>
+    <p class="login-subtitle">続けるにはログインしてください</p>
+    <div id="login-form">
+      <div class="form-group">
+        <label>ユーザー名（full name）</label>
+        <input type="text" id="login-username" placeholder="taro yamada">
+      </div>
+      <div class="form-group">
+        <label>パスワード</label>
+        <input type="password" id="login-password" placeholder="パスワード">
+      </div>
+      <div class="form-group" id="login-email-group" style="display:none;">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="your@email.com">
+      </div>
+      <div class="form-group" id="login-display-name-group" style="display:none;">
+        <label>表示名</label>
+        <input type="text" id="login-display-name" placeholder="表示名（省略可）">
+      </div>
+      <div id="login-error" class="login-error"></div>
+      <button class="btn btn-primary btn-block" id="login-submit" onclick="submitLogin()">ログイン</button>
+      <p class="login-toggle">
+        <a href="#" id="login-toggle-link" onclick="toggleLoginMode(event)">アカウントを作成</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Header buttons -->
+<div class="header-buttons">
+  <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="メニュー">
+    <i class="fas fa-bars"></i>
+  </button>
+  <button class="map-btn" onclick="zoomToMyLocation()" title="現在地">
+    <i class="fas fa-location-crosshairs"></i>
+  </button>
+  <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピン追加" style="display:none;">
+    <i class="fas fa-map-pin"></i>
+  </button>
+  <button class="map-btn" onclick="location.reload()" title="リロード">
+    <i class="fas fa-sync-alt"></i>
+  </button>
+  <button class="map-btn" id="btn-notifications" onclick="openNotificationsPopup()" title="新着通知" style="display:none;position:relative;">
+    <i class="fas fa-bell"></i>
+    <span id="notification-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc3545;color:#fff;font-size:10px;padding:2px 5px;border-radius:10px;min-width:16px;text-align:center;">0</span>
+  </button>
+</div>
+
+<div id="map"></div>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <img src="/images/logo-icon.png" alt="Fieldnota" style="width:28px;height:28px;">
+      <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:20px;">
+    </div>
+    <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
+  </div>
+  <div class="sidebar-content" id="sidebar-content">
+    <!-- Dynamic content -->
+  </div>
+</div>
+
+<!-- Pin creation modal -->
+<div class="modal-overlay" id="modal-pin">
+  <div class="modal">
+    <h3><i class="fas fa-map-pin"></i> ピンを作成</h3>
+    <div class="form-group">
+      <label>タイトル *</label>
+      <input type="text" id="pin-title" placeholder="ピンのタイトル">
+    </div>
+    <div class="form-group">
+      <label>説明</label>
+      <textarea id="pin-desc" placeholder="ピンの説明"></textarea>
+    </div>
+    <div class="form-group">
+      <label>フォルダ</label>
+      <select id="pin-folder" onchange="updatePinPublicVisibility()"></select>
+    </div>
+    <div class="form-group">
+      <label>画像を追加</label>
+      <input type="file" id="pin-images" multiple accept="image/*" onchange="previewPinImages(this)">
+      <div id="pin-image-preview" class="image-preview-container"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="cancelPinMode()">キャンセル</button>
+      <button class="btn btn-primary" onclick="savePin()">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pin edit modal -->
+<div class="modal-overlay" id="modal-pin-edit">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> ピンを編集</h3>
+    <div class="form-group">
+      <label>タイトル *</label>
+      <input type="text" id="edit-pin-title">
+    </div>
+    <div class="form-group">
+      <label>説明</label>
+      <textarea id="edit-pin-desc"></textarea>
+    </div>
+    <div class="form-group">
+      <label>フォルダ</label>
+      <select id="edit-pin-folder"></select>
+    </div>
+    <div class="form-group">
+      <label>画像を追加</label>
+      <input type="file" id="edit-pin-images" multiple accept="image/*">
+    </div>
+    <div id="edit-pin-current-images" class="pin-images"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeEditPin()">キャンセル</button>
+      <button class="btn btn-primary" onclick="updatePin()">更新</button>
+    </div>
+  </div>
+</div>
+
+<!-- Folder create modal -->
+<div class="modal-overlay" id="modal-folder">
+  <div class="modal">
+    <h3><i class="fas fa-folder-plus"></i> ピンフォルダを作成</h3>
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label>親フォルダ</label>
+      <select id="folder-parent"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="createFolder()">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- KML folder create modal -->
+<div class="modal-overlay" id="modal-kml-folder">
+  <div class="modal">
+    <h3><i class="fas fa-folder-plus"></i> KMLフォルダを作成</h3>
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="kml-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label>親フォルダ</label>
+      <select id="kml-folder-parent"></select>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="kml-folder-public"> 全ユーザーに公開する（管理者のみ）
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-kml-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="createKmlFolder()">作成</button>
+    </div>
+  </div>
+</div>
+
+<!-- KML upload modal -->
+<div class="modal-overlay" id="modal-kml-upload">
+  <div class="modal">
+    <h3><i class="fas fa-upload"></i> KMLをアップロード</h3>
+    <input type="hidden" id="kml-upload-folder-id">
+    <div class="form-group">
+      <label>KMLファイル *</label>
+      <input type="file" id="kml-upload-file" accept=".kml,.kmz">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-kml-upload')">キャンセル</button>
+      <button class="btn btn-primary" onclick="uploadKmlFile()">アップロード</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename KML folder modal -->
+<div class="modal-overlay" id="modal-rename-kml-folder">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> KMLフォルダ設定</h3>
+    <input type="hidden" id="rename-kml-folder-id">
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="rename-kml-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="rename-kml-folder-public"> 全ユーザーに公開する（管理者のみ）
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-rename-kml-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="renameKmlFolder()">変更</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share KML folder modal -->
+<div class="modal-overlay" id="modal-share-kml">
+  <div class="modal">
+    <h3><i class="fas fa-share-alt"></i> <span id="share-kml-title">KMLフォルダを共有</span></h3>
+    <input type="hidden" id="share-kml-folder-id">
+    <!-- Current members section (always visible) -->
+    <div id="share-kml-members-section">
+      <p style="font-size:13px;color:#666;margin-bottom:8px;"><i class="fas fa-users"></i> 共有メンバー</p>
+      <div id="share-kml-members" style="max-height:120px;overflow-y:auto;margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:4px;">
+        <!-- Dynamic member list -->
+      </div>
+    </div>
+    <!-- Owner controls (only for folder owner) -->
+    <div id="share-kml-owner-controls">
+      <div class="form-group">
+        <input type="text" id="share-kml-search" placeholder="表示名で検索..." oninput="filterShareKmlUsers()">
+      </div>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
+      <div class="user-select-list" id="share-kml-user-list">
+        <!-- Dynamic user list -->
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-share-kml')">閉じる</button>
+      <button class="btn btn-primary" id="share-kml-save-btn" onclick="shareKmlFolder()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename pin folder modal -->
+<div class="modal-overlay" id="modal-rename-folder">
+  <div class="modal">
+    <h3><i class="fas fa-edit"></i> ピンフォルダ設定</h3>
+    <input type="hidden" id="rename-folder-id">
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="rename-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="rename-folder-public"> 全ユーザーに公開する（管理者のみ）
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-rename-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="renameFolder()">変更</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share pin folder modal -->
+<div class="modal-overlay" id="modal-share-folder">
+  <div class="modal">
+    <h3><i class="fas fa-share-alt"></i> <span id="share-folder-title">ピンフォルダを共有</span></h3>
+    <input type="hidden" id="share-folder-id">
+    <!-- Current members section (always visible) -->
+    <div id="share-folder-members-section">
+      <p style="font-size:13px;color:#666;margin-bottom:8px;"><i class="fas fa-users"></i> 共有メンバー</p>
+      <div id="share-folder-members" style="max-height:120px;overflow-y:auto;margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:4px;">
+        <!-- Dynamic member list -->
+      </div>
+    </div>
+    <!-- Owner controls (only for folder owner) -->
+    <div id="share-folder-owner-controls">
+      <div class="form-group">
+        <input type="text" id="share-folder-search" placeholder="表示名で検索..." oninput="filterShareFolderUsers()">
+      </div>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">共有するユーザーを選択してください</p>
+      <div class="user-select-list" id="share-folder-user-list">
+        <!-- Dynamic user list -->
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-share-folder')">閉じる</button>
+      <button class="btn btn-primary" id="share-folder-save-btn" onclick="shareFolder()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move folder modal -->
+<div class="modal-overlay" id="modal-move-folder">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> フォルダを移動</h3>
+    <input type="hidden" id="move-folder-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-folder-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-folder-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveFolder()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move pin modal -->
+<div class="modal-overlay" id="modal-move-pin">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> ピンを移動</h3>
+    <input type="hidden" id="move-pin-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-pin-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-pin-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-pin')">キャンセル</button>
+      <button class="btn btn-primary" onclick="movePin()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move KML file modal -->
+<div class="modal-overlay" id="modal-move-kml-file">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> KMLファイルを移動</h3>
+    <input type="hidden" id="move-kml-file-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-kml-file-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-kml-file-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-kml-file')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveKmlFile()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move KML folder modal -->
+<div class="modal-overlay" id="modal-move-kml-folder">
+  <div class="modal">
+    <h3><i class="fas fa-arrows-alt"></i> KMLフォルダを移動</h3>
+    <input type="hidden" id="move-kml-folder-id">
+    <p style="font-size:14px;margin-bottom:12px;"><strong id="move-kml-folder-name"></strong> を移動</p>
+    <div class="form-group">
+      <label>移動先フォルダ</label>
+      <select id="move-kml-folder-target"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-move-kml-folder')">キャンセル</button>
+      <button class="btn btn-primary" onclick="moveKmlFolder()">移動</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reorder KML folders modal -->
+<div class="modal-overlay" id="modal-reorder-kml-folders">
+  <div class="modal">
+    <h3><i class="fas fa-sort"></i> KMLフォルダの並び替え</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">上下ボタンで順番を変更してください</p>
+    <div id="reorder-kml-folder-list" class="reorder-list">
+      <!-- Dynamic list -->
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal('modal-reorder-kml-folders')">完了</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reorder pin folders modal -->
+<div class="modal-overlay" id="modal-reorder-folders">
+  <div class="modal">
+    <h3><i class="fas fa-sort"></i> ピンフォルダの並び替え</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">上下ボタンで順番を変更してください</p>
+    <div id="reorder-folder-list" class="reorder-list">
+      <!-- Dynamic list -->
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal('modal-reorder-folders')">完了</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auth modal -->
+<div class="modal-overlay" id="modal-auth">
+  <div class="modal">
+    <h3 id="auth-title">ログイン</h3>
+    <div class="form-group">
+      <label>ユーザー名（full name）</label>
+      <input type="text" id="auth-username" placeholder="taro yamada">
+    </div>
+    <div class="form-group">
+      <label>パスワード</label>
+      <input type="password" id="auth-password" placeholder="パスワード">
+    </div>
+    <div class="form-group" id="auth-display-name-group" style="display:none;">
+      <label>表示名</label>
+      <input type="text" id="auth-display-name" placeholder="表示名（省略可）">
+    </div>
+    <div id="auth-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-auth')">キャンセル</button>
+      <button class="btn btn-primary" id="auth-submit" onclick="submitAuth()">ログイン</button>
+    </div>
+    <p style="margin-top:12px;font-size:13px;text-align:center;">
+      <a href="#" id="auth-toggle" onclick="toggleAuthMode(event)">アカウントを作成</a>
+    </p>
+  </div>
+</div>
+
+<!-- Account settings modal -->
+<div class="modal-overlay" id="modal-settings">
+  <div class="modal">
+    <h3><i class="fas fa-cog"></i> アカウント設定</h3>
+    <div class="form-group">
+      <label>表示名</label>
+      <input type="text" id="settings-display-name" placeholder="表示名">
+    </div>
+    <div class="section-title" style="margin-top:16px;">パスワード変更</div>
+    <div class="form-group">
+      <label>現在のパスワード</label>
+      <input type="password" id="settings-current-password" placeholder="現在のパスワード">
+    </div>
+    <div class="form-group">
+      <label>新しいパスワード</label>
+      <input type="password" id="settings-new-password" placeholder="新しいパスワード（4文字以上）">
+    </div>
+    <div class="form-group">
+      <label>新しいパスワード（確認）</label>
+      <input type="password" id="settings-confirm-password" placeholder="新しいパスワード（確認）">
+    </div>
+    <div class="section-title" style="margin-top:16px;">プッシュ通知</div>
+    <div class="form-group" id="settings-push-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <span id="settings-push-status">読み込み中...</span>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-sm" id="settings-push-btn" onclick="togglePushNotifications()">
+            <i class="fas fa-bell"></i> ON
+          </button>
+          <button class="btn btn-sm btn-secondary" id="settings-push-test" onclick="testPushNotification()" style="display:none;">
+            テスト
+          </button>
+        </div>
+      </div>
+      <small style="color:#666;margin-top:4px;display:block;">新着コメント・ピン・KMLの通知を受け取ります</small>
+      <div id="settings-push-result" style="margin-top:8px;font-size:12px;display:none;"></div>
+    </div>
+    <div class="section-title" style="margin-top:16px;">プラン管理</div>
+    <div class="form-group" id="settings-plan-container">
+      <div id="plan-loading" style="color:#666;"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>
+      <div id="plan-info" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span>
+            <span id="plan-badge" class="badge" style="font-size:12px;padding:4px 8px;"></span>
+            <span id="plan-source" style="color:#666;font-size:12px;margin-left:8px;"></span>
+          </span>
+          <div id="plan-actions"></div>
+        </div>
+        <div id="plan-ends-at" style="color:#dc3545;font-size:12px;display:none;"></div>
+      </div>
+    </div>
+    <div class="section-title" style="margin-top:16px;">アプリをインストール</div>
+    <div class="form-group" id="settings-install-container">
+      <div id="install-available" style="display:none;">
+        <button class="btn btn-primary" onclick="installApp()">
+          <i class="fas fa-download"></i> ホーム画面に追加
+        </button>
+      </div>
+      <div id="install-ios" style="display:none;">
+        <small style="color:#666;">
+          <i class="fas fa-share-square"></i> Safariの共有ボタン → 「ホーム画面に追加」をタップ
+        </small>
+      </div>
+      <div id="install-installed" style="display:none;">
+        <small style="color:#28a745;"><i class="fas fa-check"></i> インストール済み</small>
+      </div>
+    </div>
+    <div id="settings-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-settings')">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveAccountSettings()">保存</button>
+    </div>
+    <div style="margin-top:16px;text-align:center;border-top:1px solid #eee;padding-top:16px;">
+      <a href="/about.html" target="_blank" style="color:#666;font-size:13px;text-decoration:none;">
+        <i class="fas fa-info-circle"></i> 利用規約・プライバシーポリシー
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Admin panel modal -->
+<div class="modal-overlay" id="modal-admin">
+  <div class="modal" style="max-width:600px;">
+    <h3><i class="fas fa-user-shield"></i> 管理者パネル</h3>
+    <div class="tabs">
+      <div class="tab active" onclick="switchAdminTab('users')">承認待ちユーザー</div>
+      <div class="tab" onclick="switchAdminTab('security')">セキュリティログ</div>
+    </div>
+    <div id="admin-tab-users">
+      <div id="admin-pending-users" style="max-height:300px;overflow-y:auto;">
+        <!-- Dynamic list -->
+      </div>
+    </div>
+    <div id="admin-tab-security" style="display:none;">
+      <div style="margin-bottom:8px;">
+        <select id="security-log-filter" onchange="loadSecurityLogs()" style="padding:4px;font-size:13px;">
+          <option value="">すべてのイベント</option>
+          <option value="login_success">ログイン成功</option>
+          <option value="login_failed">ログイン失敗</option>
+          <option value="rate_limit_exceeded">レート制限</option>
+          <option value="register_duplicate_username">重複ユーザー名</option>
+        </select>
+      </div>
+      <div id="admin-security-logs" style="max-height:300px;overflow-y:auto;font-size:12px;">
+        <!-- Dynamic list -->
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal('modal-admin')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <button class="lightbox-close">&times;</button>
+  <img id="lightbox-img" src="">
+</div>
+
+<!-- Registration Success Modal -->
+<div class="modal-overlay" id="modal-register-success">
+  <div class="modal" style="text-align:center;">
+    <div style="font-size:48px;color:#28a745;margin-bottom:16px;"><i class="fas fa-check-circle"></i></div>
+    <h3>アカウント申請を受け付けました</h3>
+    <p style="color:#666;margin:16px 0;">
+      ありがとうございます。<br>
+      管理者が承認すると、ご登録のメールアドレスに<br>
+      承認完了のお知らせが届きます。<br>
+      届きましたらログインしてご利用ください。
+    </p>
+    <div class="modal-actions" style="justify-content:center;">
+      <button class="btn btn-primary" onclick="closeModal('modal-register-success')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notifications Modal -->
+<div class="modal-overlay" id="modal-notifications">
+  <div class="modal" style="max-width:400px;">
+    <h3><i class="fas fa-bell"></i> 新着通知</h3>
+    <div id="notifications-list" style="max-height:400px;overflow-y:auto;">
+      <div style="color:#999;text-align:center;padding:20px;">読み込み中...</div>
+    </div>
+    <div class="modal-actions" style="justify-content:center;">
+      <button class="btn btn-primary" onclick="closeNotificationsPopup()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Account Setup Modal (for external members) -->
+<div class="modal-overlay" id="modal-password-setup">
+  <div class="modal" style="max-width:400px;">
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:48px;color:#4CAF50;margin-bottom:12px;"><i class="fas fa-user-plus"></i></div>
+      <h3>アカウント設定</h3>
+      <p style="color:#666;font-size:14px;">Fieldnota commons へようこそ！<br>ユーザー名とパスワードを設定してください。</p>
+    </div>
+    <div id="setup-error" style="color:#ff4444;margin-bottom:12px;display:none;text-align:center;"></div>
+    <div class="form-group">
+      <label>メールアドレス</label>
+      <input type="email" id="setup-email" readonly style="background:#f5f5f5;">
+    </div>
+    <div class="form-group">
+      <label>ユーザー名 (Full Name)</label>
+      <input type="text" id="setup-username" placeholder="Taro Yamada">
+      <small style="color:#666;font-size:12px;">ローマ字のフルネームを入力してください</small>
+    </div>
+    <div class="form-group">
+      <label>表示名</label>
+      <input type="text" id="setup-display-name" placeholder="任意の表示名">
+      <small style="color:#666;font-size:12px;">アプリ内で表示される名前（任意）</small>
+    </div>
+    <div class="form-group">
+      <label>パスワード</label>
+      <input type="password" id="setup-password" placeholder="4文字以上">
+    </div>
+    <div class="form-group">
+      <label>パスワード（確認）</label>
+      <input type="password" id="setup-password-confirm" placeholder="もう一度入力">
+    </div>
+    <div class="modal-actions" style="justify-content:center;">
+      <button class="btn btn-primary" onclick="submitPasswordSetup()">設定する</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
+<script src="/js/config.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
