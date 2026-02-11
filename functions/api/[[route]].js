@@ -650,11 +650,12 @@ export async function onRequest(context) {
     console.warn('WARNING: JWT_SECRET environment variable is not set. Using insecure default.');
   }
 
-  // CORS headers - only allow same origin for security
+  // CORS headers - strict origin allowlist
   const origin = request.headers.get('Origin');
+  const PRODUCTION_ORIGIN = 'https://fieldnota-commons.com';
   const allowedOrigin = origin && (
     origin === url.origin ||
-    origin.endsWith('.pages.dev') ||
+    origin === PRODUCTION_ORIGIN ||
     env.ALLOWED_ORIGIN === origin
   ) ? origin : url.origin;
 
