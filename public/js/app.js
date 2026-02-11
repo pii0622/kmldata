@@ -149,6 +149,7 @@ function toggleLoginMode(e) {
   loginMode = loginMode === 'login' ? 'register' : 'login';
   document.getElementById('login-email-group').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-display-name-group').style.display = loginMode === 'register' ? '' : 'none';
+  document.getElementById('login-terms').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-submit').textContent = loginMode === 'login' ? 'ログイン' : 'アカウント作成';
   document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
   document.getElementById('login-username').placeholder = loginMode === 'register' ? 'Taro Yamada' : 'ユーザー名';
@@ -921,6 +922,10 @@ async function showShareKmlFolderModal(folderId) {
   const folder = kmlFolders.find(f => f.id === folderId);
   const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
 
+  // Clear previous state to prevent checkbox states from carrying over between folders
+  shareKmlSharedWith = [];
+  document.getElementById('share-kml-user-list').innerHTML = '';
+
   // Fetch shared members
   try {
     const shares = await api(`/api/kml-folders/${folderId}/shares`);
@@ -1679,6 +1684,10 @@ async function showShareFolderModal(folderId) {
   document.getElementById('share-folder-id').value = folderId;
   const folder = folders.find(f => f.id === folderId);
   const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
+
+  // Clear previous state to prevent checkbox states from carrying over between folders
+  shareFolderSharedWith = [];
+  document.getElementById('share-folder-user-list').innerHTML = '';
 
   // Fetch shared members
   try {

@@ -30,8 +30,8 @@
 <div class="login-screen" id="login-screen">
   <div class="login-card">
     <div class="login-logo">
-      <img src="/images/logo-icon.svg" alt="Fieldnota" style="width:50px;height:50px;">
-      <h1>Fieldnota commons</h1>
+      <img src="/images/logo-icon2.png" alt="Fieldnota" style="width:50px;height:50px;">
+      <img src="/images/logo-title2.png" alt="Fieldnota commons" style="height:32px;">
     </div>
     <p class="login-tagline">見つけたナニカを、notaに記録する。共有する。</p>
     <p class="login-subtitle">続けるにはログインしてください</p>
@@ -53,6 +53,9 @@
         <input type="text" id="login-display-name" placeholder="表示名（省略可）">
       </div>
       <div id="login-error" class="login-error"></div>
+      <p id="login-terms" class="login-terms" style="display:none;font-size:12px;color:#666;margin-bottom:12px;text-align:center;">
+        アカウント作成すると、<a href="/about.html#terms" target="_blank" style="color:#4CAF50;">利用規約</a>と<a href="/about.html#privacy" target="_blank" style="color:#4CAF50;">プライバシーポリシー</a>に同意したものとみなされます。
+      </p>
       <button class="btn btn-primary btn-block" id="login-submit" onclick="submitLogin()">ログイン</button>
       <p class="login-toggle">
         <a href="#" id="login-toggle-link" onclick="toggleLoginMode(event)">アカウントを作成</a>
