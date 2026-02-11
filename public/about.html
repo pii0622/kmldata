@@ -1140,5 +1140,31 @@
 </section>
 
 
+<script>
+  // 動画の自動再生を確実にする
+  document.addEventListener('DOMContentLoaded', function() {
+    const video = document.querySelector('.hero__video');
+    if (video) {
+      // 再生を試みる
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(function(error) {
+          console.log('Auto-play was prevented:', error);
+          // ユーザー操作を待って再生を試みる
+          document.addEventListener('click', function playOnce() {
+            video.play();
+            document.removeEventListener('click', playOnce);
+          }, { once: true });
+        });
+      }
+
+      // 動画が読み込めない場合のフォールバック
+      video.addEventListener('error', function() {
+        document.querySelector('.hero').classList.add('hero--no-video');
+      });
+    }
+  });
+</script>
+
 </body>
 </html>
