@@ -453,6 +453,175 @@
       }
     }
 
+    /* Pricing */
+    .pricing {
+      background: var(--color-bg);
+    }
+
+    .pricing__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .pricing-card {
+      background: var(--color-white);
+      border-radius: var(--radius);
+      padding: 32px 28px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+      transition: box-shadow 0.2s, transform 0.2s;
+    }
+
+    .pricing-card:hover {
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .pricing-card--featured {
+      border: 2px solid var(--color-primary);
+      transform: scale(1.02);
+    }
+
+    .pricing-card--featured:hover {
+      transform: scale(1.04);
+    }
+
+    .pricing-card__badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #f0c14b 0%, #e8a92e 100%);
+      color: #5c4103;
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .pricing-card__name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-bottom: 8px;
+      text-align: center;
+    }
+
+    .pricing-card__price {
+      text-align: center;
+      margin-bottom: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .pricing-card__price-amount {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--color-primary-dark);
+    }
+
+    .pricing-card__price-period {
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+    }
+
+    .pricing-card__features {
+      list-style: none;
+      margin-bottom: 24px;
+    }
+
+    .pricing-card__features li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      font-size: 0.95rem;
+      color: var(--color-text);
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .pricing-card__features li:last-child {
+      border-bottom: none;
+    }
+
+    .pricing-card__features .feature-icon {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .pricing-card__features .feature-icon--check {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .pricing-card__features .feature-icon--limit {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .pricing-card__features .feature-icon--unlimited {
+      background: var(--color-primary);
+      color: white;
+    }
+
+    .pricing-card__features .feature-value {
+      margin-left: auto;
+      font-weight: 600;
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+    }
+
+    .pricing-card__features .feature-value--unlimited {
+      color: var(--color-primary);
+    }
+
+    .pricing-card__cta {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 14px 20px;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .pricing-card__cta--secondary {
+      background: var(--color-bg);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
+    }
+
+    .pricing-card__cta--secondary:hover {
+      background: #e9ebe9;
+    }
+
+    .pricing-card__cta--primary {
+      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+      color: white;
+    }
+
+    .pricing-card__cta--primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
+    }
+
+    .pricing__note {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+    }
+
     /* Accessibility */
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
@@ -487,7 +656,7 @@
     </p>
     <div class="hero__actions">
       <a href="/" class="btn btn--primary">アプリを開く</a>
-      <a href="#how" class="btn btn--secondary">使い方を見る</a>
+      <a href="#pricing" class="btn btn--secondary">料金プラン</a>
     </div>
   </div>
 </header>
@@ -573,6 +742,106 @@
     <p class="map-sources__inner" id="map-sources-heading">
       <strong>地図データ：</strong>国土地理院の等高線地図・航空写真を使用しています。
     </p>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing" aria-labelledby="pricing-heading">
+  <div class="container">
+    <h2 id="pricing-heading" style="text-align:center;">料金プラン</h2>
+    <div class="pricing__grid">
+      <!-- Free Plan -->
+      <article class="pricing-card">
+        <h3 class="pricing-card__name">無料プラン</h3>
+        <div class="pricing-card__price">
+          <span class="pricing-card__price-amount">¥0</span>
+          <span class="pricing-card__price-period">/ 永久無料</span>
+        </div>
+        <ul class="pricing-card__features">
+          <li>
+            <span class="feature-icon feature-icon--limit">📍</span>
+            ピン
+            <span class="feature-value">20個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">📁</span>
+            ピンフォルダ
+            <span class="feature-value">2個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">🗺️</span>
+            KMLファイル
+            <span class="feature-value">1個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">📂</span>
+            KMLフォルダ
+            <span class="feature-value">2個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">🔗</span>
+            共有
+            <span class="feature-value">1件</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            写真アップロード
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            コメント機能
+          </li>
+        </ul>
+        <a href="/" class="pricing-card__cta pricing-card__cta--secondary">無料ではじめる</a>
+      </article>
+
+      <!-- Premium Plan -->
+      <article class="pricing-card pricing-card--featured">
+        <span class="pricing-card__badge">おすすめ</span>
+        <h3 class="pricing-card__name">プレミアムプラン</h3>
+        <div class="pricing-card__price">
+          <span class="pricing-card__price-amount">¥300</span>
+          <span class="pricing-card__price-period">/ 月</span>
+        </div>
+        <ul class="pricing-card__features">
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            ピン
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            ピンフォルダ
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            KMLファイル
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            KMLフォルダ
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            共有
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            写真アップロード
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            コメント機能
+          </li>
+        </ul>
+        <a href="/" class="pricing-card__cta pricing-card__cta--primary">プレミアムにアップグレード</a>
+      </article>
+    </div>
+    <p class="pricing__note">※ プレミアムプランはStripeによる安全な決済でお支払いいただけます。いつでもキャンセル可能です。</p>
   </div>
 </section>
 
