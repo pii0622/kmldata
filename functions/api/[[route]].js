@@ -1215,7 +1215,8 @@ async function handleGetSubscription(env, user) {
     managed_by: managedBy,
     has_stripe_subscription: !!dbUser.stripe_subscription_id,
     subscription_ends_at: dbUser.subscription_ends_at,
-    can_manage_in_app: managedBy === 'stripe' || managedBy === 'none'
+    can_manage_in_app: managedBy === 'stripe' || managedBy === 'none',
+    stripe_enabled: !!env.STRIPE_SECRET_KEY && !!env.STRIPE_PRICE_ID
   });
 }
 

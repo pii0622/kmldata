@@ -1097,12 +1097,18 @@ async function loadPlanInfo() {
     actionsEl.innerHTML = '';
 
     if (data.plan === 'free') {
-      // Free user - show upgrade button
-      actionsEl.innerHTML = `
-        <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
-          <i class="fas fa-crown"></i> プレミアムへ
-        </button>
-      `;
+      // Free user - show upgrade button (only if Stripe is configured)
+      if (data.stripe_enabled) {
+        actionsEl.innerHTML = `
+          <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
+            <i class="fas fa-crown"></i> プレミアムへ
+          </button>
+        `;
+      } else {
+        actionsEl.innerHTML = `
+          <span style="font-size:11px;color:#666;">アプリ内課金は準備中です</span>
+        `;
+      }
     } else if (data.managed_by === 'stripe') {
       // Stripe managed - show manage button
       actionsEl.innerHTML = `
@@ -1135,9 +1141,7 @@ async function loadPlanInfo() {
     badgeEl.style.color = 'white';
     sourceEl.textContent = '';
     actionsEl.innerHTML = `
-      <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
-        <i class="fas fa-crown"></i> プレミアムへ
-      </button>
+      <span style="font-size:11px;color:#999;">読み込みに失敗しました</span>
     `;
   }
 }
