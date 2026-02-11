@@ -65,10 +65,43 @@
 
     /* Hero */
     .hero {
-      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+      position: relative;
       color: var(--color-white);
       padding: 60px 0 80px;
       text-align: center;
+      overflow: hidden;
+      min-height: 60vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero__video {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      min-width: 100%;
+      min-height: 100%;
+      width: auto;
+      height: auto;
+      transform: translate(-50%, -50%);
+      z-index: -2;
+      object-fit: cover;
+    }
+
+    .hero__overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(76, 175, 80, 0.75) 0%, rgba(46, 125, 50, 0.85) 100%);
+      z-index: -1;
+    }
+
+    /* Fallback for when video is not loaded */
+    .hero--no-video {
+      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
     }
 
     .hero__logo {
@@ -413,11 +446,18 @@
 
       .hero {
         padding: 48px 0 64px;
+        min-height: 50vh;
       }
 
       .hero__logo {
         width: 52px;
         height: 52px;
+      }
+
+      .hero__video {
+        /* Ensure video covers on mobile */
+        min-height: 100%;
+        min-width: 100%;
       }
 
       .hero__actions {
@@ -644,6 +684,10 @@
 
 <!-- Hero -->
 <header class="hero">
+  <video class="hero__video" autoplay muted loop playsinline poster="/images/hero-poster.jpg">
+    <source src="/images/hero-video.mp4" type="video/mp4">
+  </video>
+  <div class="hero__overlay"></div>
   <div class="container">
     <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:16px;">
       <img src="/images/logo-icon.png" alt="Fieldnota" style="width:64px;height:64px;filter:brightness(0) invert(1);">
