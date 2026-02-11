@@ -832,6 +832,29 @@ export async function onRequest(context) {
       return await handleSetupPassword(request, env);
     }
 
+    // Subscription Management API
+    if (path === '/subscription' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetSubscription(env, user);
+    }
+
+    // Stripe Direct Payment API
+    if (path === '/stripe/create-checkout-session' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleCreateCheckoutSession(request, env, user);
+    }
+    if (path === '/stripe/webhook' && method === 'POST') {
+      return await handleStripeWebhook(request, env);
+    }
+    if (path === '/stripe/create-portal-session' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleCreatePortalSession(env, user);
+    }
+    if (path === '/subscription/cancel' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleCancelSubscription(env, user);
+    }
+
     return json({ error: 'Not found' }, 404);
   } catch (err) {
     console.error(err);
@@ -1162,6 +1185,401 @@ async function handleSetupPassword(request, env) {
     );
   } catch (err) {
     console.error('Account setup error:', err);
+    return json({ error: err.message || 'Server error' }, 500);
+  }
+}
+
+// ==================== Subscription Management Handlers ====================
+
+// Get current subscription status
+async function handleGetSubscription(env, user) {
+  const dbUser = await env.DB.prepare(
+    'SELECT plan, member_source, stripe_customer_id, stripe_subscription_id, subscription_ends_at FROM users WHERE id = ?'
+  ).bind(user.id).first();
+
+  if (!dbUser) {
+    return json({ error: 'ユーザーが見つかりません' }, 404);
+  }
+
+  // Determine subscription source and management method
+  let managedBy = 'none';
+  if (dbUser.member_source === 'wordpress') {
+    managedBy = 'wordpress'; // Managed externally
+  } else if (dbUser.member_source === 'stripe') {
+    managedBy = 'stripe'; // Managed in-app
+  }
+
+  return json({
+    plan: dbUser.plan || 'free',
+    member_source: dbUser.member_source,
+    managed_by: managedBy,
+    has_stripe_subscription: !!dbUser.stripe_subscription_id,
+    subscription_ends_at: dbUser.subscription_ends_at,
+    can_manage_in_app: managedBy === 'stripe' || managedBy === 'none'
+  });
+}
+
+// Create Stripe Checkout Session for new subscription
+async function handleCreateCheckoutSession(request, env, user) {
+  try {
+    if (!env.STRIPE_SECRET_KEY) {
+      return json({ error: 'Stripe is not configured' }, 500);
+    }
+
+    const dbUser = await env.DB.prepare(
+      'SELECT plan, member_source, stripe_customer_id FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    // Check if user is already premium via WordPress
+    if (dbUser.member_source === 'wordpress' && dbUser.plan === 'premium') {
+      return json({ error: 'WordPress経由で既にプレミアム会員です。課金管理はWordPress側で行ってください。' }, 400);
+    }
+
+    // Check if user already has an active Stripe subscription
+    if (dbUser.member_source === 'stripe' && dbUser.plan === 'premium') {
+      return json({ error: '既にプレミアム会員です' }, 400);
+    }
+
+    const { success_url, cancel_url } = await request.json();
+    const appUrl = success_url || 'https://fieldnota-commons.com';
+    const cancelUrl = cancel_url || 'https://fieldnota-commons.com';
+
+    // Create or retrieve Stripe customer
+    let customerId = dbUser.stripe_customer_id;
+    if (!customerId) {
+      const customerResponse = await fetch('https://api.stripe.com/v1/customers', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          'email': user.email || '',
+          'name': user.display_name || user.username,
+          'metadata[user_id]': user.id.toString()
+        })
+      });
+
+      if (!customerResponse.ok) {
+        const error = await customerResponse.text();
+        console.error('Stripe customer creation failed:', error);
+        return json({ error: 'Stripe customer creation failed' }, 500);
+      }
+
+      const customer = await customerResponse.json();
+      customerId = customer.id;
+
+      // Save customer ID
+      await env.DB.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?')
+        .bind(customerId, user.id).run();
+    }
+
+    // Create Checkout Session
+    const sessionResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        'customer': customerId,
+        'mode': 'subscription',
+        'line_items[0][price]': env.STRIPE_PRICE_ID,
+        'line_items[0][quantity]': '1',
+        'success_url': `${appUrl}?session_id={CHECKOUT_SESSION_ID}`,
+        'cancel_url': cancelUrl,
+        'metadata[user_id]': user.id.toString()
+      })
+    });
+
+    if (!sessionResponse.ok) {
+      const error = await sessionResponse.text();
+      console.error('Stripe session creation failed:', error);
+      return json({ error: 'Checkout session creation failed' }, 500);
+    }
+
+    const session = await sessionResponse.json();
+    return json({ url: session.url, session_id: session.id });
+
+  } catch (err) {
+    console.error('Create checkout session error:', err);
+    return json({ error: err.message || 'Server error' }, 500);
+  }
+}
+
+// Handle Stripe Webhook events
+async function handleStripeWebhook(request, env) {
+  try {
+    if (!env.STRIPE_WEBHOOK_SECRET) {
+      console.error('STRIPE_WEBHOOK_SECRET not configured');
+      return json({ error: 'Webhook not configured' }, 500);
+    }
+
+    const signature = request.headers.get('stripe-signature');
+    if (!signature) {
+      return json({ error: 'No signature' }, 400);
+    }
+
+    const body = await request.text();
+
+    // Verify webhook signature
+    const isValid = await verifyStripeWebhookSignature(body, signature, env.STRIPE_WEBHOOK_SECRET);
+    if (!isValid) {
+      console.error('Invalid webhook signature');
+      return json({ error: 'Invalid signature' }, 400);
+    }
+
+    const event = JSON.parse(body);
+    console.log('Stripe webhook event:', event.type);
+
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const userId = session.metadata?.user_id;
+        const customerId = session.customer;
+        const subscriptionId = session.subscription;
+
+        if (userId) {
+          await env.DB.prepare(`
+            UPDATE users SET
+              plan = 'premium',
+              member_source = 'stripe',
+              stripe_customer_id = ?,
+              stripe_subscription_id = ?,
+              subscription_ends_at = NULL
+            WHERE id = ?
+          `).bind(customerId, subscriptionId, userId).run();
+
+          await logSecurityEvent(env, 'subscription_created', parseInt(userId), request, {
+            source: 'stripe',
+            subscription_id: subscriptionId
+          });
+        }
+        break;
+      }
+
+      case 'customer.subscription.updated': {
+        const subscription = event.data.object;
+        const customerId = subscription.customer;
+
+        // Find user by customer ID
+        const user = await env.DB.prepare(
+          'SELECT id FROM users WHERE stripe_customer_id = ?'
+        ).bind(customerId).first();
+
+        if (user) {
+          const status = subscription.status;
+          if (status === 'active' || status === 'trialing') {
+            await env.DB.prepare(`
+              UPDATE users SET plan = 'premium', subscription_ends_at = NULL WHERE id = ?
+            `).bind(user.id).run();
+          } else if (status === 'canceled' || status === 'unpaid' || status === 'past_due') {
+            // Set end date for grace period
+            const endsAt = new Date(subscription.current_period_end * 1000).toISOString();
+            await env.DB.prepare(`
+              UPDATE users SET subscription_ends_at = ? WHERE id = ?
+            `).bind(endsAt, user.id).run();
+          }
+        }
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object;
+        const customerId = subscription.customer;
+
+        const user = await env.DB.prepare(
+          'SELECT id FROM users WHERE stripe_customer_id = ?'
+        ).bind(customerId).first();
+
+        if (user) {
+          await env.DB.prepare(`
+            UPDATE users SET
+              plan = 'free',
+              member_source = NULL,
+              stripe_subscription_id = NULL,
+              subscription_ends_at = NULL
+            WHERE id = ?
+          `).bind(user.id).run();
+
+          await logSecurityEvent(env, 'subscription_canceled', user.id, request, {
+            source: 'stripe',
+            subscription_id: subscription.id
+          });
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const customerId = invoice.customer;
+
+        const user = await env.DB.prepare(
+          'SELECT id FROM users WHERE stripe_customer_id = ?'
+        ).bind(customerId).first();
+
+        if (user) {
+          await logSecurityEvent(env, 'payment_failed', user.id, request, {
+            invoice_id: invoice.id
+          });
+        }
+        break;
+      }
+    }
+
+    return json({ received: true });
+
+  } catch (err) {
+    console.error('Stripe webhook error:', err);
+    return json({ error: err.message || 'Webhook error' }, 500);
+  }
+}
+
+// Verify Stripe webhook signature
+async function verifyStripeWebhookSignature(payload, signature, secret) {
+  try {
+    const parts = signature.split(',').reduce((acc, part) => {
+      const [key, value] = part.split('=');
+      acc[key] = value;
+      return acc;
+    }, {});
+
+    const timestamp = parts['t'];
+    const sig = parts['v1'];
+
+    if (!timestamp || !sig) return false;
+
+    // Check timestamp tolerance (5 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp)) > 300) return false;
+
+    // Compute expected signature
+    const signedPayload = `${timestamp}.${payload}`;
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
+    const expectedSig = Array.from(new Uint8Array(signatureBytes))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    return sig === expectedSig;
+  } catch (err) {
+    console.error('Signature verification error:', err);
+    return false;
+  }
+}
+
+// Create Stripe Customer Portal session for subscription management
+async function handleCreatePortalSession(env, user) {
+  try {
+    if (!env.STRIPE_SECRET_KEY) {
+      return json({ error: 'Stripe is not configured' }, 500);
+    }
+
+    const dbUser = await env.DB.prepare(
+      'SELECT stripe_customer_id, member_source FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    if (dbUser.member_source === 'wordpress') {
+      return json({ error: 'WordPress経由の会員はWordPress側で管理してください' }, 400);
+    }
+
+    if (!dbUser.stripe_customer_id) {
+      return json({ error: 'Stripe顧客情報がありません' }, 400);
+    }
+
+    const portalResponse = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        'customer': dbUser.stripe_customer_id,
+        'return_url': 'https://fieldnota-commons.com'
+      })
+    });
+
+    if (!portalResponse.ok) {
+      const error = await portalResponse.text();
+      console.error('Stripe portal session creation failed:', error);
+      return json({ error: 'Portal session creation failed' }, 500);
+    }
+
+    const session = await portalResponse.json();
+    return json({ url: session.url });
+
+  } catch (err) {
+    console.error('Create portal session error:', err);
+    return json({ error: err.message || 'Server error' }, 500);
+  }
+}
+
+// Cancel subscription (for Stripe direct users)
+async function handleCancelSubscription(env, user) {
+  try {
+    if (!env.STRIPE_SECRET_KEY) {
+      return json({ error: 'Stripe is not configured' }, 500);
+    }
+
+    const dbUser = await env.DB.prepare(
+      'SELECT stripe_subscription_id, member_source FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    if (dbUser.member_source === 'wordpress') {
+      return json({ error: 'WordPress経由の会員はWordPress側で解約してください' }, 400);
+    }
+
+    if (!dbUser.stripe_subscription_id) {
+      return json({ error: '有効なサブスクリプションがありません' }, 400);
+    }
+
+    // Cancel at period end (don't cancel immediately)
+    const cancelResponse = await fetch(
+      `https://api.stripe.com/v1/subscriptions/${dbUser.stripe_subscription_id}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          'cancel_at_period_end': 'true'
+        })
+      }
+    );
+
+    if (!cancelResponse.ok) {
+      const error = await cancelResponse.text();
+      console.error('Stripe subscription cancel failed:', error);
+      return json({ error: 'Subscription cancellation failed' }, 500);
+    }
+
+    const subscription = await cancelResponse.json();
+    const endsAt = new Date(subscription.current_period_end * 1000).toISOString();
+
+    await env.DB.prepare('UPDATE users SET subscription_ends_at = ? WHERE id = ?')
+      .bind(endsAt, user.id).run();
+
+    await logSecurityEvent(env, 'subscription_cancel_requested', user.id, null, {
+      subscription_id: dbUser.stripe_subscription_id,
+      ends_at: endsAt
+    });
+
+    return json({
+      success: true,
+      message: '解約手続きが完了しました。現在の請求期間終了まではプレミアム機能をご利用いただけます。',
+      subscription_ends_at: endsAt
+    });
+
+  } catch (err) {
+    console.error('Cancel subscription error:', err);
     return json({ error: err.message || 'Server error' }, 500);
   }
 }

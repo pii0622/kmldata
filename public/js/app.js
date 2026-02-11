@@ -995,6 +995,8 @@ function showAccountSettings() {
   updatePushUI();
   // Update install UI
   updateInstallUI();
+  // Load plan information
+  loadPlanInfo();
 }
 
 async function saveAccountSettings() {
@@ -1050,6 +1052,146 @@ async function saveAccountSettings() {
   } catch (err) {
     errEl.textContent = err.message;
     errEl.style.display = 'block';
+  }
+}
+
+// ==================== Plan Management ====================
+async function loadPlanInfo() {
+  const loadingEl = document.getElementById('plan-loading');
+  const infoEl = document.getElementById('plan-info');
+  const badgeEl = document.getElementById('plan-badge');
+  const sourceEl = document.getElementById('plan-source');
+  const actionsEl = document.getElementById('plan-actions');
+  const endsAtEl = document.getElementById('plan-ends-at');
+
+  loadingEl.style.display = 'block';
+  infoEl.style.display = 'none';
+
+  try {
+    const data = await api('/api/subscription');
+
+    loadingEl.style.display = 'none';
+    infoEl.style.display = 'block';
+
+    // Set badge
+    if (data.plan === 'premium') {
+      badgeEl.textContent = 'プレミアム';
+      badgeEl.style.background = '#28a745';
+      badgeEl.style.color = 'white';
+    } else {
+      badgeEl.textContent = '無料プラン';
+      badgeEl.style.background = '#6c757d';
+      badgeEl.style.color = 'white';
+    }
+
+    // Set source info
+    if (data.member_source === 'wordpress') {
+      sourceEl.textContent = '（WordPress経由）';
+    } else if (data.member_source === 'stripe') {
+      sourceEl.textContent = '（アプリ内課金）';
+    } else {
+      sourceEl.textContent = '';
+    }
+
+    // Set actions based on plan and source
+    actionsEl.innerHTML = '';
+
+    if (data.plan === 'free') {
+      // Free user - show upgrade button
+      actionsEl.innerHTML = `
+        <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
+          <i class="fas fa-crown"></i> プレミアムへ
+        </button>
+      `;
+    } else if (data.managed_by === 'stripe') {
+      // Stripe managed - show manage button
+      actionsEl.innerHTML = `
+        <button class="btn btn-sm btn-secondary" onclick="openStripePortal()">
+          <i class="fas fa-cog"></i> 管理
+        </button>
+      `;
+    } else if (data.managed_by === 'wordpress') {
+      // WordPress managed - show info
+      actionsEl.innerHTML = `
+        <span style="font-size:11px;color:#666;">WordPress側で管理</span>
+      `;
+    }
+
+    // Show subscription end date if canceling
+    if (data.subscription_ends_at) {
+      const endsDate = new Date(data.subscription_ends_at);
+      endsAtEl.textContent = `※ ${endsDate.toLocaleDateString('ja-JP')} にプレミアムが終了します`;
+      endsAtEl.style.display = 'block';
+    } else {
+      endsAtEl.style.display = 'none';
+    }
+
+  } catch (err) {
+    console.error('Failed to load plan info:', err);
+    loadingEl.style.display = 'none';
+    infoEl.style.display = 'block';
+    badgeEl.textContent = '無料プラン';
+    badgeEl.style.background = '#6c757d';
+    badgeEl.style.color = 'white';
+    sourceEl.textContent = '';
+    actionsEl.innerHTML = `
+      <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
+        <i class="fas fa-crown"></i> プレミアムへ
+      </button>
+    `;
+  }
+}
+
+async function upgradeToPremium() {
+  try {
+    const data = await api('/api/stripe/create-checkout-session', {
+      method: 'POST',
+      body: JSON.stringify({
+        success_url: window.location.origin + '?upgrade=success',
+        cancel_url: window.location.origin
+      })
+    });
+
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      notify('チェックアウトセッションの作成に失敗しました', 'error');
+    }
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function openStripePortal() {
+  try {
+    const data = await api('/api/stripe/create-portal-session', {
+      method: 'POST'
+    });
+
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      notify('ポータルセッションの作成に失敗しました', 'error');
+    }
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function cancelSubscription() {
+  if (!confirm('本当にプレミアムを解約しますか？\n現在の請求期間終了までは引き続きご利用いただけます。')) {
+    return;
+  }
+
+  try {
+    const data = await api('/api/subscription/cancel', {
+      method: 'POST'
+    });
+
+    notify(data.message);
+    loadPlanInfo();
+  } catch (err) {
+    notify(err.message, 'error');
   }
 }
 
