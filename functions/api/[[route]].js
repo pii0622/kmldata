@@ -1,16 +1,70 @@
 // Cloudflare Pages Functions - No external dependencies
 
 // ==================== Utility Functions ====================
+
+// PBKDF2 configuration
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_KEY_LENGTH = 32; // 256 bits
+
+// Hash password with PBKDF2 and random salt
 async function hashPassword(password) {
   const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const hashBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8
+  );
+  const hashBase64 = btoa(String.fromCharCode(...new Uint8Array(hashBits)));
+  const saltBase64 = btoa(String.fromCharCode(...salt));
+  return { hash: hashBase64, salt: saltBase64 };
 }
 
-async function verifyPassword(password, hash) {
-  const computed = await hashPassword(password);
-  return computed === hash;
+// Verify password - supports both PBKDF2 (with salt) and legacy SHA-256 (without salt)
+async function verifyPassword(password, storedHash, salt) {
+  const encoder = new TextEncoder();
+
+  if (!salt) {
+    // Legacy: SHA-256 without salt (for existing users)
+    const data = encoder.encode(password);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    const computed = btoa(String.fromCharCode(...new Uint8Array(hash)));
+    return computed === storedHash;
+  }
+
+  // PBKDF2 with salt
+  const saltBytes = Uint8Array.from(atob(salt), c => c.charCodeAt(0));
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const hashBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8
+  );
+  const computed = btoa(String.fromCharCode(...new Uint8Array(hashBits)));
+  return computed === storedHash;
 }
 
 async function createToken(payload, secret) {
@@ -359,10 +413,18 @@ async function ensureTablesExist(env) {
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT,
         email TEXT,
+        display_name TEXT,
         is_admin INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending',
+        plan TEXT DEFAULT 'free',
+        member_source TEXT,
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
+        subscription_ends_at TEXT,
+        external_id TEXT,
         created_at TEXT DEFAULT (datetime('now'))
       )`),
       // Admin notifications
@@ -370,6 +432,7 @@ async function ensureTablesExist(env) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         message TEXT NOT NULL,
+        data TEXT,
         user_id INTEGER,
         is_read INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
@@ -423,7 +486,8 @@ async function ensureTablesExist(env) {
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS pin_images (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pin_id INTEGER NOT NULL,
-        filename TEXT NOT NULL,
+        r2_key TEXT NOT NULL,
+        original_name TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE
       )`),
@@ -497,6 +561,36 @@ async function ensureTablesExist(env) {
         auth TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // KML folder shares
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folder_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kml_folder_id INTEGER NOT NULL,
+        shared_with_user_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (kml_folder_id) REFERENCES kml_folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (shared_with_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(kml_folder_id, shared_with_user_id)
+      )`),
+      // KML folder visibility (per-user visibility settings)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folder_visibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kml_folder_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        is_visible INTEGER DEFAULT 1,
+        FOREIGN KEY (kml_folder_id) REFERENCES kml_folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(kml_folder_id, user_id)
+      )`),
+      // Folder visibility (per-user visibility settings for pin folders)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS folder_visibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        is_visible INTEGER DEFAULT 1,
+        FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(folder_id, user_id)
       )`)
     ]);
 
@@ -926,11 +1020,11 @@ async function handleRegister(request, env) {
     return json({ error: 'その表示名は既に使われています' }, 400);
   }
 
-  const hash = await hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   // New users start with 'pending' status - must be approved by admin
   const result = await env.DB.prepare(
-    'INSERT INTO users (username, password_hash, email, display_name, status) VALUES (?, ?, ?, ?, ?)'
-  ).bind(username, hash, email, actualDisplayName, 'pending').run();
+    'INSERT INTO users (username, password_hash, password_salt, email, display_name, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(username, hash, salt, email, actualDisplayName, 'pending').run();
 
   const userId = result.meta.last_row_id;
 
@@ -953,7 +1047,7 @@ async function handleLogin(request, env) {
   }
 
   const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
-  if (!user || !(await verifyPassword(password, user.password_hash))) {
+  if (!user || !(await verifyPassword(password, user.password_hash, user.password_salt))) {
     await logSecurityEvent(env, 'login_failed', null, request, { username, reason: 'invalid_credentials' });
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
   }
@@ -1035,12 +1129,12 @@ async function handleExternalMemberSync(request, env) {
 
       // Generate random temporary password hash (user must set password on first login)
       const tempPassword = crypto.randomUUID();
-      const hash = await hashPassword(tempPassword);
+      const { hash, salt } = await hashPassword(tempPassword);
 
       const result = await env.DB.prepare(
-        `INSERT INTO users (username, password_hash, email, display_name, status, member_source, plan, external_id)
-         VALUES (?, ?, ?, ?, 'needs_password', 'wordpress', ?, ?)`
-      ).bind(username, hash, email, actualDisplayName, plan || 'premium', external_id || null).run();
+        `INSERT INTO users (username, password_hash, password_salt, email, display_name, status, member_source, plan, external_id)
+         VALUES (?, ?, ?, ?, ?, 'needs_password', 'wordpress', ?, ?)`
+      ).bind(username, hash, salt, email, actualDisplayName, plan || 'premium', external_id || null).run();
 
       const userId = result.meta.last_row_id;
 
@@ -1164,9 +1258,9 @@ async function handleSetupPassword(request, env) {
     }
 
     // Update username, display_name, password and status
-    const hash = await hashPassword(password);
-    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, status = ? WHERE id = ?')
-      .bind(username.trim(), actualDisplayName, hash, 'approved', user.id).run();
+    const { hash, salt } = await hashPassword(password);
+    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, password_salt = ?, status = ? WHERE id = ?')
+      .bind(username.trim(), actualDisplayName, hash, salt, 'approved', user.id).run();
 
     // Create token for auto-login
     const token = await createToken({
@@ -1541,11 +1635,11 @@ async function handleCreatePortalSession(request, env, user) {
     }
 
     const dbUser = await env.DB.prepare(
-      'SELECT stripe_customer_id, member_source, password_hash FROM users WHERE id = ?'
+      'SELECT stripe_customer_id, member_source, password_hash, password_salt FROM users WHERE id = ?'
     ).bind(user.id).first();
 
     // Verify password
-    if (!dbUser.password_hash || !(await verifyPassword(password, dbUser.password_hash))) {
+    if (!dbUser.password_hash || !(await verifyPassword(password, dbUser.password_hash, dbUser.password_salt))) {
       return json({ error: 'パスワードが正しくありません' }, 401);
     }
 
@@ -1689,16 +1783,16 @@ async function handleChangePassword(request, env, user) {
   }
 
   // Verify current password
-  const dbUser = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+  const dbUser = await env.DB.prepare('SELECT password_hash, password_salt FROM users WHERE id = ?')
     .bind(user.id).first();
-  if (!dbUser || !(await verifyPassword(current_password, dbUser.password_hash))) {
+  if (!dbUser || !(await verifyPassword(current_password, dbUser.password_hash, dbUser.password_salt))) {
     return json({ error: '現在のパスワードが正しくありません' }, 401);
   }
 
   // Update password
-  const newHash = await hashPassword(new_password);
-  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-    .bind(newHash, user.id).run();
+  const { hash: newHash, salt: newSalt } = await hashPassword(new_password);
+  await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+    .bind(newHash, newSalt, user.id).run();
 
   return json({ ok: true });
 }
