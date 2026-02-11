@@ -67,16 +67,41 @@ async function verifyPassword(password, storedHash, salt) {
   return computed === storedHash;
 }
 
+// Base64URL encoding (RFC 4648) - URL-safe, no padding
+function base64urlEncode(data) {
+  // data can be Uint8Array or string (UTF-8)
+  const bytes = typeof data === 'string'
+    ? new TextEncoder().encode(data)
+    : data;
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64urlDecode(str) {
+  // Restore standard Base64
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  // Add padding if needed
+  const pad = base64.length % 4;
+  if (pad) base64 += '='.repeat(4 - pad);
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
+function base64urlDecodeToString(str) {
+  const bytes = base64urlDecode(str);
+  return new TextDecoder().decode(bytes);
+}
+
 async function createToken(payload, secret) {
   const encoder = new TextEncoder();
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payloadStr = btoa(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+  // Encode header and payload as Base64URL (UTF-8 safe)
+  const header = base64urlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payloadStr = base64urlEncode(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
   const data = encoder.encode(`${header}.${payloadStr}`);
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
   );
   const sig = await crypto.subtle.sign('HMAC', key, data);
-  const signature = btoa(String.fromCharCode(...new Uint8Array(sig)));
+  const signature = base64urlEncode(new Uint8Array(sig));
   return `${header}.${payloadStr}.${signature}`;
 }
 
@@ -88,10 +113,11 @@ async function verifyToken(token, secret) {
     const key = await crypto.subtle.importKey(
       'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
     );
-    const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    const sigBytes = base64urlDecode(signature);
+    // crypto.subtle.verify is timing-safe
     const valid = await crypto.subtle.verify('HMAC', key, sigBytes, data);
     if (!valid) return null;
-    const parsed = JSON.parse(atob(payload));
+    const parsed = JSON.parse(base64urlDecodeToString(payload));
     if (parsed.exp < Date.now()) return null;
     return parsed;
   } catch { return null; }
