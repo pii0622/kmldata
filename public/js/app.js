@@ -326,8 +326,8 @@ async function submitPasswordSetup() {
     return;
   }
 
-  if (password.length < 4) {
-    errEl.textContent = 'パスワードは4文字以上にしてください';
+  if (password.length < 12) {
+    errEl.textContent = 'パスワードは12文字以上にしてください';
     errEl.style.display = 'block';
     return;
   }
@@ -1074,8 +1074,8 @@ async function saveAccountSettings() {
       errEl.style.display = 'block';
       return;
     }
-    if (newPassword.length < 4) {
-      errEl.textContent = '新しいパスワードは4文字以上にしてください';
+    if (newPassword.length < 12) {
+      errEl.textContent = '新しいパスワードは12文字以上にしてください';
       errEl.style.display = 'block';
       return;
     }

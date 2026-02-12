@@ -1035,8 +1035,8 @@ async function handleRegister(request, env) {
   if (!fullNamePattern.test(username.trim())) {
     return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
   }
-  if (password.length < 4) {
-    return json({ error: 'パスワードは4文字以上にしてください' }, 400);
+  if (password.length < 12) {
+    return json({ error: 'パスワードは12文字以上にしてください' }, 400);
   }
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
@@ -1259,8 +1259,8 @@ async function handleSetupPassword(request, env) {
       return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
     }
 
-    if (password.length < 4) {
-      return json({ error: 'パスワードは4文字以上にしてください' }, 400);
+    if (password.length < 12) {
+      return json({ error: 'パスワードは12文字以上にしてください' }, 400);
     }
 
     // Find user by email
@@ -1810,8 +1810,8 @@ async function handleChangePassword(request, env, user) {
   if (!current_password) {
     return json({ error: '現在のパスワードを入力してください' }, 400);
   }
-  if (!new_password || new_password.length < 4) {
-    return json({ error: '新しいパスワードは4文字以上にしてください' }, 400);
+  if (!new_password || new_password.length < 12) {
+    return json({ error: '新しいパスワードは12文字以上にしてください' }, 400);
   }
 
   // Verify current password
