@@ -2414,12 +2414,21 @@ async function handleReorderKmlFolder(request, env, user, id) {
   const { target_id } = await request.json();
 
   // Get all folders at the same level owned by the user
-  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
-  const siblings = await env.DB.prepare(`
-    SELECT id, sort_order FROM kml_folders
-    WHERE user_id = ? AND ${parentCondition}
-    ORDER BY sort_order, id
-  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
+  // Use separate queries to avoid dynamic SQL construction
+  let siblings;
+  if (folder.parent_id) {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM kml_folders
+      WHERE user_id = ? AND parent_id = ?
+      ORDER BY sort_order, id
+    `).bind(user.id, folder.parent_id).all();
+  } else {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM kml_folders
+      WHERE user_id = ? AND parent_id IS NULL
+      ORDER BY sort_order, id
+    `).bind(user.id).all();
+  }
 
   const folderIds = siblings.results.map(f => f.id);
   const sourceIdx = folderIds.indexOf(parseInt(id));
@@ -2835,12 +2844,21 @@ async function handleReorderFolder(request, env, user, id) {
   const { target_id } = await request.json();
 
   // Get all folders at the same level owned by the user
-  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
-  const siblings = await env.DB.prepare(`
-    SELECT id, sort_order FROM folders
-    WHERE user_id = ? AND ${parentCondition}
-    ORDER BY sort_order, id
-  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
+  // Use separate queries to avoid dynamic SQL construction
+  let siblings;
+  if (folder.parent_id) {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM folders
+      WHERE user_id = ? AND parent_id = ?
+      ORDER BY sort_order, id
+    `).bind(user.id, folder.parent_id).all();
+  } else {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM folders
+      WHERE user_id = ? AND parent_id IS NULL
+      ORDER BY sort_order, id
+    `).bind(user.id).all();
+  }
 
   const folderIds = siblings.results.map(f => f.id);
   const sourceIdx = folderIds.indexOf(parseInt(id));
@@ -3552,11 +3570,17 @@ async function sendPushNotifications(env, type, data, folderInfo) {
     targetUserIds = users.results.map(u => u.user_id);
   } else if (folderInfo.id) {
     // Shared folder - get users who have been shared this folder
-    const tableName = folderInfo.type === 'kml' ? 'kml_folder_shares' : 'folder_shares';
-    const columnName = folderInfo.type === 'kml' ? 'kml_folder_id' : 'folder_id';
-    const shares = await env.DB.prepare(
-      `SELECT shared_with_user_id FROM ${tableName} WHERE ${columnName} = ?`
-    ).bind(folderInfo.id).all();
+    // Use separate queries to avoid dynamic SQL construction
+    let shares;
+    if (folderInfo.type === 'kml') {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM kml_folder_shares WHERE kml_folder_id = ?'
+      ).bind(folderInfo.id).all();
+    } else {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM folder_shares WHERE folder_id = ?'
+      ).bind(folderInfo.id).all();
+    }
     targetUserIds = shares.results.map(s => s.shared_with_user_id);
   }
 
