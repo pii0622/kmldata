@@ -390,7 +390,9 @@ const securityHeaders = {
 };
 
 // Content Security Policy for HTML responses
-const cspHeader = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' https://cyberjapandata.gsi.go.jp data: blob:; connect-src 'self' https://cyberjapandata.gsi.go.jp; font-src 'self' https://cdnjs.cloudflare.com;";
+// Note: 'unsafe-inline' removed from script-src (inline scripts moved to external files)
+// style-src still allows 'unsafe-inline' for inline style attributes
+const cspHeader = "default-src 'self'; script-src 'self' https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' https://cyberjapandata.gsi.go.jp data: blob:; connect-src 'self' https://cyberjapandata.gsi.go.jp; font-src 'self' https://cdnjs.cloudflare.com;";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
