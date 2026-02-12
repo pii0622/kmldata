@@ -403,9 +403,13 @@ function json(data, status = 200, headers = {}) {
 
 // Rate limiting configuration
 const RATE_LIMITS = {
-  login: { maxRequests: 10, windowSeconds: 300 },     // 10 attempts per 5 minutes
-  register: { maxRequests: 5, windowSeconds: 3600 },  // 5 attempts per hour
-  default: { maxRequests: 100, windowSeconds: 60 }    // 100 requests per minute
+  login: { maxRequests: 10, windowSeconds: 300 },         // 10 attempts per 5 minutes
+  register: { maxRequests: 5, windowSeconds: 3600 },      // 5 attempts per hour
+  passwordChange: { maxRequests: 5, windowSeconds: 300 }, // 5 attempts per 5 minutes
+  passwordSetup: { maxRequests: 3, windowSeconds: 3600 }, // 3 attempts per hour
+  passkey: { maxRequests: 5, windowSeconds: 300 },        // 5 attempts per 5 minutes
+  admin: { maxRequests: 30, windowSeconds: 60 },          // 30 requests per minute
+  default: { maxRequests: 100, windowSeconds: 60 }        // 100 requests per minute
 };
 
 // Free tier limits (premium users have no limits)
@@ -1006,12 +1010,24 @@ export async function onRequest(context) {
     }
     if (path === '/auth/password' && method === 'PUT') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordChange');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'passwordChange' });
+        return json({ error: 'パスワード変更の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleChangePassword(request, env, user);
     }
 
-    // Passkeys (WebAuthn) routes
+    // Passkeys (WebAuthn) routes - with rate limiting
     if (path === '/auth/passkey/register/options' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passkey');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'passkey_register' });
+        return json({ error: 'パスキー登録の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handlePasskeyRegisterOptions(request, env, user);
     }
     if (path === '/auth/passkey/register/verify' && method === 'POST') {
@@ -1019,6 +1035,12 @@ export async function onRequest(context) {
       return await handlePasskeyRegisterVerify(request, env, user);
     }
     if (path === '/auth/passkey/login/options' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passkey');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'passkey_login' });
+        return json({ error: 'パスキーログインの試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handlePasskeyLoginOptions(request, env);
     }
     if (path === '/auth/passkey/login/verify' && method === 'POST') {
@@ -1040,18 +1062,30 @@ export async function onRequest(context) {
       return await handleGetUsers(env, user);
     }
 
-    // Admin routes
+    // Admin routes - with rate limiting for sensitive operations
     if (path === '/admin/pending-users' && method === 'GET') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
       return await handleGetPendingUsers(env);
     }
     if (path.match(/^\/admin\/users\/(\d+)\/approve$/) && method === 'POST') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'admin');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'admin_approve' });
+        return json({ error: '管理者操作が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/admin\/users\/(\d+)\/approve$/)[1];
       return await handleApproveUser(env, id);
     }
     if (path.match(/^\/admin\/users\/(\d+)\/reject$/) && method === 'POST') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'admin');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'admin_reject' });
+        return json({ error: '管理者操作が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/admin\/users\/(\d+)\/reject$/)[1];
       return await handleRejectUser(env, id);
     }
@@ -1266,6 +1300,12 @@ export async function onRequest(context) {
       return await handleExternalMemberSync(request, env);
     }
     if (path === '/auth/setup-password' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordSetup');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'passwordSetup' });
+        return json({ error: 'パスワード設定の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleSetupPassword(request, env);
     }
 
