@@ -1404,7 +1404,7 @@ export async function onRequest(context) {
     return json({ error: 'Not found' }, 404);
   } catch (err) {
     console.error(err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1457,7 +1457,7 @@ async function handleRegister(request, env) {
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) {
-    await logSecurityEvent(env, 'register_duplicate_username', null, request, { username });
+    await logSecurityEvent(env, 'register_duplicate_username', null, request, {});
     return json({ error: 'そのユーザー名は既に使われています' }, 400);
   }
 
@@ -1479,7 +1479,7 @@ async function handleRegister(request, env) {
   // Create admin notification for pending approval
   await env.DB.prepare(
     'INSERT INTO admin_notifications (type, message, data) VALUES (?, ?, ?)'
-  ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, username, display_name: actualDisplayName })).run();
+  ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, display_name: actualDisplayName })).run();
 
   // Don't return token - user must wait for admin approval
   return json({
@@ -1496,7 +1496,7 @@ async function handleLogin(request, env) {
 
   const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
   if (!user || !(await verifyPassword(password, user.password_hash, user.password_salt))) {
-    await logSecurityEvent(env, 'login_failed', null, request, { username, reason: 'invalid_credentials' });
+    await logSecurityEvent(env, 'login_failed', null, request, { reason: 'invalid_credentials' });
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
   }
 
@@ -1512,7 +1512,7 @@ async function handleLogin(request, env) {
   if (user.status === 'needs_password') {
     // External member who needs to set up password - this shouldn't happen as password won't match
     await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'needs_password_setup' });
-    return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true, email: user.email }, 403);
+    return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true }, 403);
   }
 
   await logSecurityEvent(env, 'login_success', user.id, request, {});
@@ -1609,7 +1609,7 @@ async function handleExternalMemberSync(request, env) {
     }
   } catch (err) {
     console.error('External member sync error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1731,7 +1731,7 @@ async function handleSetupPassword(request, env) {
     );
   } catch (err) {
     console.error('Account setup error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1895,7 +1895,7 @@ async function handleCreateCheckoutSession(request, env, user) {
 
   } catch (err) {
     console.error('Create checkout session error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -2023,7 +2023,7 @@ async function handleStripeWebhook(request, env) {
 
   } catch (err) {
     console.error('Stripe webhook error:', err);
-    return json({ error: err.message || 'Webhook error' }, 500);
+    return json({ error: 'Webhook error' }, 500);
   }
 }
 
@@ -2122,7 +2122,7 @@ async function handleCreatePortalSession(request, env, user) {
 
   } catch (err) {
     console.error('Create portal session error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -2185,7 +2185,7 @@ async function handleCancelSubscription(env, user) {
 
   } catch (err) {
     console.error('Cancel subscription error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -2348,7 +2348,7 @@ async function handleGetSecurityLogs(env, url) {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500);
   const eventType = url.searchParams.get('type');
 
-  let query = 'SELECT * FROM security_logs';
+  let query = 'SELECT id, event_type, user_id, created_at FROM security_logs';
   const bindings = [];
 
   if (eventType) {
@@ -3675,9 +3675,8 @@ async function handlePushTest(request, env, user) {
     return json({ ok: true, message: 'Push sent successfully', debug });
 
   } catch (err) {
-    debug.steps.push('ERROR: ' + (err.message || String(err)));
-    debug.error = { message: err.message, name: err.name, stack: err.stack?.substring(0, 500) };
-    return json({ error: 'Push failed', message: err.message, debug }, 500);
+    console.error('Push notification error:', err);
+    return json({ error: 'Push failed' }, 500);
   }
 }
 
@@ -4203,7 +4202,7 @@ async function handlePasskeyLoginVerify(request, env) {
     }
   } catch (err) {
     console.error('Signature verification error:', err);
-    await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: err.message });
+    await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: 'signature_verification_failed' });
     return json({ error: '署名の検証に失敗しました' }, 401);
   }
 
