@@ -639,6 +639,122 @@ async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   }
 }
 
+// ==================== Session Management ====================
+
+// Generate a cryptographically secure session token
+function generateSessionToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return base64urlEncode(bytes);
+}
+
+// Parse user agent to get a friendly device name
+function parseDeviceName(userAgent) {
+  if (!userAgent) return 'Unknown Device';
+
+  // Browser detection
+  let browser = 'Unknown Browser';
+  if (userAgent.includes('Firefox/')) browser = 'Firefox';
+  else if (userAgent.includes('Edg/')) browser = 'Edge';
+  else if (userAgent.includes('Chrome/')) browser = 'Chrome';
+  else if (userAgent.includes('Safari/') && !userAgent.includes('Chrome')) browser = 'Safari';
+  else if (userAgent.includes('Opera') || userAgent.includes('OPR/')) browser = 'Opera';
+
+  // OS detection
+  let os = 'Unknown OS';
+  if (userAgent.includes('Windows')) os = 'Windows';
+  else if (userAgent.includes('Mac OS X') || userAgent.includes('Macintosh')) os = 'Mac';
+  else if (userAgent.includes('Linux') && !userAgent.includes('Android')) os = 'Linux';
+  else if (userAgent.includes('Android')) os = 'Android';
+  else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) os = 'iOS';
+
+  return `${browser} on ${os}`;
+}
+
+// Create a new session for a user
+async function createSession(env, userId, request) {
+  const sessionToken = generateSessionToken();
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const userAgent = request.headers.get('User-Agent') || 'unknown';
+  const deviceName = parseDeviceName(userAgent);
+
+  // Session expires in 7 days (same as JWT)
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO sessions (user_id, session_token, ip_address, user_agent, device_name, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(userId, sessionToken, ip, userAgent, deviceName, expiresAt).run();
+
+  return sessionToken;
+}
+
+// Validate a session token (returns session if valid, null if invalid/revoked/expired)
+async function validateSession(env, sessionToken) {
+  if (!sessionToken) return null;
+
+  const session = await env.DB.prepare(
+    `SELECT * FROM sessions
+     WHERE session_token = ?
+     AND is_revoked = 0
+     AND datetime(expires_at) > datetime('now')`
+  ).bind(sessionToken).first();
+
+  if (session) {
+    // Update last_active_at (fire and forget)
+    env.DB.prepare(
+      `UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?`
+    ).bind(session.id).run().catch(() => {});
+  }
+
+  return session;
+}
+
+// Revoke a specific session
+async function revokeSession(env, sessionToken) {
+  await env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE session_token = ?`
+  ).bind(sessionToken).run();
+}
+
+// Revoke a session by ID (for user self-management)
+async function revokeSessionById(env, sessionId, userId) {
+  const result = await env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE id = ? AND user_id = ?`
+  ).bind(sessionId, userId).run();
+  return result.meta.changes > 0;
+}
+
+// Revoke all sessions for a user (except optionally current one)
+async function revokeAllUserSessions(env, userId, exceptSessionToken = null) {
+  if (exceptSessionToken) {
+    await env.DB.prepare(
+      `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND session_token != ?`
+    ).bind(userId, exceptSessionToken).run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE sessions SET is_revoked = 1 WHERE user_id = ?`
+    ).bind(userId).run();
+  }
+}
+
+// Get all active sessions for a user
+async function getUserSessions(env, userId) {
+  const sessions = await env.DB.prepare(
+    `SELECT id, ip_address, device_name, created_at, last_active_at
+     FROM sessions
+     WHERE user_id = ? AND is_revoked = 0 AND datetime(expires_at) > datetime('now')
+     ORDER BY last_active_at DESC`
+  ).bind(userId).all();
+  return sessions.results;
+}
+
+// Clean up expired sessions (can be called periodically)
+async function cleanupExpiredSessions(env) {
+  await env.DB.prepare(
+    `DELETE FROM sessions WHERE datetime(expires_at) < datetime('now')`
+  ).run();
+}
+
 // Email sending via Resend (https://resend.com)
 // Free tier: 100 emails/day
 // Setup: Add RESEND_API_KEY to Cloudflare Pages environment variables
@@ -1076,11 +1192,24 @@ export async function onRequest(context) {
     }
   }
 
-  // Get current user from cookie
+  // Get current user from cookie and validate session
   let user = null;
   const token = getCookie(request, 'auth');
   if (token) {
-    user = await verifyToken(token, env.JWT_SECRET);
+    const tokenPayload = await verifyToken(token, env.JWT_SECRET);
+    if (tokenPayload) {
+      // Validate session if session token exists in JWT
+      if (tokenPayload.sid) {
+        const session = await validateSession(env, tokenPayload.sid);
+        if (session) {
+          user = tokenPayload;  // Session is valid
+        }
+        // If session is invalid/revoked, user remains null (forces re-login)
+      } else {
+        // Legacy token without session (for backwards compatibility during migration)
+        user = tokenPayload;
+      }
+    }
   }
 
   try {
@@ -1106,10 +1235,10 @@ export async function onRequest(context) {
     }
     if (path === '/auth/refresh' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      return await handleTokenRefresh(env, user);
+      return await handleTokenRefresh(env, user, request);
     }
     if (path === '/auth/logout' && method === 'POST') {
-      return handleLogout();
+      return await handleLogout(env, user, request);
     }
     if (path === '/auth/me' && method === 'GET') {
       return json(user);
@@ -1127,6 +1256,24 @@ export async function onRequest(context) {
         return json({ error: 'パスワード変更の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
       }
       return await handleChangePassword(request, env, user);
+    }
+
+    // Session management routes
+    if (path === '/auth/sessions' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetSessions(env, user);
+    }
+    if (path === '/auth/sessions' && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleRevokeAllSessions(env, user);
+    }
+    if (path.startsWith('/auth/sessions/') && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const sessionId = parseInt(path.split('/')[3]);
+      if (isNaN(sessionId)) {
+        return json({ error: '無効なセッションIDです' }, 400);
+      }
+      return await handleRevokeSession(env, user, sessionId);
     }
 
     // Passkeys (WebAuthn) routes - with rate limiting
@@ -1454,18 +1601,25 @@ export async function onRequest(context) {
 }
 
 // ==================== Auth Handlers ====================
-async function handleTokenRefresh(env, user) {
+async function handleTokenRefresh(env, user, request) {
   // Get fresh user data from DB
   const dbUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
   if (!dbUser || dbUser.status !== 'approved') {
     return json({ error: 'ユーザーが見つかりません' }, 404);
   }
 
+  // Keep the existing session token if present, otherwise create a new session
+  let sessionToken = user.sid;
+  if (!sessionToken) {
+    sessionToken = await createSession(env, user.id, request);
+  }
+
   const token = await createToken({
     id: dbUser.id,
     username: dbUser.username,
     display_name: dbUser.display_name || dbUser.username,
-    is_admin: !!dbUser.is_admin
+    is_admin: !!dbUser.is_admin,
+    sid: sessionToken
   }, env.JWT_SECRET);
 
   return json(
@@ -1559,12 +1713,16 @@ async function handleLogin(request, env) {
     return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true }, 403);
   }
 
+  // Create session for token invalidation support
+  const sessionToken = await createSession(env, user.id, request);
+
   await logSecurityEvent(env, 'login_success', user.id, request, {});
 
   const token = await createToken({
     id: user.id, username: user.username,
     display_name: user.display_name || user.username,
-    is_admin: !!user.is_admin
+    is_admin: !!user.is_admin,
+    sid: sessionToken  // Session token for server-side invalidation
   }, env.JWT_SECRET);
 
   return json(
@@ -1574,7 +1732,12 @@ async function handleLogin(request, env) {
   );
 }
 
-function handleLogout() {
+async function handleLogout(env, user, request) {
+  // Revoke the current session if user is authenticated
+  if (user && user.sid) {
+    await revokeSession(env, user.sid);
+    await logSecurityEvent(env, 'logout', user.id, request, {});
+  }
   return json({ ok: true }, 200, { 'Set-Cookie': setCookieHeader('auth', '', { maxAge: 0 }) });
 }
 
@@ -1753,12 +1916,16 @@ async function handleSetupPassword(request, env) {
     await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, password_salt = ?, status = ? WHERE id = ?')
       .bind(username.trim(), actualDisplayName, hash, salt, 'approved', user.id).run();
 
-    // Create token for auto-login
+    // Create session for token invalidation support
+    const sessionToken = await createSession(env, user.id, request);
+
+    // Create token for auto-login with session
     const token = await createToken({
       id: user.id,
       username: username.trim(),
       display_name: actualDisplayName,
-      is_admin: !!user.is_admin
+      is_admin: !!user.is_admin,
+      sid: sessionToken
     }, env.JWT_SECRET);
 
     await logSecurityEvent(env, 'account_setup_complete', user.id, request, { member_source: user.member_source });
@@ -2248,12 +2415,13 @@ async function handleUpdateProfile(request, env, user) {
   await env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?')
     .bind(display_name.trim(), user.id).run();
 
-  // Create new token with updated display_name
+  // Create new token with updated display_name (preserve session token)
   const token = await createToken({
     id: user.id,
     username: user.username,
     display_name: display_name.trim(),
-    is_admin: user.is_admin
+    is_admin: user.is_admin,
+    sid: user.sid
   }, env.JWT_SECRET);
 
   return json(
@@ -2264,7 +2432,7 @@ async function handleUpdateProfile(request, env, user) {
 }
 
 async function handleChangePassword(request, env, user) {
-  const { current_password, new_password } = await request.json();
+  const { current_password, new_password, revoke_other_sessions } = await request.json();
 
   if (!current_password) {
     return json({ error: '現在のパスワードを入力してください' }, 400);
@@ -2284,6 +2452,51 @@ async function handleChangePassword(request, env, user) {
   const { hash: newHash, salt: newSalt } = await hashPassword(new_password);
   await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
     .bind(newHash, newSalt, user.id).run();
+
+  // Revoke all other sessions if requested (recommended for security)
+  if (revoke_other_sessions !== false && user.sid) {
+    await revokeAllUserSessions(env, user.id, user.sid);
+  }
+
+  await logSecurityEvent(env, 'password_changed', user.id, request, { revoked_sessions: revoke_other_sessions !== false });
+
+  return json({ ok: true });
+}
+
+// ==================== Session Management Handlers ====================
+
+// Get all active sessions for the current user
+async function handleGetSessions(env, user) {
+  const sessions = await getUserSessions(env, user.id);
+
+  // Mark current session
+  const sessionsWithCurrent = sessions.map(session => ({
+    ...session,
+    is_current: false  // Will be set based on session token comparison
+  }));
+
+  return json(sessionsWithCurrent);
+}
+
+// Revoke a specific session
+async function handleRevokeSession(env, user, sessionId) {
+  const success = await revokeSessionById(env, sessionId, user.id);
+  if (!success) {
+    return json({ error: 'セッションが見つかりません' }, 404);
+  }
+
+  await logSecurityEvent(env, 'session_revoked', user.id, null, { session_id: sessionId });
+  return json({ ok: true });
+}
+
+// Revoke all sessions except current
+async function handleRevokeAllSessions(env, user) {
+  if (!user.sid) {
+    return json({ error: '現在のセッションが無効です' }, 400);
+  }
+
+  await revokeAllUserSessions(env, user.id, user.sid);
+  await logSecurityEvent(env, 'all_sessions_revoked', user.id, null, {});
 
   return json({ ok: true });
 }
@@ -4266,12 +4479,16 @@ async function handlePasskeyLoginVerify(request, env) {
     'UPDATE passkeys SET counter = ? WHERE id = ?'
   ).bind(parsedAuthData.signCount, passkey.id).run();
 
-  // Generate JWT token
+  // Create session for token invalidation support
+  const sessionToken = await createSession(env, passkey.uid, request);
+
+  // Generate JWT token with session
   const token = await createToken({
     id: passkey.uid,
     username: passkey.username,
     display_name: passkey.display_name || passkey.username,
-    is_admin: !!passkey.is_admin
+    is_admin: !!passkey.is_admin,
+    sid: sessionToken
   }, env.JWT_SECRET);
 
   await logSecurityEvent(env, 'passkey_login_success', passkey.uid, request, {});
