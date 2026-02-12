@@ -2247,8 +2247,9 @@ async function handleChangePassword(request, env, user) {
 
 // ==================== Users Handlers ====================
 async function handleGetUsers(env, user) {
+  // Only return id, username, display_name - do not expose is_admin to regular users
   const users = await env.DB.prepare(
-    'SELECT id, username, display_name, is_admin FROM users WHERE id != ? AND status = ? ORDER BY display_name'
+    'SELECT id, username, display_name FROM users WHERE id != ? AND status = ? ORDER BY display_name'
   ).bind(user.id, 'approved').all();
   return json(users.results);
 }
