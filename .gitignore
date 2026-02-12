@@ -4,7 +4,11 @@ node_modules/
 
 # Old Express server files (kept for reference)
 uploads/
-mapapp.db
+
+# Database files (prevent accidental commit of sensitive data)
+*.db
+*.sqlite
+*.sqlite3
 *.db-journal
 *.db-wal
 *.db-shm
