@@ -1058,6 +1058,8 @@ function showAccountSettings() {
   updateInstallUI();
   // Load plan information
   loadPlanInfo();
+  // Load passkeys
+  loadPasskeys();
 }
 
 async function saveAccountSettings() {
@@ -2862,10 +2864,242 @@ async function getTileCacheCount() {
   return 0;
 }
 
+// ==================== Passkeys (WebAuthn) ====================
+
+// Check if WebAuthn is supported
+function isPasskeySupported() {
+  return window.PublicKeyCredential !== undefined &&
+    typeof window.PublicKeyCredential === 'function';
+}
+
+// Initialize passkey UI
+function initPasskeyUI() {
+  const loginBtn = document.getElementById('passkey-login-btn');
+  const unsupported = document.getElementById('passkey-unsupported');
+  const content = document.getElementById('passkey-content');
+
+  if (isPasskeySupported()) {
+    if (loginBtn) loginBtn.style.display = 'block';
+    if (unsupported) unsupported.style.display = 'none';
+    if (content) content.style.display = 'block';
+  } else {
+    if (loginBtn) loginBtn.style.display = 'none';
+    if (unsupported) unsupported.style.display = 'block';
+    if (content) content.style.display = 'none';
+  }
+}
+
+// Base64URL encode/decode utilities
+function base64urlEncode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function base64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Register a new passkey
+async function registerPasskey() {
+  if (!isPasskeySupported()) {
+    alert('このブラウザはパスキーに対応していません');
+    return;
+  }
+
+  try {
+    // Get device name
+    const deviceName = prompt('このパスキーの名前を入力してください（例: iPhone, MacBook）', getDeviceName());
+    if (deviceName === null) return;
+
+    // Get registration options from server
+    const options = await api('/api/auth/passkey/register/options', { method: 'POST' });
+
+    // Convert options for WebAuthn API
+    const publicKeyOptions = {
+      challenge: base64urlDecode(options.challenge),
+      rp: options.rp,
+      user: {
+        id: base64urlDecode(options.user.id),
+        name: options.user.name,
+        displayName: options.user.displayName
+      },
+      pubKeyCredParams: options.pubKeyCredParams,
+      timeout: options.timeout,
+      authenticatorSelection: options.authenticatorSelection,
+      attestation: options.attestation,
+      excludeCredentials: options.excludeCredentials.map(c => ({
+        id: base64urlDecode(c.id),
+        type: c.type
+      }))
+    };
+
+    // Create credential
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyOptions
+    });
+
+    // Send credential to server for verification
+    const response = await api('/api/auth/passkey/register/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        credential: {
+          id: credential.id,
+          rawId: base64urlEncode(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: base64urlEncode(credential.response.clientDataJSON),
+            attestationObject: base64urlEncode(credential.response.attestationObject)
+          }
+        },
+        deviceName: deviceName || 'Unknown Device'
+      })
+    });
+
+    alert('パスキーを登録しました');
+    loadPasskeys();
+  } catch (err) {
+    console.error('Passkey registration error:', err);
+    if (err.name === 'NotAllowedError') {
+      alert('パスキーの登録がキャンセルされました');
+    } else {
+      alert('パスキーの登録に失敗しました: ' + (err.message || err));
+    }
+  }
+}
+
+// Get a friendly device name
+function getDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Mac/.test(ua)) return 'Mac';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Unknown Device';
+}
+
+// Login with passkey
+async function loginWithPasskey() {
+  if (!isPasskeySupported()) {
+    alert('このブラウザはパスキーに対応していません');
+    return;
+  }
+
+  try {
+    // Get login options from server
+    const options = await api('/api/auth/passkey/login/options', { method: 'POST' });
+
+    // Convert options for WebAuthn API
+    const publicKeyOptions = {
+      challenge: base64urlDecode(options.challenge),
+      rpId: options.rpId,
+      timeout: options.timeout,
+      userVerification: options.userVerification,
+      allowCredentials: options.allowCredentials.map(c => ({
+        id: base64urlDecode(c.id),
+        type: c.type
+      }))
+    };
+
+    // Get credential
+    const credential = await navigator.credentials.get({
+      publicKey: publicKeyOptions
+    });
+
+    // Send credential to server for verification
+    const result = await api('/api/auth/passkey/login/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        credential: {
+          id: credential.id,
+          rawId: base64urlEncode(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: base64urlEncode(credential.response.clientDataJSON),
+            authenticatorData: base64urlEncode(credential.response.authenticatorData),
+            signature: base64urlEncode(credential.response.signature),
+            userHandle: credential.response.userHandle ? base64urlEncode(credential.response.userHandle) : null
+          }
+        }
+      })
+    });
+
+    currentUser = result;
+    document.getElementById('auth-overlay').style.display = 'none';
+    await loadAll();
+  } catch (err) {
+    console.error('Passkey login error:', err);
+    if (err.name === 'NotAllowedError') {
+      alert('パスキーによるログインがキャンセルされました');
+    } else {
+      alert('パスキーによるログインに失敗しました: ' + (err.message || err));
+    }
+  }
+}
+
+// Load user's passkeys
+async function loadPasskeys() {
+  const container = document.getElementById('passkey-list');
+  if (!container) return;
+
+  if (!currentUser) {
+    container.innerHTML = '';
+    return;
+  }
+
+  try {
+    const passkeys = await api('/api/auth/passkeys');
+
+    if (passkeys.length === 0) {
+      container.innerHTML = '<div style="color:#666;font-size:13px;">パスキーが登録されていません</div>';
+    } else {
+      container.innerHTML = passkeys.map(pk => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;background:#f5f5f5;border-radius:4px;margin-bottom:4px;">
+          <div>
+            <i class="fas fa-key" style="color:#4CAF50;margin-right:8px;"></i>
+            <span style="font-size:13px;">${escHtml(pk.device_name)}</span>
+            <span style="color:#999;font-size:11px;margin-left:8px;">${new Date(pk.created_at).toLocaleDateString('ja-JP')}</span>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deletePasskey(${pk.id})" title="削除">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      `).join('');
+    }
+  } catch (err) {
+    console.error('Load passkeys error:', err);
+    container.innerHTML = '<div style="color:#dc3545;font-size:13px;">読み込みエラー</div>';
+  }
+}
+
+// Delete a passkey
+async function deletePasskey(id) {
+  if (!confirm('このパスキーを削除しますか？')) return;
+
+  try {
+    await api(`/api/auth/passkey/${id}`, { method: 'DELETE' });
+    loadPasskeys();
+  } catch (err) {
+    alert('パスキーの削除に失敗しました: ' + (err.message || err));
+  }
+}
+
 // ==================== Init ====================
 async function init() {
   registerServiceWorker();
   initInstallPrompt();
+  initPasskeyUI();
   checkPasswordSetup();
   await checkAuth();
   await loadAll();

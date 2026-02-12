@@ -139,6 +139,246 @@ function setCookieHeader(name, value, options = {}) {
   return cookie;
 }
 
+// ==================== WebAuthn/Passkeys Utilities ====================
+
+// Base64URL encode/decode (WebAuthn uses Base64URL, not standard Base64)
+function base64urlEncode(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function base64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Generate random challenge for WebAuthn
+function generateWebAuthnChallenge() {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  return base64urlEncode(challenge);
+}
+
+// Simple CBOR decoder for WebAuthn public key parsing
+function decodeCBOR(data) {
+  let offset = 0;
+
+  function readByte() {
+    return data[offset++];
+  }
+
+  function readBytes(n) {
+    const bytes = data.slice(offset, offset + n);
+    offset += n;
+    return bytes;
+  }
+
+  function readUint(n) {
+    let value = 0;
+    for (let i = 0; i < n; i++) {
+      value = (value << 8) | data[offset++];
+    }
+    return value;
+  }
+
+  function decode() {
+    const initial = readByte();
+    const majorType = initial >> 5;
+    const additionalInfo = initial & 0x1f;
+
+    let value;
+    if (additionalInfo < 24) {
+      value = additionalInfo;
+    } else if (additionalInfo === 24) {
+      value = readByte();
+    } else if (additionalInfo === 25) {
+      value = readUint(2);
+    } else if (additionalInfo === 26) {
+      value = readUint(4);
+    } else if (additionalInfo === 27) {
+      value = Number(readUint(8));
+    }
+
+    switch (majorType) {
+      case 0: // unsigned integer
+        return value;
+      case 1: // negative integer
+        return -1 - value;
+      case 2: // byte string
+        return readBytes(value);
+      case 3: // text string
+        return new TextDecoder().decode(readBytes(value));
+      case 4: // array
+        const arr = [];
+        for (let i = 0; i < value; i++) arr.push(decode());
+        return arr;
+      case 5: // map
+        const map = {};
+        for (let i = 0; i < value; i++) {
+          const key = decode();
+          map[key] = decode();
+        }
+        return map;
+      case 6: // tagged value
+        return decode();
+      case 7: // simple/float
+        if (additionalInfo === 20) return false;
+        if (additionalInfo === 21) return true;
+        if (additionalInfo === 22) return null;
+        return undefined;
+      default:
+        throw new Error('Unknown CBOR type');
+    }
+  }
+
+  return decode();
+}
+
+// Parse attestation object from WebAuthn registration
+function parseAttestationObject(attestationObject) {
+  const decoded = decodeCBOR(attestationObject);
+  return {
+    fmt: decoded.fmt,
+    authData: decoded.authData,
+    attStmt: decoded.attStmt
+  };
+}
+
+// Parse authenticator data
+function parseAuthenticatorData(authData) {
+  const rpIdHash = authData.slice(0, 32);
+  const flags = authData[32];
+  const signCount = (authData[33] << 24) | (authData[34] << 16) | (authData[35] << 8) | authData[36];
+
+  const userPresent = !!(flags & 0x01);
+  const userVerified = !!(flags & 0x04);
+  const attestedCredentialData = !!(flags & 0x40);
+
+  let credentialId = null;
+  let publicKey = null;
+
+  if (attestedCredentialData) {
+    const aaguid = authData.slice(37, 53);
+    const credIdLen = (authData[53] << 8) | authData[54];
+    credentialId = authData.slice(55, 55 + credIdLen);
+    const publicKeyData = authData.slice(55 + credIdLen);
+    publicKey = decodeCBOR(publicKeyData);
+  }
+
+  return {
+    rpIdHash,
+    flags,
+    signCount,
+    userPresent,
+    userVerified,
+    credentialId,
+    publicKey
+  };
+}
+
+// Convert COSE key to CryptoKey for verification
+async function coseKeyToCryptoKey(coseKey) {
+  // COSE key type 2 = EC2
+  // COSE algorithm -7 = ES256 (ECDSA with P-256 and SHA-256)
+  const kty = coseKey[1];
+  const alg = coseKey[3];
+
+  if (kty !== 2 || alg !== -7) {
+    throw new Error('Unsupported key type or algorithm');
+  }
+
+  const crv = coseKey[-1]; // 1 = P-256
+  const x = coseKey[-2];
+  const y = coseKey[-3];
+
+  if (crv !== 1) {
+    throw new Error('Unsupported curve');
+  }
+
+  // Create JWK
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    x: base64urlEncode(x),
+    y: base64urlEncode(y)
+  };
+
+  return await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify']
+  );
+}
+
+// Verify WebAuthn assertion signature
+async function verifyWebAuthnSignature(authData, clientDataJSON, signature, publicKeyBase64) {
+  // Decode stored public key
+  const publicKeyData = base64urlDecode(publicKeyBase64);
+  const coseKey = decodeCBOR(publicKeyData);
+  const cryptoKey = await coseKeyToCryptoKey(coseKey);
+
+  // Create signed data: authData + SHA-256(clientDataJSON)
+  const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSON);
+  const signedData = new Uint8Array(authData.length + 32);
+  signedData.set(authData, 0);
+  signedData.set(new Uint8Array(clientDataHash), authData.length);
+
+  // Convert signature from DER to raw format for Web Crypto
+  const rawSignature = derToRaw(signature);
+
+  return await crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    cryptoKey,
+    rawSignature,
+    signedData
+  );
+}
+
+// Convert DER signature to raw format (r || s)
+function derToRaw(der) {
+  // DER format: 0x30 [total-length] 0x02 [r-length] [r] 0x02 [s-length] [s]
+  let offset = 2; // Skip 0x30 and total length
+
+  // Read r
+  if (der[offset++] !== 0x02) throw new Error('Invalid DER signature');
+  let rLen = der[offset++];
+  let r = der.slice(offset, offset + rLen);
+  offset += rLen;
+
+  // Read s
+  if (der[offset++] !== 0x02) throw new Error('Invalid DER signature');
+  let sLen = der[offset++];
+  let s = der.slice(offset, offset + sLen);
+
+  // Remove leading zeros and pad to 32 bytes
+  while (r.length > 32 && r[0] === 0) r = r.slice(1);
+  while (s.length > 32 && s[0] === 0) s = s.slice(1);
+  while (r.length < 32) r = new Uint8Array([0, ...r]);
+  while (s.length < 32) s = new Uint8Array([0, ...s]);
+
+  const raw = new Uint8Array(64);
+  raw.set(r, 0);
+  raw.set(s, 32);
+  return raw;
+}
+
+// Get RP ID from request URL
+function getRelyingPartyId(request) {
+  const url = new URL(request.url);
+  return url.hostname;
+}
+
 // Security headers
 const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
@@ -617,6 +857,26 @@ async function ensureTablesExist(env) {
         FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         UNIQUE(folder_id, user_id)
+      )`),
+      // Passkeys (WebAuthn credentials)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS passkeys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        credential_id TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        counter INTEGER DEFAULT 0,
+        device_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Passkey challenges (temporary storage for WebAuthn ceremonies)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS passkey_challenges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        challenge TEXT NOT NULL,
+        user_id INTEGER,
+        type TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL
       )`)
     ]);
 
@@ -721,6 +981,31 @@ export async function onRequest(context) {
     if (path === '/auth/password' && method === 'PUT') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleChangePassword(request, env, user);
+    }
+
+    // Passkeys (WebAuthn) routes
+    if (path === '/auth/passkey/register/options' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePasskeyRegisterOptions(request, env, user);
+    }
+    if (path === '/auth/passkey/register/verify' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePasskeyRegisterVerify(request, env, user);
+    }
+    if (path === '/auth/passkey/login/options' && method === 'POST') {
+      return await handlePasskeyLoginOptions(request, env);
+    }
+    if (path === '/auth/passkey/login/verify' && method === 'POST') {
+      return await handlePasskeyLoginVerify(request, env);
+    }
+    if (path === '/auth/passkeys' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetPasskeys(env, user);
+    }
+    if (path.startsWith('/auth/passkey/') && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const passkeyId = parseInt(path.split('/')[3]);
+      return await handleDeletePasskey(env, user, passkeyId);
     }
 
     // Users
@@ -3549,4 +3834,287 @@ async function handleGetImage(env, user, key) {
       ...securityHeaders
     }
   });
+}
+
+// ==================== Passkeys (WebAuthn) Handlers ====================
+
+// Generate registration options for passkey
+async function handlePasskeyRegisterOptions(request, env, user) {
+  const rpId = getRelyingPartyId(request);
+  const challenge = generateWebAuthnChallenge();
+
+  // Store challenge in database with 5-minute expiration
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO passkey_challenges (challenge, user_id, type, expires_at) VALUES (?, ?, ?, ?)'
+  ).bind(challenge, user.id, 'register', expiresAt).run();
+
+  // Clean up expired challenges
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE expires_at < datetime("now")').run();
+
+  // Get existing passkeys for excludeCredentials
+  const existingPasskeys = await env.DB.prepare(
+    'SELECT credential_id FROM passkeys WHERE user_id = ?'
+  ).bind(user.id).all();
+
+  const options = {
+    challenge,
+    rp: {
+      name: 'Fieldnota Commons',
+      id: rpId
+    },
+    user: {
+      id: base64urlEncode(new TextEncoder().encode(String(user.id))),
+      name: user.username,
+      displayName: user.display_name || user.username
+    },
+    pubKeyCredParams: [
+      { alg: -7, type: 'public-key' },   // ES256
+      { alg: -257, type: 'public-key' }  // RS256
+    ],
+    timeout: 300000,
+    authenticatorSelection: {
+      authenticatorAttachment: 'platform',
+      residentKey: 'preferred',
+      userVerification: 'preferred'
+    },
+    attestation: 'none',
+    excludeCredentials: existingPasskeys.results.map(pk => ({
+      id: pk.credential_id,
+      type: 'public-key'
+    }))
+  };
+
+  return json(options);
+}
+
+// Verify passkey registration
+async function handlePasskeyRegisterVerify(request, env, user) {
+  const { credential, deviceName } = await request.json();
+
+  if (!credential || !credential.id || !credential.response) {
+    return json({ error: '無効なクレデンシャルです' }, 400);
+  }
+
+  // Verify challenge
+  const storedChallenge = await env.DB.prepare(
+    'SELECT * FROM passkey_challenges WHERE user_id = ? AND type = ? AND expires_at > datetime("now") ORDER BY created_at DESC LIMIT 1'
+  ).bind(user.id, 'register').first();
+
+  if (!storedChallenge) {
+    return json({ error: 'チャレンジが見つからないか期限切れです' }, 400);
+  }
+
+  // Delete used challenge
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(storedChallenge.id).run();
+
+  // Decode client data and verify
+  const clientDataJSON = base64urlDecode(credential.response.clientDataJSON);
+  const clientData = JSON.parse(new TextDecoder().decode(clientDataJSON));
+
+  if (clientData.type !== 'webauthn.create') {
+    return json({ error: '無効なクレデンシャルタイプです' }, 400);
+  }
+
+  if (clientData.challenge !== storedChallenge.challenge) {
+    return json({ error: 'チャレンジが一致しません' }, 400);
+  }
+
+  // Parse attestation object
+  const attestationObject = base64urlDecode(credential.response.attestationObject);
+  const attestation = parseAttestationObject(attestationObject);
+  const authData = parseAuthenticatorData(attestation.authData);
+
+  if (!authData.userPresent) {
+    return json({ error: 'ユーザー確認が必要です' }, 400);
+  }
+
+  if (!authData.credentialId || !authData.publicKey) {
+    return json({ error: '公開鍵の取得に失敗しました' }, 400);
+  }
+
+  // Encode credential ID and public key for storage
+  const credentialId = base64urlEncode(authData.credentialId);
+
+  // Re-encode public key as CBOR for storage
+  const publicKeyBytes = attestation.authData.slice(55 + authData.credentialId.length);
+  const publicKeyBase64 = base64urlEncode(publicKeyBytes);
+
+  // Check if credential already exists
+  const existing = await env.DB.prepare(
+    'SELECT id FROM passkeys WHERE credential_id = ?'
+  ).bind(credentialId).first();
+
+  if (existing) {
+    return json({ error: 'このパスキーは既に登録されています' }, 400);
+  }
+
+  // Store passkey
+  await env.DB.prepare(
+    'INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name) VALUES (?, ?, ?, ?, ?)'
+  ).bind(user.id, credentialId, publicKeyBase64, authData.signCount, deviceName || 'Unknown Device').run();
+
+  await logSecurityEvent(env, 'passkey_registered', user.id, request, { deviceName });
+
+  return json({ ok: true, message: 'パスキーを登録しました' });
+}
+
+// Generate login options for passkey
+async function handlePasskeyLoginOptions(request, env) {
+  const rpId = getRelyingPartyId(request);
+  const challenge = generateWebAuthnChallenge();
+
+  // Store challenge with 5-minute expiration
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO passkey_challenges (challenge, type, expires_at) VALUES (?, ?, ?)'
+  ).bind(challenge, 'login', expiresAt).run();
+
+  // Clean up expired challenges
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE expires_at < datetime("now")').run();
+
+  const options = {
+    challenge,
+    rpId,
+    timeout: 300000,
+    userVerification: 'preferred',
+    allowCredentials: [] // Empty to allow any registered passkey
+  };
+
+  return json(options);
+}
+
+// Verify passkey login
+async function handlePasskeyLoginVerify(request, env) {
+  const { credential } = await request.json();
+
+  if (!credential || !credential.id || !credential.response) {
+    return json({ error: '無効なクレデンシャルです' }, 400);
+  }
+
+  const credentialId = credential.id;
+
+  // Find passkey
+  const passkey = await env.DB.prepare(
+    'SELECT p.*, u.id as uid, u.username, u.display_name, u.is_admin, u.status FROM passkeys p JOIN users u ON p.user_id = u.id WHERE p.credential_id = ?'
+  ).bind(credentialId).first();
+
+  if (!passkey) {
+    return json({ error: 'パスキーが見つかりません' }, 401);
+  }
+
+  // Check user status
+  if (passkey.status !== 'active') {
+    return json({ error: 'アカウントが無効です' }, 403);
+  }
+
+  // Decode client data
+  const clientDataJSON = base64urlDecode(credential.response.clientDataJSON);
+  const clientData = JSON.parse(new TextDecoder().decode(clientDataJSON));
+
+  if (clientData.type !== 'webauthn.get') {
+    return json({ error: '無効なクレデンシャルタイプです' }, 400);
+  }
+
+  // Verify challenge exists
+  const storedChallenge = await env.DB.prepare(
+    'SELECT * FROM passkey_challenges WHERE challenge = ? AND type = ? AND expires_at > datetime("now")'
+  ).bind(clientData.challenge, 'login').first();
+
+  if (!storedChallenge) {
+    return json({ error: 'チャレンジが見つからないか期限切れです' }, 400);
+  }
+
+  // Delete used challenge
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(storedChallenge.id).run();
+
+  // Decode authenticator data and signature
+  const authData = base64urlDecode(credential.response.authenticatorData);
+  const signature = base64urlDecode(credential.response.signature);
+
+  // Verify signature
+  try {
+    const isValid = await verifyWebAuthnSignature(
+      authData,
+      clientDataJSON,
+      signature,
+      passkey.public_key
+    );
+
+    if (!isValid) {
+      await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: 'invalid_signature' });
+      return json({ error: '署名の検証に失敗しました' }, 401);
+    }
+  } catch (err) {
+    console.error('Signature verification error:', err);
+    await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: err.message });
+    return json({ error: '署名の検証に失敗しました' }, 401);
+  }
+
+  // Parse authenticator data to get sign count
+  const parsedAuthData = parseAuthenticatorData(authData);
+
+  // Verify counter to prevent replay attacks
+  if (parsedAuthData.signCount > 0 && parsedAuthData.signCount <= passkey.counter) {
+    await logSecurityEvent(env, 'passkey_replay_attack', passkey.uid, request, {
+      expected: passkey.counter + 1,
+      received: parsedAuthData.signCount
+    });
+    return json({ error: 'リプレイ攻撃の可能性が検出されました' }, 401);
+  }
+
+  // Update counter
+  await env.DB.prepare(
+    'UPDATE passkeys SET counter = ? WHERE id = ?'
+  ).bind(parsedAuthData.signCount, passkey.id).run();
+
+  // Generate JWT token
+  const token = await createToken({
+    id: passkey.uid,
+    username: passkey.username,
+    display_name: passkey.display_name || passkey.username,
+    is_admin: !!passkey.is_admin
+  }, env.JWT_SECRET);
+
+  await logSecurityEvent(env, 'passkey_login_success', passkey.uid, request, {});
+
+  return json(
+    {
+      id: passkey.uid,
+      username: passkey.username,
+      display_name: passkey.display_name,
+      is_admin: !!passkey.is_admin
+    },
+    200,
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+  );
+}
+
+// Get user's passkeys
+async function handleGetPasskeys(env, user) {
+  const passkeys = await env.DB.prepare(
+    'SELECT id, device_name, created_at FROM passkeys WHERE user_id = ? ORDER BY created_at DESC'
+  ).bind(user.id).all();
+
+  return json(passkeys.results);
+}
+
+// Delete a passkey
+async function handleDeletePasskey(env, user, passkeyId) {
+  if (!passkeyId || isNaN(passkeyId)) {
+    return json({ error: '無効なパスキーIDです' }, 400);
+  }
+
+  // Verify ownership
+  const passkey = await env.DB.prepare(
+    'SELECT id FROM passkeys WHERE id = ? AND user_id = ?'
+  ).bind(passkeyId, user.id).first();
+
+  if (!passkey) {
+    return json({ error: 'パスキーが見つかりません' }, 404);
+  }
+
+  await env.DB.prepare('DELETE FROM passkeys WHERE id = ?').bind(passkeyId).run();
+
+  return json({ ok: true, message: 'パスキーを削除しました' });
 }
