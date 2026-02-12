@@ -919,17 +919,40 @@ export async function onRequest(context) {
   // CORS headers - strict origin allowlist
   const origin = request.headers.get('Origin');
   const PRODUCTION_ORIGIN = 'https://fieldnota-commons.com';
-  const allowedOrigin = origin && (
-    origin === url.origin ||
-    origin === PRODUCTION_ORIGIN ||
-    env.ALLOWED_ORIGIN === origin
-  ) ? origin : url.origin;
+
+  // Build allowed origins list (no wildcards, explicit list only)
+  const allowedOrigins = new Set([
+    url.origin,
+    PRODUCTION_ORIGIN
+  ]);
+  // Add custom allowed origin from environment if configured
+  if (env.ALLOWED_ORIGIN) {
+    allowedOrigins.add(env.ALLOWED_ORIGIN);
+  }
+
+  // Strict origin validation - only allow explicitly listed origins
+  const isAllowedOrigin = origin && allowedOrigins.has(origin);
+
+  // For cross-origin requests with credentials, reject unknown origins
+  if (origin && !isAllowedOrigin) {
+    // Return response without CORS headers - browser will block the request
+    // For preflight, return 403 to explicitly deny
+    if (method === 'OPTIONS') {
+      return new Response('CORS origin not allowed', {
+        status: 403,
+        headers: securityHeaders
+      });
+    }
+  }
 
   const corsHeaders = {
-    'Access-Control-Allow-Origin': allowedOrigin,
+    // Only set Allow-Origin for validated origins (never use wildcard with credentials)
+    'Access-Control-Allow-Origin': isAllowedOrigin ? origin : url.origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Credentials': 'true',
+    // Cache preflight requests for 1 hour to reduce OPTIONS requests
+    'Access-Control-Max-Age': '3600',
     ...securityHeaders
   };
 
