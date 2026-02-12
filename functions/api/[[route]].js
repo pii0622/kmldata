@@ -6,6 +6,51 @@
 const PBKDF2_ITERATIONS = 100000;
 const PBKDF2_KEY_LENGTH = 32; // 256 bits
 
+// Validate email format with stricter rules
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+
+  // Basic length check (RFC 5321: max 254 characters total)
+  if (email.length > 254) return false;
+
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+
+  const [localPart, domain] = parts;
+
+  // Local part validation (RFC 5321: max 64 characters)
+  if (!localPart || localPart.length > 64) return false;
+  // No leading/trailing dots, no consecutive dots
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) return false;
+  // Only allow safe characters in local part
+  if (!/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(localPart)) return false;
+
+  // Domain validation
+  if (!domain || domain.length > 253) return false;
+  // No leading/trailing dots or hyphens, no consecutive dots
+  if (domain.startsWith('.') || domain.startsWith('-') || domain.endsWith('.') || domain.endsWith('-')) return false;
+  if (domain.includes('..')) return false;
+
+  // Split domain into labels
+  const domainLabels = domain.split('.');
+  // Must have at least 2 labels (e.g., domain.tld)
+  if (domainLabels.length < 2) return false;
+
+  // Validate each domain label
+  for (const label of domainLabels) {
+    // Each label: 1-63 characters, alphanumeric and hyphens only, no leading/trailing hyphens
+    if (!label || label.length > 63) return false;
+    if (label.startsWith('-') || label.endsWith('-')) return false;
+    if (!/^[a-zA-Z0-9-]+$/.test(label)) return false;
+  }
+
+  // TLD must be at least 2 characters and letters only
+  const tld = domainLabels[domainLabels.length - 1];
+  if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
+  return true;
+}
+
 // Hash password with PBKDF2 and random salt
 async function hashPassword(password) {
   const encoder = new TextEncoder();
@@ -1439,8 +1484,7 @@ async function handleRegister(request, env) {
     return json({ error: 'メールアドレスを入力してください' }, 400);
   }
   // Validate email format
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailPattern.test(email)) {
+  if (!isValidEmail(email)) {
     return json({ error: '有効なメールアドレスを入力してください' }, 400);
   }
   if (username.length < 3) {
@@ -1548,8 +1592,7 @@ async function handleExternalMemberSync(request, env) {
       return json({ error: 'Email is required' }, 400);
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(email)) {
+    if (!isValidEmail(email)) {
       return json({ error: 'Invalid email format' }, 400);
     }
 
