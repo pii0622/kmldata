@@ -644,6 +644,55 @@ function getClientIP(request) {
          'unknown';
 }
 
+// CSRF protection: validate Origin/Referer for state-changing requests
+function validateCSRF(request, url) {
+  const method = request.method;
+
+  // Only validate state-changing methods
+  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    return { valid: true };
+  }
+
+  // Get Origin or Referer header
+  const origin = request.headers.get('Origin');
+  const referer = request.headers.get('Referer');
+
+  // At least one must be present for state-changing requests
+  if (!origin && !referer) {
+    return { valid: false, error: 'Missing Origin/Referer header' };
+  }
+
+  // Build list of allowed origins
+  const allowedOrigins = [
+    url.origin,
+    'https://fieldnota-commons.com'
+  ];
+
+  // Validate Origin header if present
+  if (origin) {
+    if (!allowedOrigins.includes(origin)) {
+      return { valid: false, error: 'Invalid Origin header' };
+    }
+    return { valid: true };
+  }
+
+  // Validate Referer header as fallback
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer);
+      const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
+      if (!allowedOrigins.includes(refererOrigin)) {
+        return { valid: false, error: 'Invalid Referer header' };
+      }
+      return { valid: true };
+    } catch {
+      return { valid: false, error: 'Malformed Referer header' };
+    }
+  }
+
+  return { valid: false, error: 'CSRF validation failed' };
+}
+
 // Allowed image types and max size
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB (client compresses to 1MB, allow margin)
@@ -964,6 +1013,22 @@ export async function onRequest(context) {
 
   if (method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // CSRF protection for state-changing requests
+  // Exclude webhook endpoints that receive external requests
+  const csrfExemptPaths = [
+    '/stripe/webhook',           // Stripe webhook (external)
+    '/external/member-sync'      // Server-to-server sync
+  ];
+  const isCSRFExempt = csrfExemptPaths.some(p => path.startsWith(p));
+
+  if (!isCSRFExempt) {
+    const csrfCheck = validateCSRF(request, url);
+    if (!csrfCheck.valid) {
+      await logSecurityEvent(env, 'csrf_validation_failed', null, request, { error: csrfCheck.error, path });
+      return json({ error: 'CSRF検証に失敗しました' }, 403);
+    }
   }
 
   // Get current user from cookie
