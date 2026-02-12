@@ -645,9 +645,14 @@ export async function onRequest(context) {
   // Auto-create tables on first request
   await ensureTablesExist(env);
 
-  // Warn if JWT_SECRET is not set (check once per request for logging)
+  // Validate JWT_SECRET is properly configured
   if (!env.JWT_SECRET) {
-    console.warn('WARNING: JWT_SECRET environment variable is not set. Using insecure default.');
+    console.error('FATAL: JWT_SECRET environment variable is not set');
+    return json({ error: 'Server configuration error' }, 500);
+  }
+  if (env.JWT_SECRET.length < 32) {
+    console.error('FATAL: JWT_SECRET must be at least 32 characters long');
+    return json({ error: 'Server configuration error' }, 500);
   }
 
   // CORS headers - strict origin allowlist
@@ -675,7 +680,7 @@ export async function onRequest(context) {
   let user = null;
   const token = getCookie(request, 'auth');
   if (token) {
-    user = await verifyToken(token, env.JWT_SECRET || 'default-secret');
+    user = await verifyToken(token, env.JWT_SECRET);
   }
 
   try {
@@ -1000,7 +1005,7 @@ async function handleTokenRefresh(env, user) {
     username: dbUser.username,
     display_name: dbUser.display_name || dbUser.username,
     is_admin: !!dbUser.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+  }, env.JWT_SECRET);
 
   return json(
     { ok: true },
@@ -1100,7 +1105,7 @@ async function handleLogin(request, env) {
     id: user.id, username: user.username,
     display_name: user.display_name || user.username,
     is_admin: !!user.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+  }, env.JWT_SECRET);
 
   return json(
     { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin },
@@ -1295,7 +1300,7 @@ async function handleSetupPassword(request, env) {
       username: username.trim(),
       display_name: actualDisplayName,
       is_admin: !!user.is_admin
-    }, env.JWT_SECRET || 'default-secret');
+    }, env.JWT_SECRET);
 
     await logSecurityEvent(env, 'account_setup_complete', user.id, request, { member_source: user.member_source });
 
@@ -1790,7 +1795,7 @@ async function handleUpdateProfile(request, env, user) {
     username: user.username,
     display_name: display_name.trim(),
     is_admin: user.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+  }, env.JWT_SECRET);
 
   return json(
     { ok: true, display_name: display_name.trim() },
