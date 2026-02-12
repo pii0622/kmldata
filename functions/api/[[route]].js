@@ -1,8 +1,45 @@
-// Cloudflare Pages Functions - No external dependencies
+// Cloudflare Pages Functions - Modular architecture
+// See lib/ and handlers/ directories for extracted modules
 
-// ==================== Utility Functions ====================
+// Import core utilities
+import {
+  base64urlEncode, base64urlDecode, base64urlDecodeToString,
+  getCookie, setCookieHeader, json, getClientIP, isValidEmail, securityHeaders
+} from './lib/utils.js';
 
-// PBKDF2 configuration
+import {
+  hashPassword, verifyPassword, createToken, verifyToken
+} from './lib/crypto.js';
+
+import {
+  createSession, validateSession, revokeSession, revokeSessionById,
+  revokeAllUserSessions, getUserSessions
+} from './lib/sessions.js';
+
+import {
+  RATE_LIMITS, FREE_TIER_LIMITS, checkRateLimit, logSecurityEvent, validateCSRF,
+  isUserFreeTier, getUserKmlFolderCount, getUserPinFolderCount, getUserKmlFileCount,
+  getUserPinCount, getUserShareCount, checkFreeTierLimit,
+  validateImageFile, convertKmlPolygonToLine, MAX_KML_SIZE
+} from './lib/security.js';
+
+import {
+  generateWebAuthnChallenge, decodeCBOR, parseAttestationObject, parseAuthenticatorData,
+  coseKeyToCryptoKey, verifyWebAuthnSignature, derToRaw, getRelyingPartyId
+} from './lib/webauthn.js';
+
+import { sendEmail, sendExternalWelcomeEmail, sendApprovalEmail, sendRejectionEmail } from './lib/email.js';
+
+import {
+  handleTokenRefresh, handleRegister, handleLogin, handleLogout,
+  handleUpdateProfile, handleChangePassword,
+  handleGetSessions, handleRevokeSession, handleRevokeAllSessions,
+  handleExternalMemberSync, handleSetupPassword
+} from './handlers/auth.js';
+
+// ==================== Legacy Definitions (to be removed in future refactoring) ====================
+
+// PBKDF2 configuration (kept for backwards compatibility during migration)
 const PBKDF2_ITERATIONS = 100000;
 const PBKDF2_KEY_LENGTH = 32; // 256 bits
 
