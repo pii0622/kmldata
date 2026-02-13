@@ -479,6 +479,10 @@ const RATE_LIMITS = {
   passwordSetup: { maxRequests: 3, windowSeconds: 3600 }, // 3 attempts per hour
   passkey: { maxRequests: 5, windowSeconds: 300 },        // 5 attempts per 5 minutes
   admin: { maxRequests: 30, windowSeconds: 60 },          // 30 requests per minute
+  pinCreate: { maxRequests: 20, windowSeconds: 60 },      // 20 pins per minute
+  kmlUpload: { maxRequests: 10, windowSeconds: 60 },      // 10 uploads per minute
+  folderCreate: { maxRequests: 10, windowSeconds: 60 },   // 10 folders per minute
+  commentCreate: { maxRequests: 30, windowSeconds: 60 },  // 30 comments per minute
   default: { maxRequests: 100, windowSeconds: 60 }        // 100 requests per minute
 };
 
@@ -672,6 +676,14 @@ function generateSessionToken() {
   return base64urlEncode(bytes);
 }
 
+// Hash session token for secure storage (prevents session hijack if DB is leaked)
+async function hashSessionToken(token) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64urlEncode(new Uint8Array(hash));
+}
+
 // Parse user agent to get a friendly device name
 function parseDeviceName(userAgent) {
   if (!userAgent) return 'Unknown Device';
@@ -698,18 +710,21 @@ function parseDeviceName(userAgent) {
 // Create a new session for a user
 async function createSession(env, userId, request) {
   const sessionToken = generateSessionToken();
+  const tokenHash = await hashSessionToken(sessionToken);
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
   const userAgent = request.headers.get('User-Agent') || 'unknown';
   const deviceName = parseDeviceName(userAgent);
 
-  // Session expires in 7 days (same as JWT)
+  // Session expires in 7 days
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
+  // Store hashed token to prevent session hijack if DB is leaked
   await env.DB.prepare(
     `INSERT INTO sessions (user_id, session_token, ip_address, user_agent, device_name, expires_at)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(userId, sessionToken, ip, userAgent, deviceName, expiresAt).run();
+  ).bind(userId, tokenHash, ip, userAgent, deviceName, expiresAt).run();
 
+  // Return plain token (stored in JWT, hashed version in DB)
   return sessionToken;
 }
 
@@ -717,12 +732,15 @@ async function createSession(env, userId, request) {
 async function validateSession(env, sessionToken) {
   if (!sessionToken) return null;
 
+  // Hash the token to compare with stored hash
+  const tokenHash = await hashSessionToken(sessionToken);
+
   const session = await env.DB.prepare(
     `SELECT * FROM sessions
      WHERE session_token = ?
      AND is_revoked = 0
      AND datetime(expires_at) > datetime('now')`
-  ).bind(sessionToken).first();
+  ).bind(tokenHash).first();
 
   if (session) {
     // Update last_active_at (fire and forget)
@@ -736,9 +754,10 @@ async function validateSession(env, sessionToken) {
 
 // Revoke a specific session
 async function revokeSession(env, sessionToken) {
+  const tokenHash = await hashSessionToken(sessionToken);
   await env.DB.prepare(
     `UPDATE sessions SET is_revoked = 1 WHERE session_token = ?`
-  ).bind(sessionToken).run();
+  ).bind(tokenHash).run();
 }
 
 // Revoke a session by ID (for user self-management)
@@ -752,9 +771,10 @@ async function revokeSessionById(env, sessionId, userId) {
 // Revoke all sessions for a user (except optionally current one)
 async function revokeAllUserSessions(env, userId, exceptSessionToken = null) {
   if (exceptSessionToken) {
+    const tokenHash = await hashSessionToken(exceptSessionToken);
     await env.DB.prepare(
       `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND session_token != ?`
-    ).bind(userId, exceptSessionToken).run();
+    ).bind(userId, tokenHash).run();
   } else {
     await env.DB.prepare(
       `UPDATE sessions SET is_revoked = 1 WHERE user_id = ?`
@@ -1410,6 +1430,11 @@ export async function onRequest(context) {
     }
     if (path === '/kml-folders' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'folderCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'フォルダ作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreateKmlFolder(request, env, user);
     }
     if (path.match(/^\/kml-folders\/(\d+)$/) && method === 'PUT') {
@@ -1454,6 +1479,11 @@ export async function onRequest(context) {
     }
     if (path === '/kml-files/upload' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'kmlUpload');
+      if (!rateCheck.allowed) {
+        return json({ error: 'ファイルアップロードの試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleUploadKmlFile(request, env, user);
     }
     if (path.match(/^\/kml-files\/(.+)$/) && method === 'GET') {
@@ -1477,6 +1507,11 @@ export async function onRequest(context) {
     }
     if (path === '/folders' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'folderCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'フォルダ作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreateFolder(request, env, user);
     }
     if (path.match(/^\/folders\/(\d+)$/) && method === 'PUT') {
@@ -1521,6 +1556,11 @@ export async function onRequest(context) {
     }
     if (path === '/pins' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'pinCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'ピン作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreatePin(request, env, user);
     }
     if (path.match(/^\/pins\/(\d+)$/) && method === 'PUT') {
@@ -1555,6 +1595,11 @@ export async function onRequest(context) {
     }
     if (path.match(/^\/pins\/(\d+)\/comments$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'commentCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'コメント投稿の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/pins\/(\d+)\/comments$/)[1];
       return await handleCreatePinComment(request, env, user, id);
     }
@@ -1796,6 +1841,16 @@ async function handleLogout(env, user, request) {
 // External Member Sync API Handler (for WordPress/Stripe integration)
 async function handleExternalMemberSync(request, env) {
   try {
+    // Verify IP whitelist if configured (EXTERNAL_SYNC_ALLOWED_IPS: comma-separated IPs)
+    if (env.EXTERNAL_SYNC_ALLOWED_IPS) {
+      const clientIP = getClientIP(request);
+      const allowedIPs = env.EXTERNAL_SYNC_ALLOWED_IPS.split(',').map(ip => ip.trim());
+      if (!allowedIPs.includes(clientIP)) {
+        console.log(`External sync rejected: IP ${clientIP} not in whitelist`);
+        return json({ error: 'Forbidden' }, 403);
+      }
+    }
+
     const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
 
     // Verify shared secret
