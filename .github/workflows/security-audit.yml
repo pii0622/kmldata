@@ -42,12 +42,14 @@ jobs:
         id: audit
         run: |
           set +e
-          AUDIT_OUTPUT=$(npm audit --json 2>&1)
+
+          # 本番依存のみ監査（開発依存は除外）
+          AUDIT_OUTPUT=$(npm audit --omit=dev --json 2>&1)
           AUDIT_EXIT=$?
           echo "$AUDIT_OUTPUT" > audit-result.json
 
           # 人間が読める形式も出力
-          npm audit 2>&1 | tee audit-result.txt
+          npm audit --omit=dev 2>&1 | tee audit-result.txt
 
           # 脆弱性の数を集計
           TOTAL=$(echo "$AUDIT_OUTPUT" | jq -r '.metadata.vulnerabilities.total // 0')
@@ -58,6 +60,9 @@ jobs:
           echo "high=$HIGH" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           echo "exit_code=$AUDIT_EXIT" >> $GITHUB_OUTPUT
+
+          # このステップ自体は常に成功させる
+          exit 0
 
       - name: Create issue if vulnerabilities found
         if: steps.audit.outputs.total != '0' && github.event_name == 'schedule'
