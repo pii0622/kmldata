@@ -3188,13 +3188,37 @@ const heroImages = [
   '/images/hero/_SDI8166.jpg',
   '/images/hero/_SDI8169.jpg'
 ];
+let sidebarImagePreloaded = false;
+let selectedHeroImage = null;
 
 function initSidebarHeaderImage() {
-  const bgElement = document.getElementById('sidebar-header-bg');
-  if (bgElement && heroImages.length > 0) {
-    const randomIndex = Math.floor(Math.random() * heroImages.length);
-    bgElement.style.backgroundImage = `url('${heroImages[randomIndex]}')`;
+  // Select random image at init
+  const randomIndex = Math.floor(Math.random() * heroImages.length);
+  selectedHeroImage = heroImages[randomIndex];
+
+  // Add preload trigger to sidebar toggle button
+  const toggleBtn = document.querySelector('.sidebar-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('mouseenter', preloadSidebarImage);
+    toggleBtn.addEventListener('touchstart', preloadSidebarImage, { passive: true });
   }
+
+  // Also start preloading after a short delay (for mobile users who tap directly)
+  setTimeout(preloadSidebarImage, 2000);
+}
+
+function preloadSidebarImage() {
+  if (sidebarImagePreloaded || !selectedHeroImage) return;
+  sidebarImagePreloaded = true;
+
+  const bgElement = document.getElementById('sidebar-header-bg');
+  if (!bgElement) return;
+
+  const img = new Image();
+  img.onload = function() {
+    bgElement.style.backgroundImage = `url('${selectedHeroImage}')`;
+  };
+  img.src = selectedHeroImage;
 }
 
 // ==================== Init ====================
