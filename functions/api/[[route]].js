@@ -1,28 +1,157 @@
-// Cloudflare Pages Functions - No external dependencies
+// Cloudflare Pages Functions
+// Note: Modular architecture in lib/ and handlers/ directories is prepared
+// but imports are disabled until legacy definitions are fully removed to avoid ESM conflicts.
 
-// ==================== Utility Functions ====================
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+// ==================== Core Definitions ====================
+
+// PBKDF2 configuration (kept for backwards compatibility during migration)
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_KEY_LENGTH = 32; // 256 bits
+
+// Validate email format with stricter rules
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+
+  // Basic length check (RFC 5321: max 254 characters total)
+  if (email.length > 254) return false;
+
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+
+  const [localPart, domain] = parts;
+
+  // Local part validation (RFC 5321: max 64 characters)
+  if (!localPart || localPart.length > 64) return false;
+  // No leading/trailing dots, no consecutive dots
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) return false;
+  // Only allow safe characters in local part
+  if (!/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(localPart)) return false;
+
+  // Domain validation
+  if (!domain || domain.length > 253) return false;
+  // No leading/trailing dots or hyphens, no consecutive dots
+  if (domain.startsWith('.') || domain.startsWith('-') || domain.endsWith('.') || domain.endsWith('-')) return false;
+  if (domain.includes('..')) return false;
+
+  // Split domain into labels
+  const domainLabels = domain.split('.');
+  // Must have at least 2 labels (e.g., domain.tld)
+  if (domainLabels.length < 2) return false;
+
+  // Validate each domain label
+  for (const label of domainLabels) {
+    // Each label: 1-63 characters, alphanumeric and hyphens only, no leading/trailing hyphens
+    if (!label || label.length > 63) return false;
+    if (label.startsWith('-') || label.endsWith('-')) return false;
+    if (!/^[a-zA-Z0-9-]+$/.test(label)) return false;
+  }
+
+  // TLD must be at least 2 characters and letters only
+  const tld = domainLabels[domainLabels.length - 1];
+  if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
+  return true;
 }
 
-async function verifyPassword(password, hash) {
-  const computed = await hashPassword(password);
-  return computed === hash;
+// Hash password with PBKDF2 and random salt
+async function hashPassword(password) {
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const hashBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8
+  );
+  const hashBase64 = btoa(String.fromCharCode(...new Uint8Array(hashBits)));
+  const saltBase64 = btoa(String.fromCharCode(...salt));
+  return { hash: hashBase64, salt: saltBase64 };
+}
+
+// Verify password - supports both PBKDF2 (with salt) and legacy SHA-256 (without salt)
+// DEPRECATED: Legacy SHA-256 support will be removed after all users have been migrated.
+// Users are auto-migrated to PBKDF2 on successful login (see handleLogin).
+async function verifyPassword(password, storedHash, salt) {
+  const encoder = new TextEncoder();
+
+  if (!salt) {
+    // Legacy: SHA-256 without salt - DEPRECATED, auto-migrated on login
+    const data = encoder.encode(password);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    const computed = btoa(String.fromCharCode(...new Uint8Array(hash)));
+    return computed === storedHash;
+  }
+
+  // PBKDF2 with salt
+  const saltBytes = Uint8Array.from(atob(salt), c => c.charCodeAt(0));
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const hashBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8
+  );
+  const computed = btoa(String.fromCharCode(...new Uint8Array(hashBits)));
+  return computed === storedHash;
+}
+
+// Base64URL encoding (RFC 4648) - URL-safe, no padding
+function base64urlEncode(data) {
+  // data can be Uint8Array or string (UTF-8)
+  const bytes = typeof data === 'string'
+    ? new TextEncoder().encode(data)
+    : data;
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64urlDecode(str) {
+  // Restore standard Base64
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  // Add padding if needed
+  const pad = base64.length % 4;
+  if (pad) base64 += '='.repeat(4 - pad);
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
+function base64urlDecodeToString(str) {
+  const bytes = base64urlDecode(str);
+  return new TextDecoder().decode(bytes);
 }
 
 async function createToken(payload, secret) {
   const encoder = new TextEncoder();
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payloadStr = btoa(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+  // Encode header and payload as Base64URL (UTF-8 safe)
+  // JWT expires in 1 hour - use /auth/refresh to get a new token while session is valid
+  const header = base64urlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payloadStr = base64urlEncode(JSON.stringify({ ...payload, exp: Date.now() + 60 * 60 * 1000 }));
   const data = encoder.encode(`${header}.${payloadStr}`);
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
   );
   const sig = await crypto.subtle.sign('HMAC', key, data);
-  const signature = btoa(String.fromCharCode(...new Uint8Array(sig)));
+  const signature = base64urlEncode(new Uint8Array(sig));
   return `${header}.${payloadStr}.${signature}`;
 }
 
@@ -34,10 +163,11 @@ async function verifyToken(token, secret) {
     const key = await crypto.subtle.importKey(
       'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
     );
-    const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    const sigBytes = base64urlDecode(signature);
+    // crypto.subtle.verify is timing-safe
     const valid = await crypto.subtle.verify('HMAC', key, sigBytes, data);
     if (!valid) return null;
-    const parsed = JSON.parse(atob(payload));
+    const parsed = JSON.parse(base64urlDecodeToString(payload));
     if (parsed.exp < Date.now()) return null;
     return parsed;
   } catch { return null; }
@@ -59,8 +189,269 @@ function setCookieHeader(name, value, options = {}) {
   return cookie;
 }
 
+// ==================== Input Sanitization ====================
+
+// Sanitize a single value (trim strings, preserve other types)
+function sanitizeValue(value) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  return value;
+}
+
+// Recursively sanitize all string fields in an object
+function sanitizeObject(obj) {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === 'string') {
+    return obj.trim();
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeObject(item));
+  }
+
+  if (typeof obj === 'object') {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(obj)) {
+      sanitized[key] = sanitizeObject(value);
+    }
+    return sanitized;
+  }
+
+  return obj;
+}
+
+// Get sanitized request body - replaces direct request.json() calls
+async function getRequestBody(request) {
+  const body = await request.json();
+  return sanitizeObject(body);
+}
+
+// ==================== WebAuthn/Passkeys Utilities ====================
+
+// Generate random challenge for WebAuthn
+function generateWebAuthnChallenge() {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  return base64urlEncode(challenge);
+}
+
+// Simple CBOR decoder for WebAuthn public key parsing
+function decodeCBOR(data) {
+  let offset = 0;
+
+  function readByte() {
+    return data[offset++];
+  }
+
+  function readBytes(n) {
+    const bytes = data.slice(offset, offset + n);
+    offset += n;
+    return bytes;
+  }
+
+  function readUint(n) {
+    let value = 0;
+    for (let i = 0; i < n; i++) {
+      value = (value << 8) | data[offset++];
+    }
+    return value;
+  }
+
+  function decode() {
+    const initial = readByte();
+    const majorType = initial >> 5;
+    const additionalInfo = initial & 0x1f;
+
+    let value;
+    if (additionalInfo < 24) {
+      value = additionalInfo;
+    } else if (additionalInfo === 24) {
+      value = readByte();
+    } else if (additionalInfo === 25) {
+      value = readUint(2);
+    } else if (additionalInfo === 26) {
+      value = readUint(4);
+    } else if (additionalInfo === 27) {
+      value = Number(readUint(8));
+    }
+
+    switch (majorType) {
+      case 0: // unsigned integer
+        return value;
+      case 1: // negative integer
+        return -1 - value;
+      case 2: // byte string
+        return readBytes(value);
+      case 3: // text string
+        return new TextDecoder().decode(readBytes(value));
+      case 4: // array
+        const arr = [];
+        for (let i = 0; i < value; i++) arr.push(decode());
+        return arr;
+      case 5: // map
+        const map = {};
+        for (let i = 0; i < value; i++) {
+          const key = decode();
+          map[key] = decode();
+        }
+        return map;
+      case 6: // tagged value
+        return decode();
+      case 7: // simple/float
+        if (additionalInfo === 20) return false;
+        if (additionalInfo === 21) return true;
+        if (additionalInfo === 22) return null;
+        return undefined;
+      default:
+        throw new Error('Unknown CBOR type');
+    }
+  }
+
+  return decode();
+}
+
+// Parse attestation object from WebAuthn registration
+function parseAttestationObject(attestationObject) {
+  const decoded = decodeCBOR(attestationObject);
+  return {
+    fmt: decoded.fmt,
+    authData: decoded.authData,
+    attStmt: decoded.attStmt
+  };
+}
+
+// Parse authenticator data
+function parseAuthenticatorData(authData) {
+  const rpIdHash = authData.slice(0, 32);
+  const flags = authData[32];
+  const signCount = (authData[33] << 24) | (authData[34] << 16) | (authData[35] << 8) | authData[36];
+
+  const userPresent = !!(flags & 0x01);
+  const userVerified = !!(flags & 0x04);
+  const attestedCredentialData = !!(flags & 0x40);
+
+  let credentialId = null;
+  let publicKey = null;
+
+  if (attestedCredentialData) {
+    const aaguid = authData.slice(37, 53);
+    const credIdLen = (authData[53] << 8) | authData[54];
+    credentialId = authData.slice(55, 55 + credIdLen);
+    const publicKeyData = authData.slice(55 + credIdLen);
+    publicKey = decodeCBOR(publicKeyData);
+  }
+
+  return {
+    rpIdHash,
+    flags,
+    signCount,
+    userPresent,
+    userVerified,
+    credentialId,
+    publicKey
+  };
+}
+
+// Convert COSE key to CryptoKey for verification
+async function coseKeyToCryptoKey(coseKey) {
+  // COSE key type 2 = EC2
+  // COSE algorithm -7 = ES256 (ECDSA with P-256 and SHA-256)
+  const kty = coseKey[1];
+  const alg = coseKey[3];
+
+  if (kty !== 2 || alg !== -7) {
+    throw new Error('Unsupported key type or algorithm');
+  }
+
+  const crv = coseKey[-1]; // 1 = P-256
+  const x = coseKey[-2];
+  const y = coseKey[-3];
+
+  if (crv !== 1) {
+    throw new Error('Unsupported curve');
+  }
+
+  // Create JWK
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    x: base64urlEncode(x),
+    y: base64urlEncode(y)
+  };
+
+  return await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify']
+  );
+}
+
+// Verify WebAuthn assertion signature
+async function verifyWebAuthnSignature(authData, clientDataJSON, signature, publicKeyBase64) {
+  // Decode stored public key
+  const publicKeyData = base64urlDecode(publicKeyBase64);
+  const coseKey = decodeCBOR(publicKeyData);
+  const cryptoKey = await coseKeyToCryptoKey(coseKey);
+
+  // Create signed data: authData + SHA-256(clientDataJSON)
+  const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSON);
+  const signedData = new Uint8Array(authData.length + 32);
+  signedData.set(authData, 0);
+  signedData.set(new Uint8Array(clientDataHash), authData.length);
+
+  // Convert signature from DER to raw format for Web Crypto
+  const rawSignature = derToRaw(signature);
+
+  return await crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    cryptoKey,
+    rawSignature,
+    signedData
+  );
+}
+
+// Convert DER signature to raw format (r || s)
+function derToRaw(der) {
+  // DER format: 0x30 [total-length] 0x02 [r-length] [r] 0x02 [s-length] [s]
+  let offset = 2; // Skip 0x30 and total length
+
+  // Read r
+  if (der[offset++] !== 0x02) throw new Error('Invalid DER signature');
+  let rLen = der[offset++];
+  let r = der.slice(offset, offset + rLen);
+  offset += rLen;
+
+  // Read s
+  if (der[offset++] !== 0x02) throw new Error('Invalid DER signature');
+  let sLen = der[offset++];
+  let s = der.slice(offset, offset + sLen);
+
+  // Remove leading zeros and pad to 32 bytes
+  while (r.length > 32 && r[0] === 0) r = r.slice(1);
+  while (s.length > 32 && s[0] === 0) s = s.slice(1);
+  while (r.length < 32) r = new Uint8Array([0, ...r]);
+  while (s.length < 32) s = new Uint8Array([0, ...s]);
+
+  const raw = new Uint8Array(64);
+  raw.set(r, 0);
+  raw.set(s, 32);
+  return raw;
+}
+
+// Get RP ID from request URL
+function getRelyingPartyId(request) {
+  const url = new URL(request.url);
+  return url.hostname;
+}
+
 // Security headers
 const securityHeaders = {
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -69,7 +460,9 @@ const securityHeaders = {
 };
 
 // Content Security Policy for HTML responses
-const cspHeader = "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' https://cyberjapandata.gsi.go.jp data: blob:; connect-src 'self' https://cyberjapandata.gsi.go.jp; font-src 'self' https://cdnjs.cloudflare.com;";
+// Note: 'unsafe-inline' removed from script-src (inline scripts moved to external files)
+// style-src still allows 'unsafe-inline' for inline style attributes
+const cspHeader = "default-src 'self'; script-src 'self' https://unpkg.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' https://cyberjapandata.gsi.go.jp data: blob:; connect-src 'self' https://cyberjapandata.gsi.go.jp; font-src 'self' https://cdnjs.cloudflare.com;";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -80,9 +473,17 @@ function json(data, status = 200, headers = {}) {
 
 // Rate limiting configuration
 const RATE_LIMITS = {
-  login: { maxRequests: 10, windowSeconds: 300 },     // 10 attempts per 5 minutes
-  register: { maxRequests: 5, windowSeconds: 3600 },  // 5 attempts per hour
-  default: { maxRequests: 100, windowSeconds: 60 }    // 100 requests per minute
+  login: { maxRequests: 10, windowSeconds: 300 },         // 10 attempts per 5 minutes
+  register: { maxRequests: 5, windowSeconds: 3600 },      // 5 attempts per hour
+  passwordChange: { maxRequests: 5, windowSeconds: 300 }, // 5 attempts per 5 minutes
+  passwordSetup: { maxRequests: 3, windowSeconds: 3600 }, // 3 attempts per hour
+  passkey: { maxRequests: 5, windowSeconds: 300 },        // 5 attempts per 5 minutes
+  admin: { maxRequests: 30, windowSeconds: 60 },          // 30 requests per minute
+  pinCreate: { maxRequests: 20, windowSeconds: 60 },      // 20 pins per minute
+  kmlUpload: { maxRequests: 10, windowSeconds: 60 },      // 10 uploads per minute
+  folderCreate: { maxRequests: 10, windowSeconds: 60 },   // 10 folders per minute
+  commentCreate: { maxRequests: 30, windowSeconds: 60 },  // 30 comments per minute
+  default: { maxRequests: 100, windowSeconds: 60 }        // 100 requests per minute
 };
 
 // Free tier limits (premium users have no limits)
@@ -256,15 +657,159 @@ async function checkFreeTierLimit(env, user, limitType) {
 
 async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const ipHash = await hashIP(ip);
   const userAgent = request.headers.get('User-Agent') || 'unknown';
 
   try {
     await env.DB.prepare(
       'INSERT INTO security_logs (event_type, user_id, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?)'
-    ).bind(eventType, userId, ip, userAgent, JSON.stringify(details)).run();
+    ).bind(eventType, userId, ipHash, userAgent, JSON.stringify(details)).run();
   } catch (err) {
     console.error('Failed to log security event:', err);
   }
+}
+
+// ==================== Session Management ====================
+
+// Generate a cryptographically secure session token
+function generateSessionToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return base64urlEncode(bytes);
+}
+
+// Hash session token for secure storage (prevents session hijack if DB is leaked)
+async function hashSessionToken(token) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64urlEncode(new Uint8Array(hash));
+}
+
+// Hash IP address for privacy (GDPR compliance, prevents IP exposure if DB is leaked)
+async function hashIP(ip) {
+  if (!ip || ip === 'unknown') return 'unknown';
+  const encoder = new TextEncoder();
+  const data = encoder.encode(ip);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  // Use first 16 chars for readability while maintaining uniqueness
+  return base64urlEncode(new Uint8Array(hash)).substring(0, 16);
+}
+
+// Parse user agent to get a friendly device name
+function parseDeviceName(userAgent) {
+  if (!userAgent) return 'Unknown Device';
+
+  // Browser detection
+  let browser = 'Unknown Browser';
+  if (userAgent.includes('Firefox/')) browser = 'Firefox';
+  else if (userAgent.includes('Edg/')) browser = 'Edge';
+  else if (userAgent.includes('Chrome/')) browser = 'Chrome';
+  else if (userAgent.includes('Safari/') && !userAgent.includes('Chrome')) browser = 'Safari';
+  else if (userAgent.includes('Opera') || userAgent.includes('OPR/')) browser = 'Opera';
+
+  // OS detection
+  let os = 'Unknown OS';
+  if (userAgent.includes('Windows')) os = 'Windows';
+  else if (userAgent.includes('Mac OS X') || userAgent.includes('Macintosh')) os = 'Mac';
+  else if (userAgent.includes('Linux') && !userAgent.includes('Android')) os = 'Linux';
+  else if (userAgent.includes('Android')) os = 'Android';
+  else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) os = 'iOS';
+
+  return `${browser} on ${os}`;
+}
+
+// Create a new session for a user
+async function createSession(env, userId, request) {
+  const sessionToken = generateSessionToken();
+  const tokenHash = await hashSessionToken(sessionToken);
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const ipHash = await hashIP(ip);
+  const userAgent = request.headers.get('User-Agent') || 'unknown';
+  const deviceName = parseDeviceName(userAgent);
+
+  // Session expires in 7 days
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Store hashed token and IP to prevent data exposure if DB is leaked
+  await env.DB.prepare(
+    `INSERT INTO sessions (user_id, session_token, ip_address, user_agent, device_name, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(userId, tokenHash, ipHash, userAgent, deviceName, expiresAt).run();
+
+  // Return plain token (stored in JWT, hashed version in DB)
+  return sessionToken;
+}
+
+// Validate a session token (returns session if valid, null if invalid/revoked/expired)
+async function validateSession(env, sessionToken) {
+  if (!sessionToken) return null;
+
+  // Hash the token to compare with stored hash
+  const tokenHash = await hashSessionToken(sessionToken);
+
+  const session = await env.DB.prepare(
+    `SELECT * FROM sessions
+     WHERE session_token = ?
+     AND is_revoked = 0
+     AND datetime(expires_at) > datetime('now')`
+  ).bind(tokenHash).first();
+
+  if (session) {
+    // Update last_active_at (fire and forget)
+    env.DB.prepare(
+      `UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?`
+    ).bind(session.id).run().catch(() => {});
+  }
+
+  return session;
+}
+
+// Revoke a specific session
+async function revokeSession(env, sessionToken) {
+  const tokenHash = await hashSessionToken(sessionToken);
+  await env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE session_token = ?`
+  ).bind(tokenHash).run();
+}
+
+// Revoke a session by ID (for user self-management)
+async function revokeSessionById(env, sessionId, userId) {
+  const result = await env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE id = ? AND user_id = ?`
+  ).bind(sessionId, userId).run();
+  return result.meta.changes > 0;
+}
+
+// Revoke all sessions for a user (except optionally current one)
+async function revokeAllUserSessions(env, userId, exceptSessionToken = null) {
+  if (exceptSessionToken) {
+    const tokenHash = await hashSessionToken(exceptSessionToken);
+    await env.DB.prepare(
+      `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND session_token != ?`
+    ).bind(userId, tokenHash).run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE sessions SET is_revoked = 1 WHERE user_id = ?`
+    ).bind(userId).run();
+  }
+}
+
+// Get all active sessions for a user
+async function getUserSessions(env, userId) {
+  const sessions = await env.DB.prepare(
+    `SELECT id, ip_address, device_name, created_at, last_active_at
+     FROM sessions
+     WHERE user_id = ? AND is_revoked = 0 AND datetime(expires_at) > datetime('now')
+     ORDER BY last_active_at DESC`
+  ).bind(userId).all();
+  return sessions.results;
+}
+
+// Clean up expired sessions (can be called periodically)
+async function cleanupExpiredSessions(env) {
+  await env.DB.prepare(
+    `DELETE FROM sessions WHERE datetime(expires_at) < datetime('now')`
+  ).run();
 }
 
 // Email sending via Resend (https://resend.com)
@@ -317,6 +862,55 @@ function getClientIP(request) {
          'unknown';
 }
 
+// CSRF protection: validate Origin/Referer for state-changing requests
+function validateCSRF(request, url) {
+  const method = request.method;
+
+  // Only validate state-changing methods
+  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    return { valid: true };
+  }
+
+  // Get Origin or Referer header
+  const origin = request.headers.get('Origin');
+  const referer = request.headers.get('Referer');
+
+  // At least one must be present for state-changing requests
+  if (!origin && !referer) {
+    return { valid: false, error: 'Missing Origin/Referer header' };
+  }
+
+  // Build list of allowed origins
+  const allowedOrigins = [
+    url.origin,
+    'https://fieldnota-commons.com'
+  ];
+
+  // Validate Origin header if present
+  if (origin) {
+    if (!allowedOrigins.includes(origin)) {
+      return { valid: false, error: 'Invalid Origin header' };
+    }
+    return { valid: true };
+  }
+
+  // Validate Referer header as fallback
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer);
+      const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
+      if (!allowedOrigins.includes(refererOrigin)) {
+        return { valid: false, error: 'Invalid Referer header' };
+      }
+      return { valid: true };
+    } catch {
+      return { valid: false, error: 'Malformed Referer header' };
+    }
+  }
+
+  return { valid: false, error: 'CSRF validation failed' };
+}
+
 // Allowed image types and max size
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB (client compresses to 1MB, allow margin)
@@ -359,10 +953,18 @@ async function ensureTablesExist(env) {
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT,
         email TEXT,
+        display_name TEXT,
         is_admin INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending',
+        plan TEXT DEFAULT 'free',
+        member_source TEXT,
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
+        subscription_ends_at TEXT,
+        external_id TEXT,
         created_at TEXT DEFAULT (datetime('now'))
       )`),
       // Admin notifications
@@ -370,6 +972,7 @@ async function ensureTablesExist(env) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         message TEXT NOT NULL,
+        data TEXT,
         user_id INTEGER,
         is_read INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
@@ -423,7 +1026,8 @@ async function ensureTablesExist(env) {
       env.DB.prepare(`CREATE TABLE IF NOT EXISTS pin_images (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pin_id INTEGER NOT NULL,
-        filename TEXT NOT NULL,
+        r2_key TEXT NOT NULL,
+        original_name TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE CASCADE
       )`),
@@ -497,6 +1101,70 @@ async function ensureTablesExist(env) {
         auth TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // KML folder shares
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folder_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kml_folder_id INTEGER NOT NULL,
+        shared_with_user_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (kml_folder_id) REFERENCES kml_folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (shared_with_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(kml_folder_id, shared_with_user_id)
+      )`),
+      // KML folder visibility (per-user visibility settings)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS kml_folder_visibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kml_folder_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        is_visible INTEGER DEFAULT 1,
+        FOREIGN KEY (kml_folder_id) REFERENCES kml_folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(kml_folder_id, user_id)
+      )`),
+      // Folder visibility (per-user visibility settings for pin folders)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS folder_visibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        is_visible INTEGER DEFAULT 1,
+        FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(folder_id, user_id)
+      )`),
+      // Passkeys (WebAuthn credentials)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS passkeys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        credential_id TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        counter INTEGER DEFAULT 0,
+        device_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Passkey challenges (temporary storage for WebAuthn ceremonies)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS passkey_challenges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        challenge TEXT NOT NULL,
+        user_id INTEGER,
+        type TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL
+      )`),
+      // Sessions (for token invalidation and session management)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        session_token TEXT UNIQUE NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        device_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_active_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        is_revoked INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
@@ -507,11 +1175,93 @@ async function ensureTablesExist(env) {
       // Column might already exist, ignore error
     }
 
+    // Add password_salt column to existing users table if it doesn't exist
+    try {
+      await env.DB.prepare('ALTER TABLE users ADD COLUMN password_salt TEXT').run();
+    } catch (e) {
+      // Column might already exist, ignore error
+    }
+
     tablesInitialized = true;
   } catch (err) {
     console.error('Table initialization error:', err);
     // Continue anyway - tables might already exist with different schema
     tablesInitialized = true;
+  }
+}
+
+// ==================== Sentry Error Reporting ====================
+// Lightweight Sentry client for Cloudflare Workers
+// 環境変数 SENTRY_DSN を設定すると有効化されます
+function parseSentryDsn(dsn) {
+  if (!dsn) return null;
+  try {
+    const url = new URL(dsn);
+    const projectId = url.pathname.replace('/', '');
+    return {
+      publicKey: url.username,
+      host: url.hostname,
+      projectId: projectId,
+      endpoint: `https://${url.hostname}/api/${projectId}/envelope/`
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function reportErrorToSentry(env, error, request, extra) {
+  const config = parseSentryDsn(env.SENTRY_DSN);
+  if (!config) return;
+
+  const eventId = crypto.randomUUID().replace(/-/g, '');
+  const timestamp = new Date().toISOString();
+
+  const event = {
+    event_id: eventId,
+    timestamp: timestamp,
+    platform: 'javascript',
+    server_name: 'cloudflare-worker',
+    release: '2.0.0',
+    environment: env.ENVIRONMENT || 'production',
+    exception: {
+      values: [{
+        type: error.name || 'Error',
+        value: error.message || String(error),
+        stacktrace: error.stack ? {
+          frames: error.stack.split('\n').slice(1, 10).map(line => ({
+            filename: line.trim(),
+            function: line.trim()
+          }))
+        } : undefined
+      }]
+    },
+    request: request ? {
+      url: request.url,
+      method: request.method,
+      headers: {
+        'user-agent': request.headers.get('user-agent') || ''
+      }
+    } : undefined,
+    extra: extra || {}
+  };
+
+  const envelope = [
+    JSON.stringify({ event_id: eventId, dsn: env.SENTRY_DSN, sent_at: timestamp }),
+    JSON.stringify({ type: 'event', content_type: 'application/json' }),
+    JSON.stringify(event)
+  ].join('\n');
+
+  try {
+    await fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-sentry-envelope',
+        'X-Sentry-Auth': `Sentry sentry_version=7, sentry_client=fieldnota-worker/1.0, sentry_key=${config.publicKey}`
+      },
+      body: envelope
+    });
+  } catch {
+    // Sentry送信失敗は無視（本体の処理を妨げない）
   }
 }
 
@@ -525,24 +1275,53 @@ export async function onRequest(context) {
   // Auto-create tables on first request
   await ensureTablesExist(env);
 
-  // Warn if JWT_SECRET is not set (check once per request for logging)
+  // Validate JWT_SECRET is properly configured
   if (!env.JWT_SECRET) {
-    console.warn('WARNING: JWT_SECRET environment variable is not set. Using insecure default.');
+    console.error('FATAL: JWT_SECRET environment variable is not set');
+    return json({ error: 'Server configuration error' }, 500);
+  }
+  if (env.JWT_SECRET.length < 32) {
+    console.error('FATAL: JWT_SECRET must be at least 32 characters long');
+    return json({ error: 'Server configuration error' }, 500);
   }
 
-  // CORS headers - only allow same origin for security
+  // CORS headers - strict origin allowlist
   const origin = request.headers.get('Origin');
-  const allowedOrigin = origin && (
-    origin === url.origin ||
-    origin.endsWith('.pages.dev') ||
-    env.ALLOWED_ORIGIN === origin
-  ) ? origin : url.origin;
+  const PRODUCTION_ORIGIN = 'https://fieldnota-commons.com';
+
+  // Build allowed origins list (no wildcards, explicit list only)
+  const allowedOrigins = new Set([
+    url.origin,
+    PRODUCTION_ORIGIN
+  ]);
+  // Add custom allowed origin from environment if configured
+  if (env.ALLOWED_ORIGIN) {
+    allowedOrigins.add(env.ALLOWED_ORIGIN);
+  }
+
+  // Strict origin validation - only allow explicitly listed origins
+  const isAllowedOrigin = origin && allowedOrigins.has(origin);
+
+  // For cross-origin requests with credentials, reject unknown origins
+  if (origin && !isAllowedOrigin) {
+    // Return response without CORS headers - browser will block the request
+    // For preflight, return 403 to explicitly deny
+    if (method === 'OPTIONS') {
+      return new Response('CORS origin not allowed', {
+        status: 403,
+        headers: securityHeaders
+      });
+    }
+  }
 
   const corsHeaders = {
-    'Access-Control-Allow-Origin': allowedOrigin,
+    // Only set Allow-Origin for validated origins (never use wildcard with credentials)
+    'Access-Control-Allow-Origin': isAllowedOrigin ? origin : url.origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Credentials': 'true',
+    // Cache preflight requests for 1 hour to reduce OPTIONS requests
+    'Access-Control-Max-Age': '3600',
     ...securityHeaders
   };
 
@@ -550,11 +1329,38 @@ export async function onRequest(context) {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // Get current user from cookie
+  // CSRF protection for state-changing requests
+  // Exclude webhook endpoints that receive external requests
+  const csrfExemptPaths = [
+    '/stripe/webhook',           // Stripe webhook (external)
+    '/external/member-sync'      // Server-to-server sync
+  ];
+  const isCSRFExempt = csrfExemptPaths.some(p => path.startsWith(p));
+
+  if (!isCSRFExempt) {
+    const csrfCheck = validateCSRF(request, url);
+    if (!csrfCheck.valid) {
+      await logSecurityEvent(env, 'csrf_validation_failed', null, request, { error: csrfCheck.error, path });
+      return json({ error: 'CSRF検証に失敗しました' }, 403);
+    }
+  }
+
+  // Get current user from cookie and validate session
   let user = null;
   const token = getCookie(request, 'auth');
   if (token) {
-    user = await verifyToken(token, env.JWT_SECRET || 'default-secret');
+    const tokenPayload = await verifyToken(token, env.JWT_SECRET);
+    if (tokenPayload) {
+      // Validate session - session token (sid) is required
+      if (tokenPayload.sid) {
+        const session = await validateSession(env, tokenPayload.sid);
+        if (session) {
+          user = tokenPayload;  // Session is valid
+        }
+        // If session is invalid/revoked, user remains null (forces re-login)
+      }
+      // Tokens without sid are rejected (legacy support removed)
+    }
   }
 
   try {
@@ -580,10 +1386,10 @@ export async function onRequest(context) {
     }
     if (path === '/auth/refresh' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      return await handleTokenRefresh(env, user);
+      return await handleTokenRefresh(env, user, request);
     }
     if (path === '/auth/logout' && method === 'POST') {
-      return handleLogout();
+      return await handleLogout(env, user, request);
     }
     if (path === '/auth/me' && method === 'GET') {
       return json(user);
@@ -594,7 +1400,68 @@ export async function onRequest(context) {
     }
     if (path === '/auth/password' && method === 'PUT') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordChange');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'passwordChange' });
+        return json({ error: 'パスワード変更の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleChangePassword(request, env, user);
+    }
+
+    // Session management routes
+    if (path === '/auth/sessions' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetSessions(env, user);
+    }
+    if (path === '/auth/sessions' && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleRevokeAllSessions(env, user);
+    }
+    if (path.startsWith('/auth/sessions/') && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const sessionId = parseInt(path.split('/')[3]);
+      if (isNaN(sessionId)) {
+        return json({ error: '無効なセッションIDです' }, 400);
+      }
+      return await handleRevokeSession(env, user, sessionId);
+    }
+
+    // Passkeys (WebAuthn) routes - with rate limiting
+    if (path === '/auth/passkey/register/options' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passkey');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'passkey_register' });
+        return json({ error: 'パスキー登録の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
+      return await handlePasskeyRegisterOptions(request, env, user);
+    }
+    if (path === '/auth/passkey/register/verify' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handlePasskeyRegisterVerify(request, env, user);
+    }
+    if (path === '/auth/passkey/login/options' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passkey');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'passkey_login' });
+        return json({ error: 'パスキーログインの試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
+      return await handlePasskeyLoginOptions(request, env);
+    }
+    if (path === '/auth/passkey/login/verify' && method === 'POST') {
+      return await handlePasskeyLoginVerify(request, env);
+    }
+    if (path === '/auth/passkeys' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetPasskeys(env, user);
+    }
+    if (path.startsWith('/auth/passkey/') && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const passkeyId = parseInt(path.split('/')[3]);
+      return await handleDeletePasskey(env, user, passkeyId);
     }
 
     // Users
@@ -603,18 +1470,30 @@ export async function onRequest(context) {
       return await handleGetUsers(env, user);
     }
 
-    // Admin routes
+    // Admin routes - with rate limiting for sensitive operations
     if (path === '/admin/pending-users' && method === 'GET') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
       return await handleGetPendingUsers(env);
     }
     if (path.match(/^\/admin\/users\/(\d+)\/approve$/) && method === 'POST') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'admin');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'admin_approve' });
+        return json({ error: '管理者操作が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/admin\/users\/(\d+)\/approve$/)[1];
       return await handleApproveUser(env, id);
     }
     if (path.match(/^\/admin\/users\/(\d+)\/reject$/) && method === 'POST') {
       if (!user || !user.is_admin) return json({ error: '管理者権限が必要です' }, 403);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'admin');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', user.id, request, { endpoint: 'admin_reject' });
+        return json({ error: '管理者操作が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/admin\/users\/(\d+)\/reject$/)[1];
       return await handleRejectUser(env, id);
     }
@@ -638,6 +1517,11 @@ export async function onRequest(context) {
     }
     if (path === '/kml-folders' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'folderCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'フォルダ作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreateKmlFolder(request, env, user);
     }
     if (path.match(/^\/kml-folders\/(\d+)$/) && method === 'PUT') {
@@ -682,6 +1566,11 @@ export async function onRequest(context) {
     }
     if (path === '/kml-files/upload' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'kmlUpload');
+      if (!rateCheck.allowed) {
+        return json({ error: 'ファイルアップロードの試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleUploadKmlFile(request, env, user);
     }
     if (path.match(/^\/kml-files\/(.+)$/) && method === 'GET') {
@@ -705,6 +1594,11 @@ export async function onRequest(context) {
     }
     if (path === '/folders' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'folderCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'フォルダ作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreateFolder(request, env, user);
     }
     if (path.match(/^\/folders\/(\d+)$/) && method === 'PUT') {
@@ -749,6 +1643,11 @@ export async function onRequest(context) {
     }
     if (path === '/pins' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'pinCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'ピン作成の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleCreatePin(request, env, user);
     }
     if (path.match(/^\/pins\/(\d+)$/) && method === 'PUT') {
@@ -783,6 +1682,11 @@ export async function onRequest(context) {
     }
     if (path.match(/^\/pins\/(\d+)\/comments$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'commentCreate');
+      if (!rateCheck.allowed) {
+        return json({ error: 'コメント投稿の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       const id = path.match(/^\/pins\/(\d+)\/comments$/)[1];
       return await handleCreatePinComment(request, env, user, id);
     }
@@ -829,6 +1733,12 @@ export async function onRequest(context) {
       return await handleExternalMemberSync(request, env);
     }
     if (path === '/auth/setup-password' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordSetup');
+      if (!rateCheck.allowed) {
+        await logSecurityEvent(env, 'rate_limit_exceeded', null, request, { endpoint: 'passwordSetup' });
+        return json({ error: 'パスワード設定の試行回数が多すぎます。しばらくしてから再試行してください。' }, 429, { 'Retry-After': rateCheck.retryAfter.toString() });
+      }
       return await handleSetupPassword(request, env);
     }
 
@@ -848,34 +1758,49 @@ export async function onRequest(context) {
     }
     if (path === '/stripe/create-portal-session' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
-      return await handleCreatePortalSession(env, user);
+      return await handleCreatePortalSession(request, env, user);
     }
     if (path === '/subscription/cancel' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleCancelSubscription(env, user);
     }
+    if (path === '/usage' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetUsage(env, user);
+    }
 
     return json({ error: 'Not found' }, 404);
   } catch (err) {
-    console.error(err);
-    return json({ error: err.message || 'Server error' }, 500);
+    console.error(`API Error [${method} ${path}]:`, err.message || err);
+    // Sentryにエラーを報告（非同期、レスポンスをブロックしない）
+    context.waitUntil(
+      reportErrorToSentry(env, err, request, { route: `${method} ${path}` })
+    );
+    return json({ error: 'Server error' }, 500);
   }
 }
 
 // ==================== Auth Handlers ====================
-async function handleTokenRefresh(env, user) {
+async function handleTokenRefresh(env, user, request) {
   // Get fresh user data from DB
   const dbUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
   if (!dbUser || dbUser.status !== 'approved') {
     return json({ error: 'ユーザーが見つかりません' }, 404);
   }
 
+  // Keep the existing session token if present, otherwise create a new session
+  let sessionToken = user.sid;
+  if (!sessionToken) {
+    sessionToken = await createSession(env, user.id, request);
+  }
+
   const token = await createToken({
     id: dbUser.id,
     username: dbUser.username,
     display_name: dbUser.display_name || dbUser.username,
-    is_admin: !!dbUser.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+    is_admin: !!dbUser.is_admin,
+    sid: sessionToken
+  }, env.JWT_SECRET);
 
   return json(
     { ok: true },
@@ -885,7 +1810,7 @@ async function handleTokenRefresh(env, user) {
 }
 
 async function handleRegister(request, env) {
-  const { username, password, email, display_name } = await request.json();
+  const { username, password, email, display_name } = await getRequestBody(request);
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
   }
@@ -893,8 +1818,7 @@ async function handleRegister(request, env) {
     return json({ error: 'メールアドレスを入力してください' }, 400);
   }
   // Validate email format
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailPattern.test(email)) {
+  if (!isValidEmail(email)) {
     return json({ error: '有効なメールアドレスを入力してください' }, 400);
   }
   if (username.length < 3) {
@@ -902,38 +1826,38 @@ async function handleRegister(request, env) {
   }
   // Validate username is full name in Roman letters (e.g., "Taro Yamada")
   const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
-  if (!fullNamePattern.test(username.trim())) {
+  if (!fullNamePattern.test(username)) {
     return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
   }
-  if (password.length < 4) {
-    return json({ error: 'パスワードは4文字以上にしてください' }, 400);
+  if (password.length < 12) {
+    return json({ error: 'パスワードは12文字以上にしてください' }, 400);
   }
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) {
-    await logSecurityEvent(env, 'register_duplicate_username', null, request, { username });
+    await logSecurityEvent(env, 'register_duplicate_username', null, request, {});
     return json({ error: 'そのユーザー名は既に使われています' }, 400);
   }
 
   // Check if display name is already used
-  const actualDisplayName = (display_name || username).trim();
+  const actualDisplayName = display_name || username;
   const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ?').bind(actualDisplayName).first();
   if (existingDisplayName) {
     return json({ error: 'その表示名は既に使われています' }, 400);
   }
 
-  const hash = await hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   // New users start with 'pending' status - must be approved by admin
   const result = await env.DB.prepare(
-    'INSERT INTO users (username, password_hash, email, display_name, status) VALUES (?, ?, ?, ?, ?)'
-  ).bind(username, hash, email, actualDisplayName, 'pending').run();
+    'INSERT INTO users (username, password_hash, password_salt, email, display_name, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(username, hash, salt, email, actualDisplayName, 'pending').run();
 
   const userId = result.meta.last_row_id;
 
   // Create admin notification for pending approval
   await env.DB.prepare(
     'INSERT INTO admin_notifications (type, message, data) VALUES (?, ?, ?)'
-  ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, username, display_name: actualDisplayName })).run();
+  ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, display_name: actualDisplayName })).run();
 
   // Don't return token - user must wait for admin approval
   return json({
@@ -943,15 +1867,23 @@ async function handleRegister(request, env) {
 }
 
 async function handleLogin(request, env) {
-  const { username, password } = await request.json();
+  const { username, password } = await getRequestBody(request);
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
   }
 
   const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
-  if (!user || !(await verifyPassword(password, user.password_hash))) {
-    await logSecurityEvent(env, 'login_failed', null, request, { username, reason: 'invalid_credentials' });
+  if (!user || !(await verifyPassword(password, user.password_hash, user.password_salt))) {
+    await logSecurityEvent(env, 'login_failed', null, request, { reason: 'invalid_credentials' });
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
+  }
+
+  // Auto-migrate legacy SHA-256 passwords to PBKDF2
+  if (!user.password_salt) {
+    const { hash, salt } = await hashPassword(password);
+    await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+      .bind(hash, salt, user.id).run();
+    await logSecurityEvent(env, 'password_migrated', user.id, request, { from: 'sha256', to: 'pbkdf2' });
   }
 
   // Check user approval status
@@ -966,16 +1898,20 @@ async function handleLogin(request, env) {
   if (user.status === 'needs_password') {
     // External member who needs to set up password - this shouldn't happen as password won't match
     await logSecurityEvent(env, 'login_failed', user.id, request, { reason: 'needs_password_setup' });
-    return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true, email: user.email }, 403);
+    return json({ error: 'パスワードを設定してください。登録時に送信されたメールをご確認ください。', needs_password: true }, 403);
   }
+
+  // Create session for token invalidation support
+  const sessionToken = await createSession(env, user.id, request);
 
   await logSecurityEvent(env, 'login_success', user.id, request, {});
 
   const token = await createToken({
     id: user.id, username: user.username,
     display_name: user.display_name || user.username,
-    is_admin: !!user.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+    is_admin: !!user.is_admin,
+    sid: sessionToken  // Session token for server-side invalidation
+  }, env.JWT_SECRET);
 
   return json(
     { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin },
@@ -984,44 +1920,86 @@ async function handleLogin(request, env) {
   );
 }
 
-function handleLogout() {
+async function handleLogout(env, user, request) {
+  // Revoke the current session if user is authenticated
+  if (user && user.sid) {
+    await revokeSession(env, user.sid);
+    await logSecurityEvent(env, 'logout', user.id, request, {});
+  }
   return json({ ok: true }, 200, { 'Set-Cookie': setCookieHeader('auth', '', { maxAge: 0 }) });
 }
 
 // External Member Sync API Handler (for WordPress/Stripe integration)
 async function handleExternalMemberSync(request, env) {
   try {
-    const { action, email, display_name, plan, external_id, secret } = await request.json();
+    // Verify IP whitelist if configured (EXTERNAL_SYNC_ALLOWED_IPS: comma-separated IPs)
+    if (env.EXTERNAL_SYNC_ALLOWED_IPS) {
+      const clientIP = getClientIP(request);
+      const allowedIPs = env.EXTERNAL_SYNC_ALLOWED_IPS.split(',').map(ip => ip.trim());
+      if (!allowedIPs.includes(clientIP)) {
+        console.log(`External sync rejected: IP ${clientIP} not in whitelist`);
+        return json({ error: 'Forbidden' }, 403);
+      }
+    }
+
+    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
 
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
       return json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!email) {
-      return json({ error: 'Email is required' }, 400);
-    }
-
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(email)) {
-      return json({ error: 'Invalid email format' }, 400);
-    }
-
     if (action === 'create') {
-      // Check if user already exists by email
-      const existing = await env.DB.prepare('SELECT id, member_source FROM users WHERE email = ?').bind(email).first();
+      // Try to find existing user by multiple identifiers (priority order):
+      // 1. stripe_customer_id - most reliable for Stripe-originated requests
+      // 2. user_id - if provided from metadata
+      // 3. email - fallback, but may be wrong if Link/ApplePay used different email
+      let existing = null;
+
+      if (stripe_customer_id) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE stripe_customer_id = ?'
+        ).bind(stripe_customer_id).first();
+      }
+
+      if (!existing && user_id) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE id = ?'
+        ).bind(user_id).first();
+      }
+
+      if (!existing && email && isValidEmail(email)) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE email = ?'
+        ).bind(email).first();
+      }
 
       if (existing) {
+        // Update existing user's plan
         if (existing.member_source === 'wordpress') {
-          // Update plan for existing external member
           await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?').bind(plan || 'premium', existing.id).run();
           return json({ success: true, action: 'updated', user_id: existing.id });
         } else {
-          // User registered normally, just update their plan
-          await env.DB.prepare('UPDATE users SET plan = ?, member_source = ? WHERE id = ?')
-            .bind(plan || 'premium', 'wordpress', existing.id).run();
+          // User registered normally or via Stripe, update their plan
+          // Don't change member_source if it's already 'stripe' - that takes precedence
+          if (existing.member_source !== 'stripe') {
+            await env.DB.prepare('UPDATE users SET plan = ?, member_source = ? WHERE id = ?')
+              .bind(plan || 'premium', 'wordpress', existing.id).run();
+          } else {
+            await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?')
+              .bind(plan || 'premium', existing.id).run();
+          }
           return json({ success: true, action: 'upgraded', user_id: existing.id });
         }
+      }
+
+      // No existing user found - only create new if we have valid email
+      if (!email) {
+        return json({ error: 'Email is required for new user creation' }, 400);
+      }
+
+      if (!isValidEmail(email)) {
+        return json({ error: 'Invalid email format' }, 400);
       }
 
       // Create new external member
@@ -1031,12 +2009,12 @@ async function handleExternalMemberSync(request, env) {
 
       // Generate random temporary password hash (user must set password on first login)
       const tempPassword = crypto.randomUUID();
-      const hash = await hashPassword(tempPassword);
+      const { hash, salt } = await hashPassword(tempPassword);
 
       const result = await env.DB.prepare(
-        `INSERT INTO users (username, password_hash, email, display_name, status, member_source, plan, external_id)
-         VALUES (?, ?, ?, ?, 'needs_password', 'wordpress', ?, ?)`
-      ).bind(username, hash, email, actualDisplayName, plan || 'premium', external_id || null).run();
+        `INSERT INTO users (username, password_hash, password_salt, email, display_name, status, member_source, plan, external_id)
+         VALUES (?, ?, ?, ?, ?, 'needs_password', 'wordpress', ?, ?)`
+      ).bind(username, hash, salt, email, actualDisplayName, plan || 'premium', external_id || null).run();
 
       const userId = result.meta.last_row_id;
 
@@ -1046,8 +2024,20 @@ async function handleExternalMemberSync(request, env) {
       return json({ success: true, action: 'created', user_id: userId });
 
     } else if (action === 'delete') {
-      // Find and delete user by email
-      const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+      // Find user by multiple identifiers
+      let user = null;
+
+      if (stripe_customer_id) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
+      }
+
+      if (!user && user_id) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
+      }
+
+      if (!user && email) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+      }
 
       if (!user) {
         return json({ success: true, action: 'not_found' });
@@ -1063,7 +2053,7 @@ async function handleExternalMemberSync(request, env) {
     }
   } catch (err) {
     console.error('External member sync error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1117,7 +2107,7 @@ Fieldnota commons
 // Handle account setup for external members (username + password)
 async function handleSetupPassword(request, env) {
   try {
-    const { email, username, display_name, password } = await request.json();
+    const { email, username, display_name, password } = await getRequestBody(request);
 
     if (!email || !username || !password) {
       return json({ error: 'すべての必須項目を入力してください' }, 400);
@@ -1125,12 +2115,12 @@ async function handleSetupPassword(request, env) {
 
     // Validate username format (full name in Roman letters)
     const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
-    if (!fullNamePattern.test(username.trim())) {
+    if (!fullNamePattern.test(username)) {
       return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
     }
 
-    if (password.length < 4) {
-      return json({ error: 'パスワードは4文字以上にしてください' }, 400);
+    if (password.length < 12) {
+      return json({ error: 'パスワードは12文字以上にしてください' }, 400);
     }
 
     // Find user by email
@@ -1146,13 +2136,13 @@ async function handleSetupPassword(request, env) {
 
     // Check if username is already taken (by another user)
     const existingUsername = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')
-      .bind(username.trim(), user.id).first();
+      .bind(username, user.id).first();
     if (existingUsername) {
       return json({ error: 'そのユーザー名は既に使われています' }, 400);
     }
 
     // Check if display name is already taken
-    const actualDisplayName = (display_name || username).trim();
+    const actualDisplayName = display_name || username;
     const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
       .bind(actualDisplayName, user.id).first();
     if (existingDisplayName) {
@@ -1160,17 +2150,21 @@ async function handleSetupPassword(request, env) {
     }
 
     // Update username, display_name, password and status
-    const hash = await hashPassword(password);
-    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, status = ? WHERE id = ?')
-      .bind(username.trim(), actualDisplayName, hash, 'approved', user.id).run();
+    const { hash, salt } = await hashPassword(password);
+    await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, password_salt = ?, status = ? WHERE id = ?')
+      .bind(username, actualDisplayName, hash, salt, 'approved', user.id).run();
 
-    // Create token for auto-login
+    // Create session for token invalidation support
+    const sessionToken = await createSession(env, user.id, request);
+
+    // Create token for auto-login with session
     const token = await createToken({
       id: user.id,
-      username: username.trim(),
+      username: username,
       display_name: actualDisplayName,
-      is_admin: !!user.is_admin
-    }, env.JWT_SECRET || 'default-secret');
+      is_admin: !!user.is_admin,
+      sid: sessionToken
+    }, env.JWT_SECRET);
 
     await logSecurityEvent(env, 'account_setup_complete', user.id, request, { member_source: user.member_source });
 
@@ -1178,14 +2172,14 @@ async function handleSetupPassword(request, env) {
       {
         success: true,
         message: 'アカウントを設定しました',
-        user: { id: user.id, username: username.trim(), display_name: actualDisplayName, is_admin: !!user.is_admin }
+        user: { id: user.id, username: username, display_name: actualDisplayName, is_admin: !!user.is_admin }
       },
       200,
       { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
     );
   } catch (err) {
     console.error('Account setup error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1215,7 +2209,53 @@ async function handleGetSubscription(env, user) {
     managed_by: managedBy,
     has_stripe_subscription: !!dbUser.stripe_subscription_id,
     subscription_ends_at: dbUser.subscription_ends_at,
-    can_manage_in_app: managedBy === 'stripe' || managedBy === 'none'
+    can_manage_in_app: managedBy === 'stripe' || managedBy === 'none',
+    stripe_enabled: !!env.STRIPE_SECRET_KEY && !!env.STRIPE_PRICE_ID
+  });
+}
+
+// Get current usage counts for free tier limits display
+async function handleGetUsage(env, user) {
+  const dbUser = await env.DB.prepare(
+    'SELECT plan, is_admin FROM users WHERE id = ?'
+  ).bind(user.id).first();
+
+  if (!dbUser) {
+    return json({ error: 'ユーザーが見つかりません' }, 404);
+  }
+
+  const plan = dbUser.plan || 'free';
+  const isAdmin = !!dbUser.is_admin;
+
+  // Premium and admin users have no limits
+  if (plan === 'premium' || isAdmin) {
+    return json({
+      plan,
+      is_admin: isAdmin,
+      has_limits: false
+    });
+  }
+
+  // Free users - get current usage counts
+  const [kmlFolders, pinFolders, kmlFiles, pins, shares] = await Promise.all([
+    getUserKmlFolderCount(env, user.id),
+    getUserPinFolderCount(env, user.id),
+    getUserKmlFileCount(env, user.id),
+    getUserPinCount(env, user.id),
+    getUserShareCount(env, user.id)
+  ]);
+
+  return json({
+    plan,
+    is_admin: isAdmin,
+    has_limits: true,
+    usage: {
+      kmlFolders: { current: kmlFolders, max: FREE_TIER_LIMITS.kmlFolders },
+      pinFolders: { current: pinFolders, max: FREE_TIER_LIMITS.pinFolders },
+      kmlFiles: { current: kmlFiles, max: FREE_TIER_LIMITS.kmlFiles },
+      pins: { current: pins, max: FREE_TIER_LIMITS.pins },
+      shares: { current: shares, max: FREE_TIER_LIMITS.shares }
+    }
   });
 }
 
@@ -1227,7 +2267,7 @@ async function handleCreateCheckoutSession(request, env, user) {
     }
 
     const dbUser = await env.DB.prepare(
-      'SELECT plan, member_source, stripe_customer_id FROM users WHERE id = ?'
+      'SELECT plan, member_source, stripe_customer_id, email FROM users WHERE id = ?'
     ).bind(user.id).first();
 
     // Check if user is already premium via WordPress
@@ -1240,12 +2280,15 @@ async function handleCreateCheckoutSession(request, env, user) {
       return json({ error: '既にプレミアム会員です' }, 400);
     }
 
-    const { success_url, cancel_url } = await request.json();
+    const { success_url, cancel_url } = await getRequestBody(request);
     const appUrl = success_url || 'https://fieldnota-commons.com';
     const cancelUrl = cancel_url || 'https://fieldnota-commons.com';
 
     // Create or retrieve Stripe customer
+    // Use email from DB (not from payment method like Link/ApplePay)
+    const userEmail = dbUser.email || '';
     let customerId = dbUser.stripe_customer_id;
+
     if (!customerId) {
       const customerResponse = await fetch('https://api.stripe.com/v1/customers', {
         method: 'POST',
@@ -1254,7 +2297,7 @@ async function handleCreateCheckoutSession(request, env, user) {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: new URLSearchParams({
-          'email': user.email || '',
+          'email': userEmail,
           'name': user.display_name || user.username,
           'metadata[user_id]': user.id.toString()
         })
@@ -1272,9 +2315,23 @@ async function handleCreateCheckoutSession(request, env, user) {
       // Save customer ID
       await env.DB.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?')
         .bind(customerId, user.id).run();
+    } else {
+      // Ensure existing customer has correct email (prevent Link/ApplePay email override)
+      await fetch(`https://api.stripe.com/v1/customers/${customerId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          'email': userEmail,
+          'metadata[user_id]': user.id.toString()
+        })
+      });
     }
 
     // Create Checkout Session
+    // Note: customer_update prevents Link/ApplePay from overwriting customer data
     const sessionResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
       headers: {
@@ -1283,12 +2340,17 @@ async function handleCreateCheckoutSession(request, env, user) {
       },
       body: new URLSearchParams({
         'customer': customerId,
+        'customer_update[address]': 'never',
+        'customer_update[name]': 'never',
         'mode': 'subscription',
         'line_items[0][price]': env.STRIPE_PRICE_ID,
         'line_items[0][quantity]': '1',
         'success_url': `${appUrl}?session_id={CHECKOUT_SESSION_ID}`,
         'cancel_url': cancelUrl,
-        'metadata[user_id]': user.id.toString()
+        'metadata[user_id]': user.id.toString(),
+        'metadata[user_email]': userEmail,
+        'subscription_data[metadata][user_id]': user.id.toString(),
+        'subscription_data[metadata][user_email]': userEmail
       })
     });
 
@@ -1303,7 +2365,7 @@ async function handleCreateCheckoutSession(request, env, user) {
 
   } catch (err) {
     console.error('Create checkout session error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1431,7 +2493,7 @@ async function handleStripeWebhook(request, env) {
 
   } catch (err) {
     console.error('Stripe webhook error:', err);
-    return json({ error: err.message || 'Webhook error' }, 500);
+    return json({ error: 'Webhook error' }, 500);
   }
 }
 
@@ -1476,15 +2538,28 @@ async function verifyStripeWebhookSignature(payload, signature, secret) {
 }
 
 // Create Stripe Customer Portal session for subscription management
-async function handleCreatePortalSession(env, user) {
+async function handleCreatePortalSession(request, env, user) {
   try {
     if (!env.STRIPE_SECRET_KEY) {
       return json({ error: 'Stripe is not configured' }, 500);
     }
 
+    // Require password verification for security
+    const body = await getRequestBody(request).catch(() => ({}));
+    const { password } = body;
+
+    if (!password) {
+      return json({ error: 'パスワードが必要です' }, 400);
+    }
+
     const dbUser = await env.DB.prepare(
-      'SELECT stripe_customer_id, member_source FROM users WHERE id = ?'
+      'SELECT stripe_customer_id, member_source, password_hash, password_salt FROM users WHERE id = ?'
     ).bind(user.id).first();
+
+    // Verify password
+    if (!dbUser.password_hash || !(await verifyPassword(password, dbUser.password_hash, dbUser.password_salt))) {
+      return json({ error: 'パスワードが正しくありません' }, 401);
+    }
 
     if (dbUser.member_source === 'wordpress') {
       return json({ error: 'WordPress経由の会員はWordPress側で管理してください' }, 400);
@@ -1517,7 +2592,7 @@ async function handleCreatePortalSession(env, user) {
 
   } catch (err) {
     console.error('Create portal session error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
@@ -1580,70 +2655,117 @@ async function handleCancelSubscription(env, user) {
 
   } catch (err) {
     console.error('Cancel subscription error:', err);
-    return json({ error: err.message || 'Server error' }, 500);
+    return json({ error: 'Server error' }, 500);
   }
 }
 
 async function handleUpdateProfile(request, env, user) {
-  const { display_name } = await request.json();
-  if (!display_name || !display_name.trim()) {
+  const { display_name } = await getRequestBody(request);
+  if (!display_name) {
     return json({ error: '表示名を入力してください' }, 400);
   }
 
   // Check if display name is already used by another user
   const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
-    .bind(display_name.trim(), user.id).first();
+    .bind(display_name, user.id).first();
   if (existingDisplayName) {
     return json({ error: 'その表示名は既に使われています' }, 400);
   }
 
   await env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?')
-    .bind(display_name.trim(), user.id).run();
+    .bind(display_name, user.id).run();
 
-  // Create new token with updated display_name
+  // Create new token with updated display_name (preserve session token)
   const token = await createToken({
     id: user.id,
     username: user.username,
-    display_name: display_name.trim(),
-    is_admin: user.is_admin
-  }, env.JWT_SECRET || 'default-secret');
+    display_name: display_name,
+    is_admin: user.is_admin,
+    sid: user.sid
+  }, env.JWT_SECRET);
 
   return json(
-    { ok: true, display_name: display_name.trim() },
+    { ok: true, display_name: display_name },
     200,
     { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
 async function handleChangePassword(request, env, user) {
-  const { current_password, new_password } = await request.json();
+  const { current_password, new_password, revoke_other_sessions } = await getRequestBody(request);
 
   if (!current_password) {
     return json({ error: '現在のパスワードを入力してください' }, 400);
   }
-  if (!new_password || new_password.length < 4) {
-    return json({ error: '新しいパスワードは4文字以上にしてください' }, 400);
+  if (!new_password || new_password.length < 12) {
+    return json({ error: '新しいパスワードは12文字以上にしてください' }, 400);
   }
 
   // Verify current password
-  const dbUser = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+  const dbUser = await env.DB.prepare('SELECT password_hash, password_salt FROM users WHERE id = ?')
     .bind(user.id).first();
-  if (!dbUser || !(await verifyPassword(current_password, dbUser.password_hash))) {
+  if (!dbUser || !(await verifyPassword(current_password, dbUser.password_hash, dbUser.password_salt))) {
     return json({ error: '現在のパスワードが正しくありません' }, 401);
   }
 
   // Update password
-  const newHash = await hashPassword(new_password);
-  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-    .bind(newHash, user.id).run();
+  const { hash: newHash, salt: newSalt } = await hashPassword(new_password);
+  await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+    .bind(newHash, newSalt, user.id).run();
+
+  // Revoke all other sessions if requested (recommended for security)
+  if (revoke_other_sessions !== false && user.sid) {
+    await revokeAllUserSessions(env, user.id, user.sid);
+  }
+
+  await logSecurityEvent(env, 'password_changed', user.id, request, { revoked_sessions: revoke_other_sessions !== false });
+
+  return json({ ok: true });
+}
+
+// ==================== Session Management Handlers ====================
+
+// Get all active sessions for the current user
+async function handleGetSessions(env, user) {
+  const sessions = await getUserSessions(env, user.id);
+
+  // Mark current session
+  const sessionsWithCurrent = sessions.map(session => ({
+    ...session,
+    is_current: false  // Will be set based on session token comparison
+  }));
+
+  return json(sessionsWithCurrent);
+}
+
+// Revoke a specific session
+async function handleRevokeSession(env, user, sessionId) {
+  const success = await revokeSessionById(env, sessionId, user.id);
+  if (!success) {
+    return json({ error: 'セッションが見つかりません' }, 404);
+  }
+
+  await logSecurityEvent(env, 'session_revoked', user.id, null, { session_id: sessionId });
+  return json({ ok: true });
+}
+
+// Revoke all sessions except current
+async function handleRevokeAllSessions(env, user) {
+  if (!user.sid) {
+    return json({ error: '現在のセッションが無効です' }, 400);
+  }
+
+  await revokeAllUserSessions(env, user.id, user.sid);
+  await logSecurityEvent(env, 'all_sessions_revoked', user.id, null, {});
 
   return json({ ok: true });
 }
 
 // ==================== Users Handlers ====================
 async function handleGetUsers(env, user) {
+  // Only return id, username, display_name - do not expose is_admin to regular users
   const users = await env.DB.prepare(
-    'SELECT id, username, display_name, is_admin FROM users WHERE id != ? AND status = ? ORDER BY display_name'
+    'SELECT id, username, display_name FROM users WHERE id != ? AND status = ? ORDER BY display_name'
   ).bind(user.id, 'approved').all();
   return json(users.results);
 }
@@ -1742,7 +2864,7 @@ async function handleGetSecurityLogs(env, url) {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500);
   const eventType = url.searchParams.get('type');
 
-  let query = 'SELECT * FROM security_logs';
+  let query = 'SELECT id, event_type, user_id, created_at FROM security_logs';
   const bindings = [];
 
   if (eventType) {
@@ -1786,7 +2908,7 @@ async function handleGetKmlFolders(env, user) {
 }
 
 async function handleCreateKmlFolder(request, env, user) {
-  const { name, is_public, parent_id } = await request.json();
+  const { name, is_public, parent_id } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -1816,15 +2938,15 @@ async function handleRenameKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await request.json();
-  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+  const { name, is_public } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : folder.is_public;
 
   await env.DB.prepare('UPDATE kml_folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name.trim(), publicFlag, id).run();
-  return json({ ok: true, name: name.trim(), is_public: publicFlag });
+    .bind(name, publicFlag, id).run();
+  return json({ ok: true, name: name, is_public: publicFlag });
 }
 
 async function handleDeleteKmlFolder(env, user, id) {
@@ -1863,7 +2985,7 @@ async function handleKmlFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await request.json();
+  const { is_visible } = await getRequestBody(request);
   await env.DB.prepare(`
     INSERT INTO kml_folder_visibility (kml_folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(kml_folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
@@ -1901,7 +3023,7 @@ async function handleShareKmlFolder(request, env, user, id) {
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
-  const { user_ids } = await request.json();
+  const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
 
   // Check free tier limit for folder owner (admin can share without limits)
@@ -1937,15 +3059,24 @@ async function handleReorderKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { target_id } = await request.json();
+  const { target_id } = await getRequestBody(request);
 
   // Get all folders at the same level owned by the user
-  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
-  const siblings = await env.DB.prepare(`
-    SELECT id, sort_order FROM kml_folders
-    WHERE user_id = ? AND ${parentCondition}
-    ORDER BY sort_order, id
-  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
+  // Use separate queries to avoid dynamic SQL construction
+  let siblings;
+  if (folder.parent_id) {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM kml_folders
+      WHERE user_id = ? AND parent_id = ?
+      ORDER BY sort_order, id
+    `).bind(user.id, folder.parent_id).all();
+  } else {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM kml_folders
+      WHERE user_id = ? AND parent_id IS NULL
+      ORDER BY sort_order, id
+    `).bind(user.id).all();
+  }
 
   const folderIds = siblings.results.map(f => f.id);
   const sourceIdx = folderIds.indexOf(parseInt(id));
@@ -1975,7 +3106,7 @@ async function handleMoveKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { parent_id } = await request.json();
+  const { parent_id } = await getRequestBody(request);
 
   // Cannot move folder to itself
   if (parent_id && parseInt(parent_id) === parseInt(id)) {
@@ -2171,7 +3302,7 @@ async function handleMoveKmlFile(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { folder_id } = await request.json();
+  const { folder_id } = await getRequestBody(request);
 
   // Check if target folder exists and user has access
   if (folder_id) {
@@ -2217,7 +3348,7 @@ async function handleGetFolders(env, user) {
 }
 
 async function handleCreateFolder(request, env, user) {
-  const { name, parent_id, is_public } = await request.json();
+  const { name, parent_id, is_public } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -2247,15 +3378,15 @@ async function handleRenameFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await request.json();
-  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+  const { name, is_public } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : (folder.is_public || 0);
 
   await env.DB.prepare('UPDATE folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name.trim(), publicFlag, id).run();
-  return json({ ok: true, name: name.trim(), is_public: publicFlag });
+    .bind(name, publicFlag, id).run();
+  return json({ ok: true, name: name, is_public: publicFlag });
 }
 
 async function handleDeleteFolder(env, user, id) {
@@ -2322,7 +3453,7 @@ async function handleShareFolder(request, env, user, id) {
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
-  const { user_ids } = await request.json();
+  const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
 
   // Check free tier limit for folder owner (admin can share without limits)
@@ -2358,15 +3489,24 @@ async function handleReorderFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { target_id } = await request.json();
+  const { target_id } = await getRequestBody(request);
 
   // Get all folders at the same level owned by the user
-  const parentCondition = folder.parent_id ? 'parent_id = ?' : 'parent_id IS NULL';
-  const siblings = await env.DB.prepare(`
-    SELECT id, sort_order FROM folders
-    WHERE user_id = ? AND ${parentCondition}
-    ORDER BY sort_order, id
-  `).bind(...(folder.parent_id ? [user.id, folder.parent_id] : [user.id])).all();
+  // Use separate queries to avoid dynamic SQL construction
+  let siblings;
+  if (folder.parent_id) {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM folders
+      WHERE user_id = ? AND parent_id = ?
+      ORDER BY sort_order, id
+    `).bind(user.id, folder.parent_id).all();
+  } else {
+    siblings = await env.DB.prepare(`
+      SELECT id, sort_order FROM folders
+      WHERE user_id = ? AND parent_id IS NULL
+      ORDER BY sort_order, id
+    `).bind(user.id).all();
+  }
 
   const folderIds = siblings.results.map(f => f.id);
   const sourceIdx = folderIds.indexOf(parseInt(id));
@@ -2396,7 +3536,7 @@ async function handleMoveFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { parent_id } = await request.json();
+  const { parent_id } = await getRequestBody(request);
 
   // Cannot move folder to itself
   if (parent_id && parseInt(parent_id) === parseInt(id)) {
@@ -2435,7 +3575,7 @@ async function handleFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await request.json();
+  const { is_visible } = await getRequestBody(request);
   await env.DB.prepare(`
     INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
@@ -2506,7 +3646,7 @@ async function handleCreatePin(request, env, user) {
     folder_id = formData.get('folder_id') || null;
     imageFiles = formData.getAll('images');
   } else {
-    const body = await request.json();
+    const body = await getRequestBody(request);
     title = body.title;
     description = body.description || '';
     lat = body.lat;
@@ -2516,6 +3656,14 @@ async function handleCreatePin(request, env, user) {
 
   if (!title || lat == null || lng == null) {
     return json({ error: 'タイトルと座標は必須です' }, 400);
+  }
+
+  // Validate coordinate ranges
+  if (isNaN(lat) || lat < -90 || lat > 90) {
+    return json({ error: '緯度は-90から90の範囲で指定してください' }, 400);
+  }
+  if (isNaN(lng) || lng < -180 || lng > 180) {
+    return json({ error: '経度は-180から180の範囲で指定してください' }, 400);
   }
 
   // Check free tier limit (skip if creating in admin's public/shared folder)
@@ -2607,7 +3755,7 @@ async function handleUpdatePin(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { title, description, folder_id } = await request.json();
+  const { title, description, folder_id } = await getRequestBody(request);
 
   await env.DB.prepare(`
     UPDATE pins SET title = COALESCE(?, title), description = COALESCE(?, description),
@@ -2689,7 +3837,7 @@ async function handleMovePin(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { folder_id } = await request.json();
+  const { folder_id } = await getRequestBody(request);
 
   // Check if target folder exists and user has access
   if (folder_id) {
@@ -2745,9 +3893,9 @@ async function handleGetPinComments(env, user, pinId) {
 }
 
 async function handleCreatePinComment(request, env, user, pinId) {
-  const { content } = await request.json();
+  const { content } = await getRequestBody(request);
 
-  if (!content || content.trim().length === 0) {
+  if (!content) {
     return json({ error: 'コメントを入力してください' }, 400);
   }
   if (content.length > 50) {
@@ -2782,7 +3930,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
 
   const result = await env.DB.prepare(
     'INSERT INTO pin_comments (pin_id, user_id, content) VALUES (?, ?, ?)'
-  ).bind(pinId, user.id, content.trim()).run();
+  ).bind(pinId, user.id, content).run();
 
   const newComment = await env.DB.prepare(`
     SELECT c.*, u.display_name as author_name
@@ -2795,7 +3943,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
   try {
     await sendPushNotifications(env, 'comment', {
       title: '新しいコメント',
-      body: `${user.display_name || user.username}: ${content.trim().substring(0, 30)}`,
+      body: `${user.display_name || user.username}: ${content.substring(0, 30)}`,
       id: pinId,
       creatorId: user.id
     }, { id: pin.folder_id, is_public: folderIsPublic, type: 'pin' });
@@ -2896,8 +4044,36 @@ async function handleGetUnreadComments(env, user) {
     LIMIT 20
   `).bind(lastReadAt, user.id, user.id).all();
 
+  // Get new pin folder shares (folders shared with this user)
+  const folderShares = await env.DB.prepare(`
+    SELECT 'folder_share' as type, fs.id, f.name as title, '' as content, fs.created_at,
+           f.id as folder_id, f.name as folder_name,
+           u.display_name as author_name
+    FROM folder_shares fs
+    JOIN folders f ON fs.folder_id = f.id
+    JOIN users u ON f.user_id = u.id
+    WHERE fs.created_at > ?
+      AND fs.shared_with_user_id = ?
+    ORDER BY fs.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id).all();
+
+  // Get new KML folder shares (folders shared with this user)
+  const kmlFolderShares = await env.DB.prepare(`
+    SELECT 'kml_folder_share' as type, kfs.id, kf.name as title, '' as content, kfs.created_at,
+           kf.id as kml_folder_id, kf.name as folder_name,
+           u.display_name as author_name
+    FROM kml_folder_shares kfs
+    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
+    JOIN users u ON kf.user_id = u.id
+    WHERE kfs.created_at > ?
+      AND kfs.shared_with_user_id = ?
+    ORDER BY kfs.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id).all();
+
   // Combine and sort by created_at
-  const all = [...comments.results, ...pins.results, ...kmlFiles.results];
+  const all = [...comments.results, ...pins.results, ...kmlFiles.results, ...folderShares.results, ...kmlFolderShares.results];
   all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return json(all.slice(0, 50));
@@ -2924,7 +4100,7 @@ function handleGetVapidKey(env) {
 }
 
 async function handlePushSubscribe(request, env, user) {
-  const { subscription } = await request.json();
+  const { subscription } = await getRequestBody(request);
 
   if (!subscription || !subscription.endpoint || !subscription.keys) {
     return json({ error: 'Invalid subscription' }, 400);
@@ -2943,7 +4119,7 @@ async function handlePushSubscribe(request, env, user) {
 }
 
 async function handlePushUnsubscribe(request, env, user) {
-  const { endpoint } = await request.json();
+  const { endpoint } = await getRequestBody(request);
 
   if (!endpoint) {
     return json({ error: 'Endpoint required' }, 400);
@@ -3051,9 +4227,8 @@ async function handlePushTest(request, env, user) {
     return json({ ok: true, message: 'Push sent successfully', debug });
 
   } catch (err) {
-    debug.steps.push('ERROR: ' + (err.message || String(err)));
-    debug.error = { message: err.message, name: err.name, stack: err.stack?.substring(0, 500) };
-    return json({ error: 'Push failed', message: err.message, debug }, 500);
+    console.error('Push notification error:', err);
+    return json({ error: 'Push failed' }, 500);
   }
 }
 
@@ -3078,11 +4253,17 @@ async function sendPushNotifications(env, type, data, folderInfo) {
     targetUserIds = users.results.map(u => u.user_id);
   } else if (folderInfo.id) {
     // Shared folder - get users who have been shared this folder
-    const tableName = folderInfo.type === 'kml' ? 'kml_folder_shares' : 'folder_shares';
-    const columnName = folderInfo.type === 'kml' ? 'kml_folder_id' : 'folder_id';
-    const shares = await env.DB.prepare(
-      `SELECT shared_with_user_id FROM ${tableName} WHERE ${columnName} = ?`
-    ).bind(folderInfo.id).all();
+    // Use separate queries to avoid dynamic SQL construction
+    let shares;
+    if (folderInfo.type === 'kml') {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM kml_folder_shares WHERE kml_folder_id = ?'
+      ).bind(folderInfo.id).all();
+    } else {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM folder_shares WHERE folder_id = ?'
+      ).bind(folderInfo.id).all();
+    }
     targetUserIds = shares.results.map(s => s.shared_with_user_id);
   }
 
@@ -3360,4 +4541,291 @@ async function handleGetImage(env, user, key) {
       ...securityHeaders
     }
   });
+}
+
+// ==================== Passkeys (WebAuthn) Handlers ====================
+
+// Generate registration options for passkey
+async function handlePasskeyRegisterOptions(request, env, user) {
+  const rpId = getRelyingPartyId(request);
+  const challenge = generateWebAuthnChallenge();
+
+  // Store challenge in database with 5-minute expiration
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO passkey_challenges (challenge, user_id, type, expires_at) VALUES (?, ?, ?, ?)'
+  ).bind(challenge, user.id, 'register', expiresAt).run();
+
+  // Clean up expired challenges
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE expires_at < datetime("now")').run();
+
+  // Get existing passkeys for excludeCredentials
+  const existingPasskeys = await env.DB.prepare(
+    'SELECT credential_id FROM passkeys WHERE user_id = ?'
+  ).bind(user.id).all();
+
+  const options = {
+    challenge,
+    rp: {
+      name: 'Fieldnota Commons',
+      id: rpId
+    },
+    user: {
+      id: base64urlEncode(new TextEncoder().encode(String(user.id))),
+      name: user.username,
+      displayName: user.display_name || user.username
+    },
+    pubKeyCredParams: [
+      { alg: -7, type: 'public-key' },   // ES256
+      { alg: -257, type: 'public-key' }  // RS256
+    ],
+    timeout: 300000,
+    authenticatorSelection: {
+      authenticatorAttachment: 'platform',
+      residentKey: 'preferred',
+      userVerification: 'preferred'
+    },
+    attestation: 'none',
+    excludeCredentials: existingPasskeys.results.map(pk => ({
+      id: pk.credential_id,
+      type: 'public-key'
+    }))
+  };
+
+  return json(options);
+}
+
+// Verify passkey registration
+async function handlePasskeyRegisterVerify(request, env, user) {
+  const { credential, deviceName } = await getRequestBody(request);
+
+  if (!credential || !credential.id || !credential.response) {
+    return json({ error: '無効なクレデンシャルです' }, 400);
+  }
+
+  // Verify challenge
+  const storedChallenge = await env.DB.prepare(
+    'SELECT * FROM passkey_challenges WHERE user_id = ? AND type = ? AND expires_at > datetime("now") ORDER BY created_at DESC LIMIT 1'
+  ).bind(user.id, 'register').first();
+
+  if (!storedChallenge) {
+    return json({ error: 'チャレンジが見つからないか期限切れです' }, 400);
+  }
+
+  // Delete used challenge
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(storedChallenge.id).run();
+
+  // Decode client data and verify
+  const clientDataJSON = base64urlDecode(credential.response.clientDataJSON);
+  const clientData = JSON.parse(new TextDecoder().decode(clientDataJSON));
+
+  if (clientData.type !== 'webauthn.create') {
+    return json({ error: '無効なクレデンシャルタイプです' }, 400);
+  }
+
+  if (clientData.challenge !== storedChallenge.challenge) {
+    return json({ error: 'チャレンジが一致しません' }, 400);
+  }
+
+  // Parse attestation object
+  const attestationObject = base64urlDecode(credential.response.attestationObject);
+  const attestation = parseAttestationObject(attestationObject);
+  const authData = parseAuthenticatorData(attestation.authData);
+
+  if (!authData.userPresent) {
+    return json({ error: 'ユーザー確認が必要です' }, 400);
+  }
+
+  if (!authData.credentialId || !authData.publicKey) {
+    return json({ error: '公開鍵の取得に失敗しました' }, 400);
+  }
+
+  // Encode credential ID and public key for storage
+  const credentialId = base64urlEncode(authData.credentialId);
+
+  // Re-encode public key as CBOR for storage
+  const publicKeyBytes = attestation.authData.slice(55 + authData.credentialId.length);
+  const publicKeyBase64 = base64urlEncode(publicKeyBytes);
+
+  // Check if credential already exists
+  const existing = await env.DB.prepare(
+    'SELECT id FROM passkeys WHERE credential_id = ?'
+  ).bind(credentialId).first();
+
+  if (existing) {
+    return json({ error: 'このパスキーは既に登録されています' }, 400);
+  }
+
+  // Store passkey
+  await env.DB.prepare(
+    'INSERT INTO passkeys (user_id, credential_id, public_key, counter, device_name) VALUES (?, ?, ?, ?, ?)'
+  ).bind(user.id, credentialId, publicKeyBase64, authData.signCount, deviceName || 'Unknown Device').run();
+
+  await logSecurityEvent(env, 'passkey_registered', user.id, request, { deviceName });
+
+  return json({ ok: true, message: 'パスキーを登録しました' });
+}
+
+// Generate login options for passkey
+async function handlePasskeyLoginOptions(request, env) {
+  const rpId = getRelyingPartyId(request);
+  const challenge = generateWebAuthnChallenge();
+
+  // Store challenge with 5-minute expiration
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO passkey_challenges (challenge, type, expires_at) VALUES (?, ?, ?)'
+  ).bind(challenge, 'login', expiresAt).run();
+
+  // Clean up expired challenges
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE expires_at < datetime("now")').run();
+
+  const options = {
+    challenge,
+    rpId,
+    timeout: 300000,
+    userVerification: 'preferred',
+    allowCredentials: [] // Empty to allow any registered passkey
+  };
+
+  return json(options);
+}
+
+// Verify passkey login
+async function handlePasskeyLoginVerify(request, env) {
+  const { credential } = await getRequestBody(request);
+
+  if (!credential || !credential.id || !credential.response) {
+    return json({ error: '無効なクレデンシャルです' }, 400);
+  }
+
+  const credentialId = credential.id;
+
+  // Find passkey
+  const passkey = await env.DB.prepare(
+    'SELECT p.*, u.id as uid, u.username, u.display_name, u.is_admin, u.status FROM passkeys p JOIN users u ON p.user_id = u.id WHERE p.credential_id = ?'
+  ).bind(credentialId).first();
+
+  if (!passkey) {
+    return json({ error: 'パスキーが見つかりません' }, 401);
+  }
+
+  // Check user status (valid statuses: 'approved', 'pending', 'rejected', 'needs_password')
+  if (passkey.status !== 'approved') {
+    return json({ error: 'アカウントが無効です' }, 403);
+  }
+
+  // Decode client data
+  const clientDataJSON = base64urlDecode(credential.response.clientDataJSON);
+  const clientData = JSON.parse(new TextDecoder().decode(clientDataJSON));
+
+  if (clientData.type !== 'webauthn.get') {
+    return json({ error: '無効なクレデンシャルタイプです' }, 400);
+  }
+
+  // Verify challenge exists
+  const storedChallenge = await env.DB.prepare(
+    'SELECT * FROM passkey_challenges WHERE challenge = ? AND type = ? AND expires_at > datetime("now")'
+  ).bind(clientData.challenge, 'login').first();
+
+  if (!storedChallenge) {
+    return json({ error: 'チャレンジが見つからないか期限切れです' }, 400);
+  }
+
+  // Delete used challenge
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(storedChallenge.id).run();
+
+  // Decode authenticator data and signature
+  const authData = base64urlDecode(credential.response.authenticatorData);
+  const signature = base64urlDecode(credential.response.signature);
+
+  // Verify signature
+  try {
+    const isValid = await verifyWebAuthnSignature(
+      authData,
+      clientDataJSON,
+      signature,
+      passkey.public_key
+    );
+
+    if (!isValid) {
+      await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: 'invalid_signature' });
+      return json({ error: '署名の検証に失敗しました' }, 401);
+    }
+  } catch (err) {
+    console.error('Signature verification error:', err);
+    await logSecurityEvent(env, 'passkey_login_failed', passkey.uid, request, { reason: 'signature_verification_failed' });
+    return json({ error: '署名の検証に失敗しました' }, 401);
+  }
+
+  // Parse authenticator data to get sign count
+  const parsedAuthData = parseAuthenticatorData(authData);
+
+  // Verify counter to prevent replay attacks
+  if (parsedAuthData.signCount > 0 && parsedAuthData.signCount <= passkey.counter) {
+    await logSecurityEvent(env, 'passkey_replay_attack', passkey.uid, request, {
+      expected: passkey.counter + 1,
+      received: parsedAuthData.signCount
+    });
+    return json({ error: 'リプレイ攻撃の可能性が検出されました' }, 401);
+  }
+
+  // Update counter
+  await env.DB.prepare(
+    'UPDATE passkeys SET counter = ? WHERE id = ?'
+  ).bind(parsedAuthData.signCount, passkey.id).run();
+
+  // Create session for token invalidation support
+  const sessionToken = await createSession(env, passkey.uid, request);
+
+  // Generate JWT token with session
+  const token = await createToken({
+    id: passkey.uid,
+    username: passkey.username,
+    display_name: passkey.display_name || passkey.username,
+    is_admin: !!passkey.is_admin,
+    sid: sessionToken
+  }, env.JWT_SECRET);
+
+  await logSecurityEvent(env, 'passkey_login_success', passkey.uid, request, {});
+
+  return json(
+    {
+      id: passkey.uid,
+      username: passkey.username,
+      display_name: passkey.display_name,
+      is_admin: !!passkey.is_admin
+    },
+    200,
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+  );
+}
+
+// Get user's passkeys
+async function handleGetPasskeys(env, user) {
+  const passkeys = await env.DB.prepare(
+    'SELECT id, device_name, created_at FROM passkeys WHERE user_id = ? ORDER BY created_at DESC'
+  ).bind(user.id).all();
+
+  return json(passkeys.results);
+}
+
+// Delete a passkey
+async function handleDeletePasskey(env, user, passkeyId) {
+  if (!passkeyId || isNaN(passkeyId)) {
+    return json({ error: '無効なパスキーIDです' }, 400);
+  }
+
+  // Verify ownership
+  const passkey = await env.DB.prepare(
+    'SELECT id FROM passkeys WHERE id = ? AND user_id = ?'
+  ).bind(passkeyId, user.id).first();
+
+  if (!passkey) {
+    return json({ error: 'パスキーが見つかりません' }, 404);
+  }
+
+  await env.DB.prepare('DELETE FROM passkeys WHERE id = ?').bind(passkeyId).run();
+
+  return json({ ok: true, message: 'パスキーを削除しました' });
 }

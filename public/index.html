@@ -5,13 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 
   <!-- Migration notice for old domain -->
-  <script>
-    if (location.hostname === 'map.taishi-lab.com') {
-      document.addEventListener('DOMContentLoaded', function() {
-        document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f5;font-family:system-ui,sans-serif;"><div style="background:white;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center;max-width:400px;margin:20px;"><div style="font-size:48px;margin-bottom:20px;">🏠</div><h1 style="color:#333;font-size:24px;margin-bottom:16px;">移転しました</h1><p style="color:#666;line-height:1.6;margin-bottom:24px;">Fieldnota commons は<br>新しいURLに移転しました。</p><a href="https://fieldnota-commons.com" style="display:inline-block;background:#4CAF50;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;">新しいサイトへ</a><p style="color:#999;font-size:12px;margin-top:20px;">https://fieldnota-commons.com</p></div></div>';
-      });
-    }
-  </script>
+  <script src="/js/migration.js"></script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Fieldnota">
@@ -19,7 +13,11 @@
   <title>Fieldnota commons</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/images/logo-icon.png" type="image/png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/images/logo-icon.png">
   <link rel="apple-touch-icon" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="/images/logo-icon.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="stylesheet" href="/css/style.css" />
@@ -30,8 +28,8 @@
 <div class="login-screen" id="login-screen">
   <div class="login-card">
     <div class="login-logo">
-      <img src="/images/logo-icon.svg" alt="Fieldnota" style="width:50px;height:50px;">
-      <h1>Fieldnota commons</h1>
+      <img src="/images/logo-icon2.png" alt="Fieldnota" style="width:50px;height:50px;">
+      <img src="/images/logo-title2.png" alt="Fieldnota commons" style="height:32px;">
     </div>
     <p class="login-tagline">見つけたナニカを、notaに記録する。共有する。</p>
     <p class="login-subtitle">続けるにはログインしてください</p>
@@ -53,7 +51,16 @@
         <input type="text" id="login-display-name" placeholder="表示名（省略可）">
       </div>
       <div id="login-error" class="login-error"></div>
+      <p id="login-terms" class="login-terms" style="display:none;font-size:12px;color:#666;margin-bottom:12px;text-align:center;">
+        アカウント作成すると、<a href="/about.html#terms" target="_blank" style="color:#4CAF50;">利用規約</a>と<a href="/about.html#privacy" target="_blank" style="color:#4CAF50;">プライバシーポリシー</a>に同意したものとみなされます。
+      </p>
       <button class="btn btn-primary btn-block" id="login-submit" onclick="submitLogin()">ログイン</button>
+      <div id="passkey-login-section" style="margin-top:12px;text-align:center;">
+        <div style="color:#666;font-size:12px;margin-bottom:8px;">または</div>
+        <button class="btn btn-secondary btn-block" id="passkey-login-btn" onclick="loginWithPasskey()" style="display:none;">
+          <i class="fas fa-fingerprint"></i> パスキーでログイン
+        </button>
+      </div>
       <p class="login-toggle">
         <a href="#" id="login-toggle-link" onclick="toggleLoginMode(event)">アカウントを作成</a>
       </p>
@@ -85,12 +92,16 @@
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
-  <div class="sidebar-header">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <img src="/images/logo-icon.png" alt="Fieldnota" style="width:28px;height:28px;">
-      <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:20px;">
+  <div class="sidebar-header" id="sidebar-header">
+    <div class="sidebar-header-bg" id="sidebar-header-bg"></div>
+    <div class="sidebar-header-overlay"></div>
+    <div class="sidebar-header-content">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <img src="/images/logo-icon.png" alt="Fieldnota" style="width:28px;height:28px;">
+        <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:20px;">
+      </div>
+      <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
     </div>
-    <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
   </div>
   <div class="sidebar-content" id="sidebar-content">
     <!-- Dynamic content -->
@@ -450,7 +461,7 @@
     </div>
     <div class="form-group">
       <label>新しいパスワード</label>
-      <input type="password" id="settings-new-password" placeholder="新しいパスワード（4文字以上）">
+      <input type="password" id="settings-new-password" placeholder="新しいパスワード（12文字以上）">
     </div>
     <div class="form-group">
       <label>新しいパスワード（確認）</label>
@@ -471,6 +482,24 @@
       </div>
       <small style="color:#666;margin-top:4px;display:block;">新着コメント・ピン・KMLの通知を受け取ります</small>
       <div id="settings-push-result" style="margin-top:8px;font-size:12px;display:none;"></div>
+    </div>
+    <div class="section-title" style="margin-top:16px;" id="passkey-section-title">パスキー（顔認証/指紋認証）</div>
+    <div class="form-group" id="settings-passkey-container">
+      <div id="passkey-unsupported" style="color:#666;font-size:13px;display:none;">
+        <i class="fas fa-exclamation-triangle"></i> このブラウザはパスキーに対応していません
+      </div>
+      <div id="passkey-content">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="color:#666;font-size:13px;">登録済みパスキー</span>
+          <button class="btn btn-sm btn-primary" onclick="registerPasskey()">
+            <i class="fas fa-plus"></i> 追加
+          </button>
+        </div>
+        <div id="passkey-list" style="margin-top:8px;">
+          <div style="color:#666;font-size:13px;"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>
+        </div>
+      </div>
+      <small style="color:#666;margin-top:8px;display:block;">パスワードなしで顔認証や指紋認証でログインできます</small>
     </div>
     <div class="section-title" style="margin-top:16px;">プラン管理</div>
     <div class="form-group" id="settings-plan-container">
@@ -609,7 +638,7 @@
     </div>
     <div class="form-group">
       <label>パスワード</label>
-      <input type="password" id="setup-password" placeholder="4文字以上">
+      <input type="password" id="setup-password" placeholder="12文字以上">
     </div>
     <div class="form-group">
       <label>パスワード（確認）</label>
@@ -624,6 +653,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
 <script src="/js/config.js"></script>
+<script src="/js/sentry-init.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

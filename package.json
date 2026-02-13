@@ -8,7 +8,9 @@
     "deploy": "wrangler pages deploy ./public",
     "db:create": "wrangler d1 create kmldata-db",
     "db:migrate": "wrangler d1 execute kmldata-db --file=./migrations/0001_init.sql",
-    "db:migrate:local": "wrangler d1 execute kmldata-db --local --file=./migrations/0001_init.sql"
+    "db:migrate:local": "wrangler d1 execute kmldata-db --local --file=./migrations/0001_init.sql",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix"
   },
   "repository": {
     "type": "git",

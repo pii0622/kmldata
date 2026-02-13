@@ -17,12 +17,16 @@ let watchId = null;
 let pendingUsersCount = 0;
 let pushSubscription = null;
 let deferredInstallPrompt = null;
+let userUsageData = null;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
   center: [35.0, 135.0],
   zoom: 6,
-  zoomControl: false
+  zoomControl: false,
+  minZoom: 2,
+  maxBounds: [[-90, -180], [90, 180]],
+  maxBoundsViscosity: 1.0
 });
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -30,11 +34,13 @@ L.control.zoom({ position: 'bottomright' }).addTo(map);
 // GSI Tiles
 const gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 18
+  maxZoom: 18,
+  noWrap: true
 });
 const gsiPhoto = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
   attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-  maxZoom: 18
+  maxZoom: 18,
+  noWrap: true
 });
 
 gsiStd.addTo(map);
@@ -70,7 +76,7 @@ function notify(msg, type = 'success') {
   setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
 }
 
-async function api(url, opts = {}) {
+async function api(url, opts = {}, isRetry = false) {
   let res;
   try {
     res = await fetch(url, {
@@ -79,24 +85,55 @@ async function api(url, opts = {}) {
       ...opts
     });
   } catch (err) {
+    if (window.ErrorMonitor) window.ErrorMonitor.captureApiError(url, 0, 'Network error');
     throw new Error('ネットワークエラー: サーバーに接続できません');
+  }
+  // Auto-refresh token on 401 (expired JWT)
+  if (res.status === 401 && !isRetry && !url.includes('/auth/')) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) return api(url, opts, true);
+    window.location.href = '/login.html';
+    throw new Error('セッションの有効期限が切れました');
   }
   let data;
   try {
     data = await res.json();
   } catch {
+    if (window.ErrorMonitor) window.ErrorMonitor.captureApiError(url, res.status, 'JSON parse failed');
     throw new Error('サーバーからの応答を解析できませんでした');
   }
-  if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
+  if (!res.ok) {
+    // 5xxサーバーエラーのみSentryに報告（4xxはユーザー操作の範囲）
+    if (res.status >= 500 && window.ErrorMonitor) {
+      window.ErrorMonitor.captureApiError(url, res.status, data.error);
+    }
+    throw new Error(data.error || 'エラーが発生しました');
+  }
   return data;
 }
 
-async function apiFormData(url, formData) {
+async function tryRefreshToken() {
+  try {
+    const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function apiFormData(url, formData, isRetry = false) {
   const res = await fetch(url, {
     method: 'POST',
     body: formData,
     credentials: 'include'
   });
+  // Auto-refresh token on 401 (expired JWT)
+  if (res.status === 401 && !isRetry) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) return apiFormData(url, formData, true);
+    window.location.href = '/login.html';
+    throw new Error('セッションの有効期限が切れました');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
   return data;
@@ -125,10 +162,12 @@ let loginMode = 'login';
 async function checkAuth() {
   try {
     currentUser = await api('/api/auth/me');
+    if (window.ErrorMonitor) window.ErrorMonitor.setUser(currentUser);
     updateLoginScreen();
     updateUI();
   } catch {
     currentUser = null;
+    if (window.ErrorMonitor) window.ErrorMonitor.setUser(null);
     updateLoginScreen();
     updateUI();
   }
@@ -148,6 +187,7 @@ function toggleLoginMode(e) {
   loginMode = loginMode === 'login' ? 'register' : 'login';
   document.getElementById('login-email-group').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-display-name-group').style.display = loginMode === 'register' ? '' : 'none';
+  document.getElementById('login-terms').style.display = loginMode === 'register' ? '' : 'none';
   document.getElementById('login-submit').textContent = loginMode === 'login' ? 'ログイン' : 'アカウント作成';
   document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
   document.getElementById('login-username').placeholder = loginMode === 'register' ? 'Taro Yamada' : 'ユーザー名';
@@ -264,6 +304,7 @@ async function submitAuth() {
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' });
   currentUser = null;
+  userUsageData = null;
   notify('ログアウトしました');
   updateLoginScreen();
   updateUI();
@@ -318,8 +359,8 @@ async function submitPasswordSetup() {
     return;
   }
 
-  if (password.length < 4) {
-    errEl.textContent = 'パスワードは4文字以上にしてください';
+  if (password.length < 12) {
+    errEl.textContent = 'パスワードは12文字以上にしてください';
     errEl.style.display = 'block';
     return;
   }
@@ -397,9 +438,15 @@ function renderSidebar() {
 
   // Auth section
   if (currentUser) {
+    const tierBadge = userUsageData
+      ? (userUsageData.plan === 'premium' || userUsageData.is_admin
+          ? '<span class="badge badge-premium">Premium</span>'
+          : '<span class="badge badge-free">Free</span>')
+      : '';
     html += `<div class="user-info">
       <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
       ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
+      ${tierBadge}
       <div style="float:right;display:flex;gap:4px;">
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
@@ -442,6 +489,39 @@ function renderSidebar() {
       </button>
     </div>`;
     html += renderPinFolderList();
+  }
+
+  // Usage limits footer for free tier users
+  if (currentUser && userUsageData && userUsageData.has_limits) {
+    const u = userUsageData.usage;
+    html += `<div class="sidebar-usage-footer">
+      <div class="usage-title"><i class="fas fa-chart-pie"></i> 無料プラン使用状況</div>
+      <div class="usage-items">
+        <div class="usage-item">
+          <span class="usage-label">KMLフォルダ</span>
+          <span class="usage-value ${u.kmlFolders.current >= u.kmlFolders.max ? 'at-limit' : ''}">${u.kmlFolders.current}/${u.kmlFolders.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">ピンフォルダ</span>
+          <span class="usage-value ${u.pinFolders.current >= u.pinFolders.max ? 'at-limit' : ''}">${u.pinFolders.current}/${u.pinFolders.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">KMLファイル</span>
+          <span class="usage-value ${u.kmlFiles.current >= u.kmlFiles.max ? 'at-limit' : ''}">${u.kmlFiles.current}/${u.kmlFiles.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">ピン</span>
+          <span class="usage-value ${u.pins.current >= u.pins.max ? 'at-limit' : ''}">${u.pins.current}/${u.pins.max}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">共有</span>
+          <span class="usage-value ${u.shares.current >= u.shares.max ? 'at-limit' : ''}">${u.shares.current}/${u.shares.max}</span>
+        </div>
+      </div>
+      <a href="#" onclick="showAccountSettings();return false;" class="upgrade-link">
+        <i class="fas fa-crown"></i> プレミアムにアップグレード
+      </a>
+    </div>`;
   }
 
   c.innerHTML = html;
@@ -659,7 +739,9 @@ async function createKmlFolder() {
     });
     closeModal('modal-kml-folder');
     notify('KMLフォルダを作成しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -682,7 +764,9 @@ async function deleteKmlFolder(folderId) {
   try {
     await api(`/api/kml-folders/${folderId}`, { method: 'DELETE' });
     notify('KMLフォルダを削除しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -852,7 +936,9 @@ async function uploadKmlFile() {
     await apiFormData('/api/kml-files/upload', formData);
     closeModal('modal-kml-upload');
     notify('KMLをアップロードしました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -861,7 +947,9 @@ async function deleteKmlFile(fileId) {
   try {
     await api(`/api/kml-files/${fileId}`, { method: 'DELETE' });
     notify('KMLを削除しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -871,6 +959,10 @@ async function showShareKmlFolderModal(folderId) {
   document.getElementById('share-kml-folder-id').value = folderId;
   const folder = kmlFolders.find(f => f.id === folderId);
   const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
+
+  // Clear previous state to prevent checkbox states from carrying over between folders
+  shareKmlSharedWith = [];
+  document.getElementById('share-kml-user-list').innerHTML = '';
 
   // Fetch shared members
   try {
@@ -979,7 +1071,9 @@ async function shareKmlFolder() {
     });
     closeModal('modal-share-kml');
     notify('共有設定を更新しました');
-    loadKmlFolders();
+    await loadKmlFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -997,6 +1091,8 @@ function showAccountSettings() {
   updateInstallUI();
   // Load plan information
   loadPlanInfo();
+  // Load passkeys
+  loadPasskeys();
 }
 
 async function saveAccountSettings() {
@@ -1013,8 +1109,8 @@ async function saveAccountSettings() {
       errEl.style.display = 'block';
       return;
     }
-    if (newPassword.length < 4) {
-      errEl.textContent = '新しいパスワードは4文字以上にしてください';
+    if (newPassword.length < 12) {
+      errEl.textContent = '新しいパスワードは12文字以上にしてください';
       errEl.style.display = 'block';
       return;
     }
@@ -1097,11 +1193,11 @@ async function loadPlanInfo() {
     actionsEl.innerHTML = '';
 
     if (data.plan === 'free') {
-      // Free user - show upgrade button
+      // Free user - show link to pricing page
       actionsEl.innerHTML = `
-        <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
-          <i class="fas fa-crown"></i> プレミアムへ
-        </button>
+        <a href="/about.html#pricing" class="btn btn-sm btn-primary" style="text-decoration:none;">
+          <i class="fas fa-crown"></i> 料金プランを確認
+        </a>
       `;
     } else if (data.managed_by === 'stripe') {
       // Stripe managed - show manage button
@@ -1135,9 +1231,7 @@ async function loadPlanInfo() {
     badgeEl.style.color = 'white';
     sourceEl.textContent = '';
     actionsEl.innerHTML = `
-      <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
-        <i class="fas fa-crown"></i> プレミアムへ
-      </button>
+      <span style="font-size:11px;color:#999;">読み込みに失敗しました</span>
     `;
   }
 }
@@ -1163,9 +1257,16 @@ async function upgradeToPremium() {
 }
 
 async function openStripePortal() {
+  // Prompt for password verification
+  const password = prompt('セキュリティ確認のため、パスワードを入力してください');
+  if (!password) {
+    return;
+  }
+
   try {
     const data = await api('/api/stripe/create-portal-session', {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({ password })
     });
 
     if (data.url) {
@@ -1192,6 +1293,20 @@ async function cancelSubscription() {
     loadPlanInfo();
   } catch (err) {
     notify(err.message, 'error');
+  }
+}
+
+// ==================== Usage Data ====================
+async function loadUsageData() {
+  if (!currentUser) {
+    userUsageData = null;
+    return;
+  }
+  try {
+    userUsageData = await api('/api/usage');
+  } catch (err) {
+    console.error('Failed to load usage data:', err);
+    userUsageData = null;
   }
 }
 
@@ -1536,7 +1651,9 @@ async function createFolder() {
     });
     closeModal('modal-folder');
     notify('フォルダを作成しました');
-    loadFolders();
+    await loadFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -1559,8 +1676,10 @@ async function deleteFolder(folderId) {
   try {
     await api('/api/folders/' + folderId, { method: 'DELETE' });
     notify('フォルダを削除しました');
-    loadFolders();
-    loadPins();
+    await loadFolders();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -1599,6 +1718,10 @@ async function showShareFolderModal(folderId) {
   document.getElementById('share-folder-id').value = folderId;
   const folder = folders.find(f => f.id === folderId);
   const isOwner = folder?.is_owner || (currentUser && currentUser.is_admin);
+
+  // Clear previous state to prevent checkbox states from carrying over between folders
+  shareFolderSharedWith = [];
+  document.getElementById('share-folder-user-list').innerHTML = '';
 
   // Fetch shared members
   try {
@@ -1695,7 +1818,9 @@ async function shareFolder() {
     });
     closeModal('modal-share-folder');
     notify('共有設定を更新しました');
-    loadFolders();
+    await loadFolders();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2349,6 +2474,32 @@ async function openNotificationsPopup() {
           <i class="fas fa-folder"></i> ${escHtml(item.folder_name || '未分類')}
         </div>
       </div>`;
+    } else if (item.type === 'folder_share') {
+      return `<div onclick="closeNotificationsPopup()" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#6f42c1;"><i class="fas fa-share-alt"></i> フォルダ共有</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          <i class="fas fa-folder" style="color:#6f42c1;"></i> ${escHtml(item.folder_name)}
+        </div>
+        <div style="font-size:12px;color:#666;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span> さんがピンフォルダを共有しました
+        </div>
+      </div>`;
+    } else if (item.type === 'kml_folder_share') {
+      return `<div onclick="closeNotificationsPopup()" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#e83e8c;"><i class="fas fa-share-alt"></i> KMLフォルダ共有</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          <i class="fas fa-folder" style="color:#e83e8c;"></i> ${escHtml(item.folder_name)}
+        </div>
+        <div style="font-size:12px;color:#666;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span> さんがKMLフォルダを共有しました
+        </div>
+      </div>`;
     }
     return '';
   }).join('');
@@ -2544,7 +2695,9 @@ async function savePin() {
     }
     cancelPinMode();
     notify('ピンを作成しました');
-    loadPins();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2624,7 +2777,9 @@ async function deletePin(pinId) {
   try {
     await api('/api/pins/' + pinId, { method: 'DELETE' });
     notify('ピンを削除しました');
-    loadPins();
+    await loadPins();
+    await loadUsageData();
+    renderSidebar();
   } catch (err) { notify(err.message, 'error'); }
 }
 
@@ -2714,7 +2869,7 @@ async function loadFolders() {
 }
 
 async function loadAll() {
-  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers()]);
+  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers(), loadUsageData()]);
 }
 
 // ==================== Service Worker ====================
@@ -2762,15 +2917,350 @@ async function getTileCacheCount() {
   return 0;
 }
 
+// ==================== Passkeys (WebAuthn) ====================
+
+// Check if WebAuthn is supported
+function isPasskeySupported() {
+  return window.PublicKeyCredential !== undefined &&
+    typeof window.PublicKeyCredential === 'function';
+}
+
+// Initialize passkey UI
+function initPasskeyUI() {
+  const loginBtn = document.getElementById('passkey-login-btn');
+  const unsupported = document.getElementById('passkey-unsupported');
+  const content = document.getElementById('passkey-content');
+  const supported = isPasskeySupported();
+
+  console.log('Passkey support:', supported, 'Login button found:', !!loginBtn);
+
+  if (supported) {
+    if (loginBtn) loginBtn.style.display = 'block';
+    if (unsupported) unsupported.style.display = 'none';
+    if (content) content.style.display = 'block';
+  } else {
+    if (loginBtn) loginBtn.style.display = 'none';
+    if (unsupported) unsupported.style.display = 'block';
+    if (content) content.style.display = 'none';
+  }
+}
+
+// Ensure passkey UI is initialized when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPasskeyUI);
+} else {
+  // DOM is already ready, but init() will call initPasskeyUI() later
+}
+
+// Base64URL encode/decode utilities
+function base64urlEncode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function base64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Register a new passkey
+async function registerPasskey() {
+  if (!isPasskeySupported()) {
+    alert('このブラウザはパスキーに対応していません');
+    return;
+  }
+
+  try {
+    // Get device name
+    const deviceName = prompt('このパスキーの名前を入力してください（例: iPhone, MacBook）', getDeviceName());
+    if (deviceName === null) return;
+
+    // Get registration options from server
+    const options = await api('/api/auth/passkey/register/options', { method: 'POST' });
+
+    // Convert options for WebAuthn API
+    const publicKeyOptions = {
+      challenge: base64urlDecode(options.challenge),
+      rp: options.rp,
+      user: {
+        id: base64urlDecode(options.user.id),
+        name: options.user.name,
+        displayName: options.user.displayName
+      },
+      pubKeyCredParams: options.pubKeyCredParams,
+      timeout: options.timeout,
+      authenticatorSelection: options.authenticatorSelection,
+      attestation: options.attestation,
+      excludeCredentials: options.excludeCredentials.map(c => ({
+        id: base64urlDecode(c.id),
+        type: c.type
+      }))
+    };
+
+    // Create credential
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyOptions
+    });
+
+    // Send credential to server for verification
+    const response = await api('/api/auth/passkey/register/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        credential: {
+          id: credential.id,
+          rawId: base64urlEncode(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: base64urlEncode(credential.response.clientDataJSON),
+            attestationObject: base64urlEncode(credential.response.attestationObject)
+          }
+        },
+        deviceName: deviceName || 'Unknown Device'
+      })
+    });
+
+    alert('パスキーを登録しました');
+    loadPasskeys();
+  } catch (err) {
+    console.error('Passkey registration error:', err);
+    if (err.name === 'NotAllowedError') {
+      alert('パスキーの登録がキャンセルされました');
+    } else {
+      alert('パスキーの登録に失敗しました: ' + (err.message || err));
+    }
+  }
+}
+
+// Get a friendly device name
+function getDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Mac/.test(ua)) return 'Mac';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Unknown Device';
+}
+
+// Login with passkey
+async function loginWithPasskey() {
+  if (!isPasskeySupported()) {
+    alert('このブラウザはパスキーに対応していません');
+    return;
+  }
+
+  try {
+    // Get login options from server
+    const options = await api('/api/auth/passkey/login/options', { method: 'POST' });
+
+    // Convert options for WebAuthn API
+    const publicKeyOptions = {
+      challenge: base64urlDecode(options.challenge),
+      rpId: options.rpId,
+      timeout: options.timeout,
+      userVerification: options.userVerification,
+      allowCredentials: options.allowCredentials.map(c => ({
+        id: base64urlDecode(c.id),
+        type: c.type
+      }))
+    };
+
+    // Get credential
+    const credential = await navigator.credentials.get({
+      publicKey: publicKeyOptions
+    });
+
+    // Send credential to server for verification
+    const result = await api('/api/auth/passkey/login/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        credential: {
+          id: credential.id,
+          rawId: base64urlEncode(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: base64urlEncode(credential.response.clientDataJSON),
+            authenticatorData: base64urlEncode(credential.response.authenticatorData),
+            signature: base64urlEncode(credential.response.signature),
+            userHandle: credential.response.userHandle ? base64urlEncode(credential.response.userHandle) : null
+          }
+        }
+      })
+    });
+
+    currentUser = result;
+    closeModal('modal-auth');
+    notify('パスキーでログインしました');
+    updateLoginScreen();
+    updateUI();
+    await loadAll();
+  } catch (err) {
+    console.error('Passkey login error:', err);
+    if (err.name === 'NotAllowedError') {
+      alert('パスキーによるログインがキャンセルされました');
+    } else {
+      alert('パスキーによるログインに失敗しました: ' + (err.message || err));
+    }
+  }
+}
+
+// Load user's passkeys
+async function loadPasskeys() {
+  const container = document.getElementById('passkey-list');
+  if (!container) return;
+
+  if (!currentUser) {
+    container.innerHTML = '';
+    return;
+  }
+
+  try {
+    const passkeys = await api('/api/auth/passkeys');
+
+    if (passkeys.length === 0) {
+      container.innerHTML = '<div style="color:#666;font-size:13px;">パスキーが登録されていません</div>';
+    } else {
+      container.innerHTML = passkeys.map(pk => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;background:#f5f5f5;border-radius:4px;margin-bottom:4px;">
+          <div>
+            <i class="fas fa-key" style="color:#4CAF50;margin-right:8px;"></i>
+            <span style="font-size:13px;">${escHtml(pk.device_name)}</span>
+            <span style="color:#999;font-size:11px;margin-left:8px;">${new Date(pk.created_at).toLocaleDateString('ja-JP')}</span>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deletePasskey(${pk.id})" title="削除">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      `).join('');
+    }
+  } catch (err) {
+    console.error('Load passkeys error:', err);
+    container.innerHTML = '<div style="color:#dc3545;font-size:13px;">読み込みエラー</div>';
+  }
+}
+
+// Delete a passkey
+async function deletePasskey(id) {
+  if (!confirm('このパスキーを削除しますか？')) return;
+
+  try {
+    await api(`/api/auth/passkey/${id}`, { method: 'DELETE' });
+    loadPasskeys();
+  } catch (err) {
+    alert('パスキーの削除に失敗しました: ' + (err.message || err));
+  }
+}
+
+// ==================== Prevent Leaflet Pointer Event Interference ====================
+// Leaflet adds document-level pointer event listeners with capture:true
+// This prevents them from interfering with form inputs in login screen and modals
+function preventLeafletFormInterference() {
+  const stopPropagationForForms = (e) => {
+    const target = e.target;
+    // Protect login screen forms
+    const loginScreen = document.getElementById('login-screen');
+    if (loginScreen && !loginScreen.classList.contains('hidden') &&
+        loginScreen.contains(target)) {
+      e.stopPropagation();
+      return;
+    }
+    // Protect modal forms (they have class 'modal-overlay active')
+    const activeModal = target.closest('.modal-overlay.active');
+    if (activeModal) {
+      e.stopPropagation();
+      return;
+    }
+  };
+
+  // Add listeners on window in capture phase (fires before document)
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel',
+   'touchstart', 'touchmove', 'touchend', 'touchcancel',
+   'mousedown', 'mousemove', 'mouseup'].forEach(eventType => {
+    window.addEventListener(eventType, stopPropagationForForms, true);
+  });
+}
+
+// ==================== Sidebar Header Image ====================
+const heroImages = [
+  '/images/hero/_SDI8143.jpg',
+  '/images/hero/_SDI8149.jpg',
+  '/images/hero/_SDI8162.jpg',
+  '/images/hero/_SDI8166.jpg',
+  '/images/hero/_SDI8169.jpg'
+];
+let sidebarImagePreloaded = false;
+let selectedHeroImage = null;
+
+function initSidebarHeaderImage() {
+  // Select random image at init
+  const randomIndex = Math.floor(Math.random() * heroImages.length);
+  selectedHeroImage = heroImages[randomIndex];
+
+  // Add preload trigger to sidebar toggle button
+  const toggleBtn = document.querySelector('.sidebar-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('mouseenter', preloadSidebarImage);
+    toggleBtn.addEventListener('touchstart', preloadSidebarImage, { passive: true });
+  }
+
+  // Also start preloading after a short delay (for mobile users who tap directly)
+  setTimeout(preloadSidebarImage, 2000);
+}
+
+function preloadSidebarImage() {
+  if (sidebarImagePreloaded || !selectedHeroImage) return;
+  sidebarImagePreloaded = true;
+
+  const bgElement = document.getElementById('sidebar-header-bg');
+  if (!bgElement) return;
+
+  const img = new Image();
+  img.onload = function() {
+    bgElement.style.backgroundImage = `url('${selectedHeroImage}')`;
+  };
+  img.src = selectedHeroImage;
+}
+
 // ==================== Init ====================
 async function init() {
+  initSidebarHeaderImage();
+  preventLeafletFormInterference();
   registerServiceWorker();
   initInstallPrompt();
+  initPasskeyUI();
   checkPasswordSetup();
   await checkAuth();
   await loadAll();
   startWatchingLocation();
   initPushNotifications();
+
+  // Check for upgrade success
+  checkUpgradeSuccess();
+}
+
+// Check if user just upgraded to premium
+function checkUpgradeSuccess() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('upgrade') === 'success') {
+    // Remove the parameter from URL without reloading
+    const newUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, newUrl);
+
+    // Show success notification with slight delay for better UX
+    setTimeout(() => {
+      notify('ありがとうございます！プレミアムにアップグレードしました！', 'success');
+    }, 500);
+  }
 }
 
 init();

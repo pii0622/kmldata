@@ -1,7 +1,7 @@
 {
   "name": "Fieldnota commons",
   "short_name": "Fieldnota",
-  "description": "見つけたナニカを、notaに記録する。共有する。",
+  "description": "見つけたナニカを、notaに記録する。共有する。（日本版）",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -9,15 +9,15 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/images/logo-icon.svg",
+      "src": "/images/logo-icon.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/images/logo-icon.svg",
+      "src": "/images/logo-icon.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

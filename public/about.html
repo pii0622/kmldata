@@ -7,487 +7,30 @@
   <meta name="description" content="ピンとKMLをフォルダ単位で仲間と共有できる地図アプリ。SNSではない、選択的な共有のための記録ツール。">
   <link rel="icon" href="/images/logo-icon.png" type="image/png">
   <link rel="apple-touch-icon" href="/images/logo-icon.png">
-  <style>
-    :root {
-      --color-primary: #4CAF50;
-      --color-primary-dark: #2E7D32;
-      --color-text: #333;
-      --color-text-muted: #666;
-      --color-bg: #f5f7f5;
-      --color-white: #fff;
-      --color-border: #e0e0e0;
-      --shadow-card: 0 2px 8px rgba(0,0,0,0.08);
-      --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.12);
-      --max-width-content: 720px;
-      --max-width-wide: 960px;
-      --spacing-section: 80px;
-      --radius: 12px;
-    }
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
-      line-height: 1.7;
-      color: var(--color-text);
-      background: var(--color-bg);
-      -webkit-font-smoothing: antialiased;
-    }
-
-    /* Layout */
-    .container {
-      max-width: var(--max-width-wide);
-      margin: 0 auto;
-      padding: 0 20px;
-    }
-
-    .container--narrow {
-      max-width: var(--max-width-content);
-    }
-
-    section {
-      padding: var(--spacing-section) 0;
-    }
-
-    /* Typography */
-    h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); font-weight: 700; }
-    h2 { font-size: clamp(1.25rem, 4vw, 1.75rem); font-weight: 600; margin-bottom: 24px; }
-    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
-    p { margin-bottom: 16px; }
-
-    /* Hero */
-    .hero {
-      background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
-      color: var(--color-white);
-      padding: 60px 0 80px;
-      text-align: center;
-    }
-
-    .hero__logo {
-      width: 64px;
-      height: 64px;
-      margin-bottom: 16px;
-      filter: brightness(0) invert(1);
-    }
-
-    .hero h1 {
-      margin-bottom: 12px;
-    }
-
-    .hero__tagline {
-      font-size: clamp(1rem, 3vw, 1.25rem);
-      opacity: 0.95;
-      margin-bottom: 16px;
-    }
-
-    .hero__desc {
-      font-size: 1rem;
-      opacity: 0.9;
-      max-width: 480px;
-      margin: 0 auto 32px;
-      line-height: 1.8;
-    }
-
-    .hero__actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      justify-content: center;
-    }
-
-    /* Buttons */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 14px 28px;
-      border-radius: 30px;
-      font-size: 1rem;
-      font-weight: 600;
-      text-decoration: none;
-      transition: transform 0.2s, box-shadow 0.2s;
-      cursor: pointer;
-      border: none;
-    }
-
-    .btn:focus {
-      outline: 3px solid rgba(255,255,255,0.5);
-      outline-offset: 2px;
-    }
-
-    .btn--primary {
-      background: var(--color-white);
-      color: var(--color-primary-dark);
-    }
-
-    .btn--primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    }
-
-    .btn--secondary {
-      background: transparent;
-      color: var(--color-white);
-      border: 2px solid rgba(255,255,255,0.6);
-    }
-
-    .btn--secondary:hover {
-      background: rgba(255,255,255,0.1);
-      border-color: var(--color-white);
-    }
-
-    /* Cards */
-    .card {
-      background: var(--color-white);
-      border-radius: var(--radius);
-      padding: 28px;
-      box-shadow: var(--shadow-card);
-      transition: box-shadow 0.2s;
-    }
-
-    .card:hover {
-      box-shadow: var(--shadow-card-hover);
-    }
-
-    /* Features */
-    .features {
-      background: var(--color-white);
-    }
-
-    .features__grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 24px;
-    }
-
-    .feature-card {
-      text-align: center;
-      padding: 32px 24px;
-      background: var(--color-bg);
-    }
-
-    .feature-card__icon {
-      font-size: 2.5rem;
-      margin-bottom: 16px;
-    }
-
-    .feature-card h3 {
-      color: var(--color-primary-dark);
-    }
-
-    .feature-card p {
-      color: var(--color-text-muted);
-      font-size: 0.95rem;
-      margin-bottom: 0;
-    }
-
-    /* How to use */
-    .how {
-      background: var(--color-bg);
-    }
-
-    .how__steps {
-      display: grid;
-      gap: 20px;
-    }
-
-    .step {
-      display: flex;
-      gap: 20px;
-      align-items: flex-start;
-    }
-
-    .step__number {
-      flex-shrink: 0;
-      width: 40px;
-      height: 40px;
-      background: var(--color-primary);
-      color: var(--color-white);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 1.1rem;
-    }
-
-    .step__content {
-      flex: 1;
-      padding-top: 6px;
-    }
-
-    .step__content h3 {
-      margin-bottom: 4px;
-    }
-
-    .step__content p {
-      color: var(--color-text-muted);
-      font-size: 0.95rem;
-      margin-bottom: 0;
-    }
-
-    /* Policy */
-    .policy {
-      background: var(--color-white);
-    }
-
-    .policy__box {
-      background: linear-gradient(135deg, #f8faf8 0%, #f0f4f0 100%);
-      border-left: 4px solid var(--color-primary);
-      padding: 28px 32px;
-      border-radius: 0 var(--radius) var(--radius) 0;
-    }
-
-    .policy__box h2 {
-      color: var(--color-primary-dark);
-      margin-bottom: 20px;
-    }
-
-    .policy__list {
-      list-style: none;
-    }
-
-    .policy__list li {
-      position: relative;
-      padding-left: 24px;
-      margin-bottom: 12px;
-      color: var(--color-text);
-    }
-
-    .policy__list li::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 10px;
-      width: 8px;
-      height: 8px;
-      background: var(--color-primary);
-      border-radius: 50%;
-    }
-
-    .policy__list li:last-child {
-      margin-bottom: 0;
-    }
-
-    /* Map sources */
-    .map-sources {
-      background: var(--color-bg);
-      padding: 40px 0;
-    }
-
-    .map-sources__inner {
-      text-align: center;
-      color: var(--color-text-muted);
-      font-size: 0.9rem;
-    }
-
-    .map-sources__inner strong {
-      color: var(--color-text);
-    }
-
-    /* FAQ */
-    .faq {
-      background: var(--color-white);
-    }
-
-    .faq__list {
-      display: grid;
-      gap: 12px;
-    }
-
-    .faq__item {
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-
-    .faq__question {
-      width: 100%;
-      background: none;
-      border: none;
-      padding: 20px 24px;
-      text-align: left;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--color-text);
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      transition: background 0.2s;
-    }
-
-    .faq__question:hover {
-      background: var(--color-bg);
-    }
-
-    .faq__question:focus {
-      outline: 2px solid var(--color-primary);
-      outline-offset: -2px;
-    }
-
-    .faq__icon {
-      font-size: 1.25rem;
-      transition: transform 0.3s;
-      color: var(--color-primary);
-    }
-
-    .faq__item[open] .faq__icon {
-      transform: rotate(45deg);
-    }
-
-    .faq__answer {
-      padding: 0 24px 20px;
-      color: var(--color-text-muted);
-      line-height: 1.8;
-    }
-
-    /* Footer */
-    .footer {
-      background: var(--color-primary-dark);
-      color: var(--color-white);
-      padding: 40px 0;
-    }
-
-    .footer__inner {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 20px;
-    }
-
-    .footer__links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 24px;
-      list-style: none;
-    }
-
-    .footer__links a {
-      color: rgba(255,255,255,0.85);
-      text-decoration: none;
-      font-size: 0.9rem;
-      transition: color 0.2s;
-    }
-
-    .footer__links a:hover {
-      color: var(--color-white);
-    }
-
-    .footer__copy {
-      font-size: 0.85rem;
-      opacity: 0.7;
-    }
-
-    .footer__app-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(255,255,255,0.15);
-      padding: 10px 20px;
-      border-radius: 20px;
-      color: var(--color-white);
-      text-decoration: none;
-      font-size: 0.9rem;
-      transition: background 0.2s;
-    }
-
-    .footer__app-link:hover {
-      background: rgba(255,255,255,0.25);
-    }
-
-    /* Responsive */
-    @media (max-width: 600px) {
-      :root {
-        --spacing-section: 60px;
-      }
-
-      .hero {
-        padding: 48px 0 64px;
-      }
-
-      .hero__logo {
-        width: 52px;
-        height: 52px;
-      }
-
-      .hero__actions {
-        flex-direction: column;
-        padding: 0 20px;
-      }
-
-      .btn {
-        width: 100%;
-      }
-
-      .step {
-        gap: 16px;
-      }
-
-      .step__number {
-        width: 36px;
-        height: 36px;
-        font-size: 1rem;
-      }
-
-      .policy__box {
-        padding: 24px;
-      }
-
-      .footer__inner {
-        flex-direction: column;
-        text-align: center;
-      }
-
-      .footer__links {
-        justify-content: center;
-      }
-    }
-
-    /* Accessibility */
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      *, *::before, *::after { transition-duration: 0.01ms !important; }
-    }
-
-    .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0,0,0,0);
-      border: 0;
-    }
-  </style>
+  <link rel="stylesheet" href="/css/about.css">
 </head>
 <body>
 
 <!-- Hero -->
 <header class="hero">
+  <div class="hero__gallery">
+    <img src="/images/hero/_SDI8143.jpg" alt="" class="hero__gallery-img active">
+    <img src="/images/hero/_SDI8149.jpg" alt="" class="hero__gallery-img">
+    <img src="/images/hero/_SDI8162.jpg" alt="" class="hero__gallery-img">
+    <img src="/images/hero/_SDI8166.jpg" alt="" class="hero__gallery-img">
+    <img src="/images/hero/_SDI8169.jpg" alt="" class="hero__gallery-img">
+  </div>
   <div class="container">
-    <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:16px;">
-      <img src="/images/logo-icon.png" alt="Fieldnota" style="width:64px;height:64px;filter:brightness(0) invert(1);">
-      <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:46px;filter:brightness(0) invert(1);">
+    <div class="hero__logo-container">
+      <img src="/images/logo-icon.png" alt="Fieldnota" class="hero__logo">
+      <img src="/images/logo-title.png" alt="Fieldnota commons" class="hero__logo-title">
     </div>
+    <br><br><br>
     <p class="hero__tagline">見つけたナニカを、notaに記録する。共有する。</p>
-    <p class="hero__desc">
-      ピン（写真・タイトル・メモ）とKMLを、<br>
-      フォルダ単位で仲間と共有できる地図アプリ。
-    </p>
+    <br>
     <div class="hero__actions">
       <a href="/" class="btn btn--primary">アプリを開く</a>
-      <a href="#how" class="btn btn--secondary">使い方を見る</a>
+      <a href="#pricing" class="btn btn--secondary">料金プラン</a>
     </div>
   </div>
 </header>
@@ -495,6 +38,9 @@
 <!-- Features -->
 <section class="features" aria-labelledby="features-heading">
   <div class="container">
+    <p class="hero__desc">
+      ピン（写真・タイトル・メモ）とKMLを、フォルダ単位で仲間と共有できる地図アプリ。
+    </p>
     <h2 id="features-heading" class="visually-hidden">主な機能</h2>
     <div class="features__grid">
       <article class="card feature-card">
@@ -571,10 +117,158 @@
 <section class="map-sources" aria-labelledby="map-sources-heading">
   <div class="container">
     <p class="map-sources__inner" id="map-sources-heading">
-      <strong>地図データ：</strong>国土地理院の等高線地図・航空写真を使用しています。
+      <strong>地図データ：</strong>国土地理院の等高線地図・航空写真を使用しています（日本国内専用）。
     </p>
   </div>
 </section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing" aria-labelledby="pricing-heading">
+  <div class="container">
+    <h2 id="pricing-heading" style="text-align:center;">料金プラン</h2>
+    <div class="pricing__grid">
+      <!-- Free Plan -->
+      <article class="pricing-card">
+        <h3 class="pricing-card__name">無料プラン</h3>
+        <div class="pricing-card__price">
+          <span class="pricing-card__price-amount">¥0</span>
+          <span class="pricing-card__price-period">/ 永久無料</span>
+        </div>
+        <ul class="pricing-card__features">
+          <li>
+            <span class="feature-icon feature-icon--limit">📍</span>
+            ピン
+            <span class="feature-value">20個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">📁</span>
+            ピンフォルダ
+            <span class="feature-value">2個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">🗺️</span>
+            KMLファイル
+            <span class="feature-value">1個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">📂</span>
+            KMLフォルダ
+            <span class="feature-value">2個</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--limit">🔗</span>
+            共有
+            <span class="feature-value">1件</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            写真アップロード
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            コメント機能
+          </li>
+        </ul>
+        <a href="/" class="pricing-card__cta pricing-card__cta--secondary">無料ではじめる</a>
+      </article>
+
+      <!-- Premium Plan -->
+      <article class="pricing-card pricing-card--featured">
+        <span class="pricing-card__badge">おすすめ</span>
+        <h3 class="pricing-card__name">プレミアムプラン</h3>
+        <div class="pricing-card__price">
+          <span class="pricing-card__price-amount">¥200</span>
+          <span class="pricing-card__price-period">/ 月</span>
+        </div>
+        <ul class="pricing-card__features">
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            ピン
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            ピンフォルダ
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            KMLファイル
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            KMLフォルダ
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--unlimited">∞</span>
+            共有
+            <span class="feature-value feature-value--unlimited">無制限</span>
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            写真アップロード
+          </li>
+          <li>
+            <span class="feature-icon feature-icon--check">✓</span>
+            コメント機能
+          </li>
+        </ul>
+        <button class="pricing-card__cta pricing-card__cta--primary" id="upgrade-btn" onclick="showUpgradeModal()">プレミアムにアップグレード</button>
+      </article>
+    </div>
+    <p class="pricing__note">※ プレミアムプランはStripeによる安全な決済でお支払いいただけます。いつでもキャンセル可能です。</p>
+  </div>
+</section>
+
+<!-- Upgrade confirmation modal -->
+<div class="upgrade-modal-overlay" id="upgrade-modal">
+  <div class="upgrade-modal">
+    <button class="upgrade-modal__close" onclick="closeUpgradeModal()" aria-label="閉じる">&times;</button>
+    <h3 class="upgrade-modal__title">プレミアムプランへのアップグレード</h3>
+
+    <div class="upgrade-modal__info">
+      <div class="upgrade-modal__price">
+        <span class="upgrade-modal__price-amount">¥200</span>
+        <span class="upgrade-modal__price-period">/ 月</span>
+      </div>
+      <p class="upgrade-modal__desc">ピン・フォルダ・KML・共有がすべて無制限になります</p>
+    </div>
+
+    <div class="upgrade-modal__terms">
+      <div class="upgrade-modal__terms-scroll">
+        <h4>利用規約（要約）</h4>
+        <ul>
+          <li>本サービスはフィールドワークや探索の情報記録・共有ツールです</li>
+          <li>現地での安全性・合法性は保証しません。自己責任で行動してください</li>
+          <li>投稿データの著作権はユーザーに帰属します</li>
+          <li>サービス内容は予告なく変更・停止する場合があります</li>
+        </ul>
+        <h4>プライバシーポリシー（要約）</h4>
+        <ul>
+          <li>アカウント情報、投稿データ、位置情報を取得します</li>
+          <li>サービス提供・改善・セキュリティ目的で利用します</li>
+          <li>法令に基づく場合を除き、第三者に提供しません</li>
+        </ul>
+        <p class="upgrade-modal__terms-link">
+          <a href="#terms" target="_blank">利用規約全文</a> / <a href="#privacy" target="_blank">プライバシーポリシー全文</a>
+        </p>
+      </div>
+    </div>
+
+    <label class="upgrade-modal__checkbox">
+      <input type="checkbox" id="agree-checkbox" onchange="updateUpgradeButton()">
+      <span>利用規約とプライバシーポリシーに同意する</span>
+    </label>
+
+    <button class="upgrade-modal__submit" id="confirm-upgrade-btn" disabled onclick="proceedToPayment()">
+      お支払いへ進む
+    </button>
+
+    <p class="upgrade-modal__note">Stripeの安全な決済画面に移動します</p>
+  </div>
+</div>
 
 <!-- FAQ -->
 <section class="faq" aria-labelledby="faq-heading">
@@ -825,6 +519,8 @@
   </div>
 </section>
 
+
+<script src="/js/about.js"></script>
 
 </body>
 </html>
