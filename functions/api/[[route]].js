@@ -1099,6 +1099,13 @@ async function ensureTablesExist(env) {
       // Column might already exist, ignore error
     }
 
+    // Add password_salt column to existing users table if it doesn't exist
+    try {
+      await env.DB.prepare('ALTER TABLE users ADD COLUMN password_salt TEXT').run();
+    } catch (e) {
+      // Column might already exist, ignore error
+    }
+
     tablesInitialized = true;
   } catch (err) {
     console.error('Table initialization error:', err);
@@ -4409,8 +4416,8 @@ async function handlePasskeyLoginVerify(request, env) {
     return json({ error: 'パスキーが見つかりません' }, 401);
   }
 
-  // Check user status
-  if (passkey.status !== 'active') {
+  // Check user status (valid statuses: 'approved', 'pending', 'rejected', 'needs_password')
+  if (passkey.status !== 'approved') {
     return json({ error: 'アカウントが無効です' }, 403);
   }
 
