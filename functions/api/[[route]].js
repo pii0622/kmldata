@@ -1,43 +1,8 @@
-// Cloudflare Pages Functions - Modular architecture
-// See lib/ and handlers/ directories for extracted modules
+// Cloudflare Pages Functions
+// Note: Modular architecture in lib/ and handlers/ directories is prepared
+// but imports are disabled until legacy definitions are fully removed to avoid ESM conflicts.
 
-// Import core utilities
-import {
-  base64urlEncode, base64urlDecode, base64urlDecodeToString,
-  getCookie, setCookieHeader, json, getClientIP, isValidEmail, securityHeaders
-} from './lib/utils.js';
-
-import {
-  hashPassword, verifyPassword, createToken, verifyToken
-} from './lib/crypto.js';
-
-import {
-  createSession, validateSession, revokeSession, revokeSessionById,
-  revokeAllUserSessions, getUserSessions
-} from './lib/sessions.js';
-
-import {
-  RATE_LIMITS, FREE_TIER_LIMITS, checkRateLimit, logSecurityEvent, validateCSRF,
-  isUserFreeTier, getUserKmlFolderCount, getUserPinFolderCount, getUserKmlFileCount,
-  getUserPinCount, getUserShareCount, checkFreeTierLimit,
-  validateImageFile, convertKmlPolygonToLine, MAX_KML_SIZE
-} from './lib/security.js';
-
-import {
-  generateWebAuthnChallenge, decodeCBOR, parseAttestationObject, parseAuthenticatorData,
-  coseKeyToCryptoKey, verifyWebAuthnSignature, derToRaw, getRelyingPartyId
-} from './lib/webauthn.js';
-
-import { sendEmail, sendExternalWelcomeEmail, sendApprovalEmail, sendRejectionEmail } from './lib/email.js';
-
-import {
-  handleTokenRefresh, handleRegister, handleLogin, handleLogout,
-  handleUpdateProfile, handleChangePassword,
-  handleGetSessions, handleRevokeSession, handleRevokeAllSessions,
-  handleExternalMemberSync, handleSetupPassword
-} from './handlers/auth.js';
-
-// ==================== Legacy Definitions (to be removed in future refactoring) ====================
+// ==================== Core Definitions ====================
 
 // PBKDF2 configuration (kept for backwards compatibility during migration)
 const PBKDF2_ITERATIONS = 100000;
@@ -222,27 +187,6 @@ function setCookieHeader(name, value, options = {}) {
 }
 
 // ==================== WebAuthn/Passkeys Utilities ====================
-
-// Base64URL encode/decode (WebAuthn uses Base64URL, not standard Base64)
-function base64urlEncode(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function base64urlDecode(str) {
-  str = str.replace(/-/g, '+').replace(/_/g, '/');
-  while (str.length % 4) str += '=';
-  const binary = atob(str);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
 
 // Generate random challenge for WebAuthn
 function generateWebAuthnChallenge() {
