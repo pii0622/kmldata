@@ -1075,6 +1075,20 @@ async function ensureTablesExist(env) {
         type TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         expires_at TEXT NOT NULL
+      )`),
+      // Sessions (for token invalidation and session management)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        session_token TEXT UNIQUE NOT NULL,
+        ip_address TEXT,
+        user_agent TEXT,
+        device_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_active_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        is_revoked INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
