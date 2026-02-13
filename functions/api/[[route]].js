@@ -1746,36 +1746,73 @@ async function handleLogout(env, user, request) {
 // External Member Sync API Handler (for WordPress/Stripe integration)
 async function handleExternalMemberSync(request, env) {
   try {
-    const { action, email, display_name, plan, external_id, secret } = await request.json();
+    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await request.json();
 
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
       return json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!email) {
-      return json({ error: 'Email is required' }, 400);
-    }
-
-    if (!isValidEmail(email)) {
-      return json({ error: 'Invalid email format' }, 400);
-    }
-
     if (action === 'create') {
-      // Check if user already exists by email
-      const existing = await env.DB.prepare('SELECT id, member_source FROM users WHERE email = ?').bind(email).first();
+      // Try to find existing user by multiple identifiers (priority order):
+      // 1. stripe_customer_id - most reliable for Stripe-originated requests
+      // 2. user_id - if provided from metadata
+      // 3. email - fallback, but may be wrong if Link/ApplePay used different email
+      let existing = null;
+
+      if (stripe_customer_id) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE stripe_customer_id = ?'
+        ).bind(stripe_customer_id).first();
+        if (existing) {
+          console.log(`Found user by stripe_customer_id: ${stripe_customer_id} -> user ${existing.id}`);
+        }
+      }
+
+      if (!existing && user_id) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE id = ?'
+        ).bind(user_id).first();
+        if (existing) {
+          console.log(`Found user by user_id: ${user_id}`);
+        }
+      }
+
+      if (!existing && email && isValidEmail(email)) {
+        existing = await env.DB.prepare(
+          'SELECT id, email, member_source FROM users WHERE email = ?'
+        ).bind(email).first();
+        if (existing) {
+          console.log(`Found user by email: ${email}`);
+        }
+      }
 
       if (existing) {
+        // Update existing user's plan
         if (existing.member_source === 'wordpress') {
-          // Update plan for existing external member
           await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?').bind(plan || 'premium', existing.id).run();
           return json({ success: true, action: 'updated', user_id: existing.id });
         } else {
-          // User registered normally, just update their plan
-          await env.DB.prepare('UPDATE users SET plan = ?, member_source = ? WHERE id = ?')
-            .bind(plan || 'premium', 'wordpress', existing.id).run();
+          // User registered normally or via Stripe, update their plan
+          // Don't change member_source if it's already 'stripe' - that takes precedence
+          if (existing.member_source !== 'stripe') {
+            await env.DB.prepare('UPDATE users SET plan = ?, member_source = ? WHERE id = ?')
+              .bind(plan || 'premium', 'wordpress', existing.id).run();
+          } else {
+            await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?')
+              .bind(plan || 'premium', existing.id).run();
+          }
           return json({ success: true, action: 'upgraded', user_id: existing.id });
         }
+      }
+
+      // No existing user found - only create new if we have valid email
+      if (!email) {
+        return json({ error: 'Email is required for new user creation' }, 400);
+      }
+
+      if (!isValidEmail(email)) {
+        return json({ error: 'Invalid email format' }, 400);
       }
 
       // Create new external member
@@ -1800,8 +1837,20 @@ async function handleExternalMemberSync(request, env) {
       return json({ success: true, action: 'created', user_id: userId });
 
     } else if (action === 'delete') {
-      // Find and delete user by email
-      const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+      // Find user by multiple identifiers
+      let user = null;
+
+      if (stripe_customer_id) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
+      }
+
+      if (!user && user_id) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
+      }
+
+      if (!user && email) {
+        user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+      }
 
       if (!user) {
         return json({ success: true, action: 'not_found' });
@@ -2031,7 +2080,7 @@ async function handleCreateCheckoutSession(request, env, user) {
     }
 
     const dbUser = await env.DB.prepare(
-      'SELECT plan, member_source, stripe_customer_id FROM users WHERE id = ?'
+      'SELECT plan, member_source, stripe_customer_id, email FROM users WHERE id = ?'
     ).bind(user.id).first();
 
     // Check if user is already premium via WordPress
@@ -2049,7 +2098,10 @@ async function handleCreateCheckoutSession(request, env, user) {
     const cancelUrl = cancel_url || 'https://fieldnota-commons.com';
 
     // Create or retrieve Stripe customer
+    // Use email from DB (not from payment method like Link/ApplePay)
+    const userEmail = dbUser.email || '';
     let customerId = dbUser.stripe_customer_id;
+
     if (!customerId) {
       const customerResponse = await fetch('https://api.stripe.com/v1/customers', {
         method: 'POST',
@@ -2058,7 +2110,7 @@ async function handleCreateCheckoutSession(request, env, user) {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: new URLSearchParams({
-          'email': user.email || '',
+          'email': userEmail,
           'name': user.display_name || user.username,
           'metadata[user_id]': user.id.toString()
         })
@@ -2076,9 +2128,23 @@ async function handleCreateCheckoutSession(request, env, user) {
       // Save customer ID
       await env.DB.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?')
         .bind(customerId, user.id).run();
+    } else {
+      // Ensure existing customer has correct email (prevent Link/ApplePay email override)
+      await fetch(`https://api.stripe.com/v1/customers/${customerId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          'email': userEmail,
+          'metadata[user_id]': user.id.toString()
+        })
+      });
     }
 
     // Create Checkout Session
+    // Note: customer_update prevents Link/ApplePay from overwriting customer data
     const sessionResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
       headers: {
@@ -2087,12 +2153,17 @@ async function handleCreateCheckoutSession(request, env, user) {
       },
       body: new URLSearchParams({
         'customer': customerId,
+        'customer_update[address]': 'never',
+        'customer_update[name]': 'never',
         'mode': 'subscription',
         'line_items[0][price]': env.STRIPE_PRICE_ID,
         'line_items[0][quantity]': '1',
         'success_url': `${appUrl}?session_id={CHECKOUT_SESSION_ID}`,
         'cancel_url': cancelUrl,
-        'metadata[user_id]': user.id.toString()
+        'metadata[user_id]': user.id.toString(),
+        'metadata[user_email]': userEmail,
+        'subscription_data[metadata][user_id]': user.id.toString(),
+        'subscription_data[metadata][user_email]': userEmail
       })
     });
 
