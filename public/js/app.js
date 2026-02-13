@@ -2877,8 +2877,11 @@ function initPasskeyUI() {
   const loginBtn = document.getElementById('passkey-login-btn');
   const unsupported = document.getElementById('passkey-unsupported');
   const content = document.getElementById('passkey-content');
+  const supported = isPasskeySupported();
 
-  if (isPasskeySupported()) {
+  console.log('Passkey support:', supported, 'Login button found:', !!loginBtn);
+
+  if (supported) {
     if (loginBtn) loginBtn.style.display = 'block';
     if (unsupported) unsupported.style.display = 'none';
     if (content) content.style.display = 'block';
@@ -2887,6 +2890,13 @@ function initPasskeyUI() {
     if (unsupported) unsupported.style.display = 'block';
     if (content) content.style.display = 'none';
   }
+}
+
+// Ensure passkey UI is initialized when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPasskeyUI);
+} else {
+  // DOM is already ready, but init() will call initPasskeyUI() later
 }
 
 // Base64URL encode/decode utilities
