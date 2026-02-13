@@ -3105,8 +3105,38 @@ async function deletePasskey(id) {
   }
 }
 
+// ==================== Prevent Leaflet Pointer Event Interference ====================
+// Leaflet adds document-level pointer event listeners with capture:true
+// This prevents them from interfering with form inputs in login screen and modals
+function preventLeafletFormInterference() {
+  const stopPropagationForForms = (e) => {
+    const target = e.target;
+    // Protect login screen forms
+    const loginScreen = document.getElementById('login-screen');
+    if (loginScreen && !loginScreen.classList.contains('hidden') &&
+        loginScreen.contains(target)) {
+      e.stopPropagation();
+      return;
+    }
+    // Protect modal forms (they have class 'modal-overlay active')
+    const activeModal = target.closest('.modal-overlay.active');
+    if (activeModal) {
+      e.stopPropagation();
+      return;
+    }
+  };
+
+  // Add listeners on window in capture phase (fires before document)
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel',
+   'touchstart', 'touchmove', 'touchend', 'touchcancel',
+   'mousedown', 'mousemove', 'mouseup'].forEach(eventType => {
+    window.addEventListener(eventType, stopPropagationForForms, true);
+  });
+}
+
 // ==================== Init ====================
 async function init() {
+  preventLeafletFormInterference();
   registerServiceWorker();
   initInstallPrompt();
   initPasskeyUI();
