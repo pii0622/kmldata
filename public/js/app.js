@@ -1257,16 +1257,9 @@ async function upgradeToPremium() {
 }
 
 async function openStripePortal() {
-  // Prompt for password verification
-  const password = prompt('セキュリティ確認のため、パスワードを入力してください');
-  if (!password) {
-    return;
-  }
-
   try {
     const data = await api('/api/stripe/create-portal-session', {
-      method: 'POST',
-      body: JSON.stringify({ password })
+      method: 'POST'
     });
 
     if (data.url) {
