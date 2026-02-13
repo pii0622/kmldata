@@ -3046,7 +3046,7 @@ async function loginWithPasskey() {
     });
 
     currentUser = result;
-    document.getElementById('auth-overlay').style.display = 'none';
+    closeModal('modal-auth');
     await loadAll();
   } catch (err) {
     console.error('Passkey login error:', err);
