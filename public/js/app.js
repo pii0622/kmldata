@@ -1160,18 +1160,12 @@ async function loadPlanInfo() {
     actionsEl.innerHTML = '';
 
     if (data.plan === 'free') {
-      // Free user - show upgrade button (only if Stripe is configured)
-      if (data.stripe_enabled) {
-        actionsEl.innerHTML = `
-          <button class="btn btn-sm btn-primary" onclick="upgradeToPremium()">
-            <i class="fas fa-crown"></i> プレミアムへ
-          </button>
-        `;
-      } else {
-        actionsEl.innerHTML = `
-          <span style="font-size:11px;color:#666;">アプリ内課金は準備中です</span>
-        `;
-      }
+      // Free user - show link to pricing page
+      actionsEl.innerHTML = `
+        <a href="/about.html#pricing" class="btn btn-sm btn-primary" style="text-decoration:none;">
+          <i class="fas fa-crown"></i> 料金プランを確認
+        </a>
+      `;
     } else if (data.managed_by === 'stripe') {
       // Stripe managed - show manage button
       actionsEl.innerHTML = `
@@ -3174,6 +3168,24 @@ async function init() {
   await loadAll();
   startWatchingLocation();
   initPushNotifications();
+
+  // Check for upgrade success
+  checkUpgradeSuccess();
+}
+
+// Check if user just upgraded to premium
+function checkUpgradeSuccess() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('upgrade') === 'success') {
+    // Remove the parameter from URL without reloading
+    const newUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, newUrl);
+
+    // Show success notification with slight delay for better UX
+    setTimeout(() => {
+      notify('ありがとうございます！プレミアムにアップグレードしました！', 'success');
+    }, 500);
+  }
 }
 
 init();
