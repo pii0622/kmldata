@@ -186,6 +186,47 @@ function setCookieHeader(name, value, options = {}) {
   return cookie;
 }
 
+// ==================== Input Sanitization ====================
+
+// Sanitize a single value (trim strings, preserve other types)
+function sanitizeValue(value) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  return value;
+}
+
+// Recursively sanitize all string fields in an object
+function sanitizeObject(obj) {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === 'string') {
+    return obj.trim();
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeObject(item));
+  }
+
+  if (typeof obj === 'object') {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(obj)) {
+      sanitized[key] = sanitizeObject(value);
+    }
+    return sanitized;
+  }
+
+  return obj;
+}
+
+// Get sanitized request body - replaces direct request.json() calls
+async function getRequestBody(request) {
+  const body = await getRequestBody(request);
+  return sanitizeObject(body);
+}
+
 // ==================== WebAuthn/Passkeys Utilities ====================
 
 // Generate random challenge for WebAuthn
@@ -1632,7 +1673,7 @@ async function handleTokenRefresh(env, user, request) {
 }
 
 async function handleRegister(request, env) {
-  const { username, password, email, display_name } = await request.json();
+  const { username, password, email, display_name } = await getRequestBody(request);
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
   }
@@ -1648,7 +1689,7 @@ async function handleRegister(request, env) {
   }
   // Validate username is full name in Roman letters (e.g., "Taro Yamada")
   const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
-  if (!fullNamePattern.test(username.trim())) {
+  if (!fullNamePattern.test(username)) {
     return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
   }
   if (password.length < 12) {
@@ -1662,7 +1703,7 @@ async function handleRegister(request, env) {
   }
 
   // Check if display name is already used
-  const actualDisplayName = (display_name || username).trim();
+  const actualDisplayName = display_name || username;
   const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ?').bind(actualDisplayName).first();
   if (existingDisplayName) {
     return json({ error: 'その表示名は既に使われています' }, 400);
@@ -1689,7 +1730,7 @@ async function handleRegister(request, env) {
 }
 
 async function handleLogin(request, env) {
-  const { username, password } = await request.json();
+  const { username, password } = await getRequestBody(request);
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
   }
@@ -1746,7 +1787,7 @@ async function handleLogout(env, user, request) {
 // External Member Sync API Handler (for WordPress/Stripe integration)
 async function handleExternalMemberSync(request, env) {
   try {
-    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await request.json();
+    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
 
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
@@ -1920,7 +1961,7 @@ Fieldnota commons
 // Handle account setup for external members (username + password)
 async function handleSetupPassword(request, env) {
   try {
-    const { email, username, display_name, password } = await request.json();
+    const { email, username, display_name, password } = await getRequestBody(request);
 
     if (!email || !username || !password) {
       return json({ error: 'すべての必須項目を入力してください' }, 400);
@@ -1928,7 +1969,7 @@ async function handleSetupPassword(request, env) {
 
     // Validate username format (full name in Roman letters)
     const fullNamePattern = /^[A-Za-z]+\s+[A-Za-z]+(\s+[A-Za-z]+)*$/;
-    if (!fullNamePattern.test(username.trim())) {
+    if (!fullNamePattern.test(username)) {
       return json({ error: 'ユーザー名はローマ字のフルネームで入力してください（例: Taro Yamada）' }, 400);
     }
 
@@ -1949,13 +1990,13 @@ async function handleSetupPassword(request, env) {
 
     // Check if username is already taken (by another user)
     const existingUsername = await env.DB.prepare('SELECT id FROM users WHERE username = ? AND id != ?')
-      .bind(username.trim(), user.id).first();
+      .bind(username, user.id).first();
     if (existingUsername) {
       return json({ error: 'そのユーザー名は既に使われています' }, 400);
     }
 
     // Check if display name is already taken
-    const actualDisplayName = (display_name || username).trim();
+    const actualDisplayName = display_name || username;
     const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
       .bind(actualDisplayName, user.id).first();
     if (existingDisplayName) {
@@ -1965,7 +2006,7 @@ async function handleSetupPassword(request, env) {
     // Update username, display_name, password and status
     const { hash, salt } = await hashPassword(password);
     await env.DB.prepare('UPDATE users SET username = ?, display_name = ?, password_hash = ?, password_salt = ?, status = ? WHERE id = ?')
-      .bind(username.trim(), actualDisplayName, hash, salt, 'approved', user.id).run();
+      .bind(username, actualDisplayName, hash, salt, 'approved', user.id).run();
 
     // Create session for token invalidation support
     const sessionToken = await createSession(env, user.id, request);
@@ -1973,7 +2014,7 @@ async function handleSetupPassword(request, env) {
     // Create token for auto-login with session
     const token = await createToken({
       id: user.id,
-      username: username.trim(),
+      username: username,
       display_name: actualDisplayName,
       is_admin: !!user.is_admin,
       sid: sessionToken
@@ -1985,7 +2026,7 @@ async function handleSetupPassword(request, env) {
       {
         success: true,
         message: 'アカウントを設定しました',
-        user: { id: user.id, username: username.trim(), display_name: actualDisplayName, is_admin: !!user.is_admin }
+        user: { id: user.id, username: username, display_name: actualDisplayName, is_admin: !!user.is_admin }
       },
       200,
       { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
@@ -2093,7 +2134,7 @@ async function handleCreateCheckoutSession(request, env, user) {
       return json({ error: '既にプレミアム会員です' }, 400);
     }
 
-    const { success_url, cancel_url } = await request.json();
+    const { success_url, cancel_url } = await getRequestBody(request);
     const appUrl = success_url || 'https://fieldnota-commons.com';
     const cancelUrl = cancel_url || 'https://fieldnota-commons.com';
 
@@ -2358,7 +2399,7 @@ async function handleCreatePortalSession(request, env, user) {
     }
 
     // Require password verification for security
-    const body = await request.json().catch(() => ({}));
+    const body = await getRequestBody(request).catch(() => ({}));
     const { password } = body;
 
     if (!password) {
@@ -2473,39 +2514,39 @@ async function handleCancelSubscription(env, user) {
 }
 
 async function handleUpdateProfile(request, env, user) {
-  const { display_name } = await request.json();
-  if (!display_name || !display_name.trim()) {
+  const { display_name } = await getRequestBody(request);
+  if (!display_name) {
     return json({ error: '表示名を入力してください' }, 400);
   }
 
   // Check if display name is already used by another user
   const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ? AND id != ?')
-    .bind(display_name.trim(), user.id).first();
+    .bind(display_name, user.id).first();
   if (existingDisplayName) {
     return json({ error: 'その表示名は既に使われています' }, 400);
   }
 
   await env.DB.prepare('UPDATE users SET display_name = ? WHERE id = ?')
-    .bind(display_name.trim(), user.id).run();
+    .bind(display_name, user.id).run();
 
   // Create new token with updated display_name (preserve session token)
   const token = await createToken({
     id: user.id,
     username: user.username,
-    display_name: display_name.trim(),
+    display_name: display_name,
     is_admin: user.is_admin,
     sid: user.sid
   }, env.JWT_SECRET);
 
   return json(
-    { ok: true, display_name: display_name.trim() },
+    { ok: true, display_name: display_name },
     200,
     { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
 async function handleChangePassword(request, env, user) {
-  const { current_password, new_password, revoke_other_sessions } = await request.json();
+  const { current_password, new_password, revoke_other_sessions } = await getRequestBody(request);
 
   if (!current_password) {
     return json({ error: '現在のパスワードを入力してください' }, 400);
@@ -2721,7 +2762,7 @@ async function handleGetKmlFolders(env, user) {
 }
 
 async function handleCreateKmlFolder(request, env, user) {
-  const { name, is_public, parent_id } = await request.json();
+  const { name, is_public, parent_id } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -2751,15 +2792,15 @@ async function handleRenameKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await request.json();
-  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+  const { name, is_public } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : folder.is_public;
 
   await env.DB.prepare('UPDATE kml_folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name.trim(), publicFlag, id).run();
-  return json({ ok: true, name: name.trim(), is_public: publicFlag });
+    .bind(name, publicFlag, id).run();
+  return json({ ok: true, name: name, is_public: publicFlag });
 }
 
 async function handleDeleteKmlFolder(env, user, id) {
@@ -2798,7 +2839,7 @@ async function handleKmlFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await request.json();
+  const { is_visible } = await getRequestBody(request);
   await env.DB.prepare(`
     INSERT INTO kml_folder_visibility (kml_folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(kml_folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
@@ -2836,7 +2877,7 @@ async function handleShareKmlFolder(request, env, user, id) {
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
-  const { user_ids } = await request.json();
+  const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
 
   // Check free tier limit for folder owner (admin can share without limits)
@@ -2872,7 +2913,7 @@ async function handleReorderKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { target_id } = await request.json();
+  const { target_id } = await getRequestBody(request);
 
   // Get all folders at the same level owned by the user
   // Use separate queries to avoid dynamic SQL construction
@@ -2919,7 +2960,7 @@ async function handleMoveKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { parent_id } = await request.json();
+  const { parent_id } = await getRequestBody(request);
 
   // Cannot move folder to itself
   if (parent_id && parseInt(parent_id) === parseInt(id)) {
@@ -3115,7 +3156,7 @@ async function handleMoveKmlFile(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { folder_id } = await request.json();
+  const { folder_id } = await getRequestBody(request);
 
   // Check if target folder exists and user has access
   if (folder_id) {
@@ -3161,7 +3202,7 @@ async function handleGetFolders(env, user) {
 }
 
 async function handleCreateFolder(request, env, user) {
-  const { name, parent_id, is_public } = await request.json();
+  const { name, parent_id, is_public } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -3191,15 +3232,15 @@ async function handleRenameFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await request.json();
-  if (!name || !name.trim()) return json({ error: 'フォルダ名を入力してください' }, 400);
+  const { name, is_public } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : (folder.is_public || 0);
 
   await env.DB.prepare('UPDATE folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name.trim(), publicFlag, id).run();
-  return json({ ok: true, name: name.trim(), is_public: publicFlag });
+    .bind(name, publicFlag, id).run();
+  return json({ ok: true, name: name, is_public: publicFlag });
 }
 
 async function handleDeleteFolder(env, user, id) {
@@ -3266,7 +3307,7 @@ async function handleShareFolder(request, env, user, id) {
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
   if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
 
-  const { user_ids } = await request.json();
+  const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
 
   // Check free tier limit for folder owner (admin can share without limits)
@@ -3302,7 +3343,7 @@ async function handleReorderFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { target_id } = await request.json();
+  const { target_id } = await getRequestBody(request);
 
   // Get all folders at the same level owned by the user
   // Use separate queries to avoid dynamic SQL construction
@@ -3349,7 +3390,7 @@ async function handleMoveFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { parent_id } = await request.json();
+  const { parent_id } = await getRequestBody(request);
 
   // Cannot move folder to itself
   if (parent_id && parseInt(parent_id) === parseInt(id)) {
@@ -3388,7 +3429,7 @@ async function handleFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await request.json();
+  const { is_visible } = await getRequestBody(request);
   await env.DB.prepare(`
     INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
@@ -3459,7 +3500,7 @@ async function handleCreatePin(request, env, user) {
     folder_id = formData.get('folder_id') || null;
     imageFiles = formData.getAll('images');
   } else {
-    const body = await request.json();
+    const body = await getRequestBody(request);
     title = body.title;
     description = body.description || '';
     lat = body.lat;
@@ -3560,7 +3601,7 @@ async function handleUpdatePin(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { title, description, folder_id } = await request.json();
+  const { title, description, folder_id } = await getRequestBody(request);
 
   await env.DB.prepare(`
     UPDATE pins SET title = COALESCE(?, title), description = COALESCE(?, description),
@@ -3642,7 +3683,7 @@ async function handleMovePin(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { folder_id } = await request.json();
+  const { folder_id } = await getRequestBody(request);
 
   // Check if target folder exists and user has access
   if (folder_id) {
@@ -3698,9 +3739,9 @@ async function handleGetPinComments(env, user, pinId) {
 }
 
 async function handleCreatePinComment(request, env, user, pinId) {
-  const { content } = await request.json();
+  const { content } = await getRequestBody(request);
 
-  if (!content || content.trim().length === 0) {
+  if (!content) {
     return json({ error: 'コメントを入力してください' }, 400);
   }
   if (content.length > 50) {
@@ -3735,7 +3776,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
 
   const result = await env.DB.prepare(
     'INSERT INTO pin_comments (pin_id, user_id, content) VALUES (?, ?, ?)'
-  ).bind(pinId, user.id, content.trim()).run();
+  ).bind(pinId, user.id, content).run();
 
   const newComment = await env.DB.prepare(`
     SELECT c.*, u.display_name as author_name
@@ -3748,7 +3789,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
   try {
     await sendPushNotifications(env, 'comment', {
       title: '新しいコメント',
-      body: `${user.display_name || user.username}: ${content.trim().substring(0, 30)}`,
+      body: `${user.display_name || user.username}: ${content.substring(0, 30)}`,
       id: pinId,
       creatorId: user.id
     }, { id: pin.folder_id, is_public: folderIsPublic, type: 'pin' });
@@ -3905,7 +3946,7 @@ function handleGetVapidKey(env) {
 }
 
 async function handlePushSubscribe(request, env, user) {
-  const { subscription } = await request.json();
+  const { subscription } = await getRequestBody(request);
 
   if (!subscription || !subscription.endpoint || !subscription.keys) {
     return json({ error: 'Invalid subscription' }, 400);
@@ -3924,7 +3965,7 @@ async function handlePushSubscribe(request, env, user) {
 }
 
 async function handlePushUnsubscribe(request, env, user) {
-  const { endpoint } = await request.json();
+  const { endpoint } = await getRequestBody(request);
 
   if (!endpoint) {
     return json({ error: 'Endpoint required' }, 400);
@@ -4402,7 +4443,7 @@ async function handlePasskeyRegisterOptions(request, env, user) {
 
 // Verify passkey registration
 async function handlePasskeyRegisterVerify(request, env, user) {
-  const { credential, deviceName } = await request.json();
+  const { credential, deviceName } = await getRequestBody(request);
 
   if (!credential || !credential.id || !credential.response) {
     return json({ error: '無効なクレデンシャルです' }, 400);
@@ -4498,7 +4539,7 @@ async function handlePasskeyLoginOptions(request, env) {
 
 // Verify passkey login
 async function handlePasskeyLoginVerify(request, env) {
-  const { credential } = await request.json();
+  const { credential } = await getRequestBody(request);
 
   if (!credential || !credential.id || !credential.response) {
     return json({ error: '無効なクレデンシャルです' }, 400);
