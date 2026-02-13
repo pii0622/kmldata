@@ -923,3 +923,58 @@ p { margin-bottom: 16px; }
     max-height: 150px;
   }
 }
+
+/* Login form in upgrade modal */
+.upgrade-modal__login-form {
+  text-align: left;
+}
+
+.upgrade-modal__login-desc {
+  text-align: center;
+  margin-bottom: 20px;
+  color: var(--color-text-muted);
+}
+
+.upgrade-modal__form-group {
+  margin-bottom: 16px;
+}
+
+.upgrade-modal__form-group label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--color-text);
+}
+
+.upgrade-modal__form-group input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.upgrade-modal__form-group input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.15);
+}
+
+.upgrade-modal__register-link {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.upgrade-modal__register-link a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.upgrade-modal__register-link a:hover {
+  text-decoration: underline;
+}

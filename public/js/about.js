@@ -16,13 +16,8 @@ document.addEventListener('DOMContentLoaded', function() {
 // Show upgrade modal
 function showUpgradeModal() {
   var modal = document.getElementById('upgrade-modal');
-  var checkbox = document.getElementById('agree-checkbox');
 
-  // Reset state
-  checkbox.checked = false;
-  updateUpgradeButton();
-
-  // Check login status
+  // Check login status first, then show appropriate content
   checkLoginAndShowModal(modal);
 }
 
@@ -62,9 +57,21 @@ function showModalContent(modal, type) {
     modalInner.innerHTML = '\
       <button class="upgrade-modal__close" onclick="closeUpgradeModal()" aria-label="閉じる">&times;</button>\
       <h3 class="upgrade-modal__title">ログインが必要です</h3>\
-      <div class="upgrade-modal__login-prompt">\
-        <p>プレミアムプランへのアップグレードには、ログインが必要です。</p>\
-        <a href="/" class="upgrade-modal__login-btn">ログインする</a>\
+      <div class="upgrade-modal__login-form">\
+        <p class="upgrade-modal__login-desc">プレミアムプランへのアップグレードには、ログインが必要です。</p>\
+        <form id="upgrade-login-form" onsubmit="handleUpgradeLogin(event)">\
+          <div class="upgrade-modal__form-group">\
+            <label for="upgrade-username">ユーザー名</label>\
+            <input type="text" id="upgrade-username" required autocomplete="username">\
+          </div>\
+          <div class="upgrade-modal__form-group">\
+            <label for="upgrade-password">パスワード</label>\
+            <input type="password" id="upgrade-password" required autocomplete="current-password">\
+          </div>\
+          <div id="upgrade-login-error" class="upgrade-modal__error" style="display:none;"></div>\
+          <button type="submit" class="upgrade-modal__submit" id="upgrade-login-btn">ログイン</button>\
+        </form>\
+        <p class="upgrade-modal__register-link">アカウントをお持ちでない方は<a href="/">こちらから登録</a></p>\
       </div>\
     ';
   } else if (type === 'already-premium') {
@@ -76,11 +83,81 @@ function showModalContent(modal, type) {
         <a href="/" class="upgrade-modal__login-btn">アプリに戻る</a>\
       </div>\
     ';
+  } else if (type === 'upgrade') {
+    // Reset to default upgrade content and ensure checkbox is unchecked
+    resetModalContent();
+    var checkbox = document.getElementById('agree-checkbox');
+    if (checkbox) {
+      checkbox.checked = false;
+      updateUpgradeButton();
+    }
   }
-  // 'upgrade' type uses the default HTML
 
   modal.classList.add('active');
   document.body.style.overflow = 'hidden';
+}
+
+// Handle login from upgrade modal
+async function handleUpgradeLogin(event) {
+  event.preventDefault();
+
+  var username = document.getElementById('upgrade-username').value.trim();
+  var password = document.getElementById('upgrade-password').value;
+  var errorEl = document.getElementById('upgrade-login-error');
+  var submitBtn = document.getElementById('upgrade-login-btn');
+  var originalText = submitBtn.textContent;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'ログイン中...';
+  errorEl.style.display = 'none';
+
+  try {
+    var response = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username: username, password: password })
+    });
+
+    if (!response.ok) {
+      var errorData = await response.json();
+      throw new Error(errorData.error || 'ログインに失敗しました');
+    }
+
+    var userData = await response.json();
+
+    // Check if user is already premium
+    if (userData.plan === 'premium') {
+      var modal = document.getElementById('upgrade-modal');
+      showModalContent(modal, 'already-premium');
+    } else {
+      // Show upgrade/terms confirmation screen
+      showUpgradeTermsScreen();
+    }
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
+}
+
+// Show the upgrade terms confirmation screen after login
+function showUpgradeTermsScreen() {
+  var modal = document.getElementById('upgrade-modal');
+  var modalInner = modal.querySelector('.upgrade-modal');
+
+  // Reset to default upgrade content
+  resetModalContent();
+
+  // Reset checkbox state
+  var checkbox = document.getElementById('agree-checkbox');
+  if (checkbox) {
+    checkbox.checked = false;
+    updateUpgradeButton();
+  }
 }
 
 // Close upgrade modal
