@@ -223,7 +223,7 @@ function sanitizeObject(obj) {
 
 // Get sanitized request body - replaces direct request.json() calls
 async function getRequestBody(request) {
-  const body = await getRequestBody(request);
+  const body = await request.json();
   return sanitizeObject(body);
 }
 
