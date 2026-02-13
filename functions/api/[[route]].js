@@ -80,11 +80,13 @@ async function hashPassword(password) {
 }
 
 // Verify password - supports both PBKDF2 (with salt) and legacy SHA-256 (without salt)
+// DEPRECATED: Legacy SHA-256 support will be removed after all users have been migrated.
+// Users are auto-migrated to PBKDF2 on successful login (see handleLogin).
 async function verifyPassword(password, storedHash, salt) {
   const encoder = new TextEncoder();
 
   if (!salt) {
-    // Legacy: SHA-256 without salt (for existing users)
+    // Legacy: SHA-256 without salt - DEPRECATED, auto-migrated on login
     const data = encoder.encode(password);
     const hash = await crypto.subtle.digest('SHA-256', data);
     const computed = btoa(String.fromCharCode(...new Uint8Array(hash)));
@@ -1739,6 +1741,14 @@ async function handleLogin(request, env) {
   if (!user || !(await verifyPassword(password, user.password_hash, user.password_salt))) {
     await logSecurityEvent(env, 'login_failed', null, request, { reason: 'invalid_credentials' });
     return json({ error: 'ユーザー名またはパスワードが正しくありません' }, 401);
+  }
+
+  // Auto-migrate legacy SHA-256 passwords to PBKDF2
+  if (!user.password_salt) {
+    const { hash, salt } = await hashPassword(password);
+    await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+      .bind(hash, salt, user.id).run();
+    await logSecurityEvent(env, 'password_migrated', user.id, request, { from: 'sha256', to: 'pbkdf2' });
   }
 
   // Check user approval status
