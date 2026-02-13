@@ -44,6 +44,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
 .header-buttons > * { pointer-events: auto; }
 
 #map { width: 100vw; height: 100dvh; z-index: 1; position: absolute; top: 0; left: 0; }
+/* Disable map pointer events when login screen is visible */
+.login-screen:not(.hidden) ~ #map { pointer-events: none; }
 
 /* Buttons */
 .map-btn {
