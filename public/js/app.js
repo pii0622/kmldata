@@ -3047,6 +3047,9 @@ async function loginWithPasskey() {
 
     currentUser = result;
     closeModal('modal-auth');
+    notify('パスキーでログインしました');
+    updateLoginScreen();
+    updateUI();
     await loadAll();
   } catch (err) {
     console.error('Passkey login error:', err);
