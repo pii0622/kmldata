@@ -17,4 +17,6 @@ bucket_name = "kmldata-files"
 # Environment variables
 [vars]
 # ALLOWED_ORIGIN = "https://yourdomain.com"
+# SENTRY_DSN = "https://publickey@o0.ingest.sentry.io/project-id"
+# ENVIRONMENT = "production"
 

@@ -1190,6 +1190,81 @@ async function ensureTablesExist(env) {
   }
 }
 
+// ==================== Sentry Error Reporting ====================
+// Lightweight Sentry client for Cloudflare Workers
+// 環境変数 SENTRY_DSN を設定すると有効化されます
+function parseSentryDsn(dsn) {
+  if (!dsn) return null;
+  try {
+    const url = new URL(dsn);
+    const projectId = url.pathname.replace('/', '');
+    return {
+      publicKey: url.username,
+      host: url.hostname,
+      projectId: projectId,
+      endpoint: `https://${url.hostname}/api/${projectId}/envelope/`
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function reportErrorToSentry(env, error, request, extra) {
+  const config = parseSentryDsn(env.SENTRY_DSN);
+  if (!config) return;
+
+  const eventId = crypto.randomUUID().replace(/-/g, '');
+  const timestamp = new Date().toISOString();
+
+  const event = {
+    event_id: eventId,
+    timestamp: timestamp,
+    platform: 'javascript',
+    server_name: 'cloudflare-worker',
+    release: '2.0.0',
+    environment: env.ENVIRONMENT || 'production',
+    exception: {
+      values: [{
+        type: error.name || 'Error',
+        value: error.message || String(error),
+        stacktrace: error.stack ? {
+          frames: error.stack.split('\n').slice(1, 10).map(line => ({
+            filename: line.trim(),
+            function: line.trim()
+          }))
+        } : undefined
+      }]
+    },
+    request: request ? {
+      url: request.url,
+      method: request.method,
+      headers: {
+        'user-agent': request.headers.get('user-agent') || ''
+      }
+    } : undefined,
+    extra: extra || {}
+  };
+
+  const envelope = [
+    JSON.stringify({ event_id: eventId, dsn: env.SENTRY_DSN, sent_at: timestamp }),
+    JSON.stringify({ type: 'event', content_type: 'application/json' }),
+    JSON.stringify(event)
+  ].join('\n');
+
+  try {
+    await fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-sentry-envelope',
+        'X-Sentry-Auth': `Sentry sentry_version=7, sentry_client=fieldnota-worker/1.0, sentry_key=${config.publicKey}`
+      },
+      body: envelope
+    });
+  } catch {
+    // Sentry送信失敗は無視（本体の処理を妨げない）
+  }
+}
+
 // ==================== Main Handler ====================
 export async function onRequest(context) {
   const { request, env } = context;
@@ -1697,6 +1772,10 @@ export async function onRequest(context) {
     return json({ error: 'Not found' }, 404);
   } catch (err) {
     console.error(`API Error [${method} ${path}]:`, err.message || err);
+    // Sentryにエラーを報告（非同期、レスポンスをブロックしない）
+    context.waitUntil(
+      reportErrorToSentry(env, err, request, { route: `${method} ${path}` })
+    );
     return json({ error: 'Server error' }, 500);
   }
 }

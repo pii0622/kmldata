@@ -15,8 +15,13 @@ const APP_CONFIG = {
   // Contact/Support
   contactEmail: 'support@example.com',
 
+  // Error monitoring (Sentry)
+  // Sentry DSNを設定するとエラー監視が有効になります
+  // 例: 'https://examplePublicKey@o0.ingest.sentry.io/0'
+  sentryDsn: '',
+
   // Version
-  version: '1.0.0'
+  version: '2.0.0'
 };
 
 // Make it available globally

@@ -1,0 +1,123 @@
+# セキュリティ監査ワークフロー
+# - 毎週月曜 9:00 JST に npm audit を自動実行
+# - 脆弱性が見つかった場合 GitHub Issue を自動作成
+# - PRごとにも依存関係チェックを実施
+name: Security Audit
+
+on:
+  schedule:
+    # 毎週月曜 00:00 UTC (09:00 JST)
+    - cron: '0 0 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        id: audit
+        run: |
+          set +e
+          AUDIT_OUTPUT=$(npm audit --json 2>&1)
+          AUDIT_EXIT=$?
+          echo "$AUDIT_OUTPUT" > audit-result.json
+
+          # 人間が読める形式も出力
+          npm audit 2>&1 | tee audit-result.txt
+
+          # 脆弱性の数を集計
+          TOTAL=$(echo "$AUDIT_OUTPUT" | jq -r '.metadata.vulnerabilities.total // 0')
+          HIGH=$(echo "$AUDIT_OUTPUT" | jq -r '.metadata.vulnerabilities.high // 0')
+          CRITICAL=$(echo "$AUDIT_OUTPUT" | jq -r '.metadata.vulnerabilities.critical // 0')
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "exit_code=$AUDIT_EXIT" >> $GITHUB_OUTPUT
+
+      - name: Create issue if vulnerabilities found
+        if: steps.audit.outputs.total != '0' && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = '${{ steps.audit.outputs.total }}';
+            const high = '${{ steps.audit.outputs.high }}';
+            const critical = '${{ steps.audit.outputs.critical }}';
+            const fs = require('fs');
+            const auditText = fs.readFileSync('audit-result.txt', 'utf8');
+
+            // 既存の未クローズIssueがあればスキップ
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'security',
+              state: 'open'
+            });
+            const hasExisting = existing.data.some(
+              issue => issue.title.includes('[Security] npm audit')
+            );
+            if (hasExisting) {
+              console.log('Open security issue already exists, skipping.');
+              return;
+            }
+
+            const severity = critical > 0 ? 'CRITICAL' : high > 0 ? 'HIGH' : 'MODERATE';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Security] npm audit: ${total}件の脆弱性 (${severity})`,
+              labels: ['security', 'dependencies'],
+              body: [
+                `## npm audit レポート`,
+                ``,
+                `| レベル | 件数 |`,
+                `|--------|------|`,
+                `| Critical | ${critical} |`,
+                `| High | ${high} |`,
+                `| Total | ${total} |`,
+                ``,
+                `### 詳細`,
+                '```',
+                auditText.substring(0, 3000),
+                '```',
+                ``,
+                `### 対応方法`,
+                '```bash',
+                'npm audit fix        # 自動修正（互換性のある範囲）',
+                'npm audit fix --force # 破壊的変更を含む修正',
+                '```',
+                ``,
+                `*このIssueは週次セキュリティ監査により自動作成されました*`
+              ].join('\n')
+            });
+
+      - name: Fail on high/critical vulnerabilities (PR only)
+        if: github.event_name == 'pull_request' && (steps.audit.outputs.high != '0' || steps.audit.outputs.critical != '0')
+        run: |
+          echo "::error::High/Critical vulnerabilities found in dependencies"
+          exit 1

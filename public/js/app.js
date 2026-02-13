@@ -85,6 +85,7 @@ async function api(url, opts = {}, isRetry = false) {
       ...opts
     });
   } catch (err) {
+    if (window.ErrorMonitor) window.ErrorMonitor.captureApiError(url, 0, 'Network error');
     throw new Error('ネットワークエラー: サーバーに接続できません');
   }
   // Auto-refresh token on 401 (expired JWT)
@@ -98,9 +99,16 @@ async function api(url, opts = {}, isRetry = false) {
   try {
     data = await res.json();
   } catch {
+    if (window.ErrorMonitor) window.ErrorMonitor.captureApiError(url, res.status, 'JSON parse failed');
     throw new Error('サーバーからの応答を解析できませんでした');
   }
-  if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
+  if (!res.ok) {
+    // 5xxサーバーエラーのみSentryに報告（4xxはユーザー操作の範囲）
+    if (res.status >= 500 && window.ErrorMonitor) {
+      window.ErrorMonitor.captureApiError(url, res.status, data.error);
+    }
+    throw new Error(data.error || 'エラーが発生しました');
+  }
   return data;
 }
 
@@ -154,10 +162,12 @@ let loginMode = 'login';
 async function checkAuth() {
   try {
     currentUser = await api('/api/auth/me');
+    if (window.ErrorMonitor) window.ErrorMonitor.setUser(currentUser);
     updateLoginScreen();
     updateUI();
   } catch {
     currentUser = null;
+    if (window.ErrorMonitor) window.ErrorMonitor.setUser(null);
     updateLoginScreen();
     updateUI();
   }
