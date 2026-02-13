@@ -3778,8 +3778,36 @@ async function handleGetUnreadComments(env, user) {
     LIMIT 20
   `).bind(lastReadAt, user.id, user.id).all();
 
+  // Get new pin folder shares (folders shared with this user)
+  const folderShares = await env.DB.prepare(`
+    SELECT 'folder_share' as type, fs.id, f.name as title, '' as content, fs.created_at,
+           f.id as folder_id, f.name as folder_name,
+           u.display_name as author_name
+    FROM folder_shares fs
+    JOIN folders f ON fs.folder_id = f.id
+    JOIN users u ON f.user_id = u.id
+    WHERE fs.created_at > ?
+      AND fs.shared_with_user_id = ?
+    ORDER BY fs.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id).all();
+
+  // Get new KML folder shares (folders shared with this user)
+  const kmlFolderShares = await env.DB.prepare(`
+    SELECT 'kml_folder_share' as type, kfs.id, kf.name as title, '' as content, kfs.created_at,
+           kf.id as kml_folder_id, kf.name as folder_name,
+           u.display_name as author_name
+    FROM kml_folder_shares kfs
+    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
+    JOIN users u ON kf.user_id = u.id
+    WHERE kfs.created_at > ?
+      AND kfs.shared_with_user_id = ?
+    ORDER BY kfs.created_at DESC
+    LIMIT 20
+  `).bind(lastReadAt, user.id).all();
+
   // Combine and sort by created_at
-  const all = [...comments.results, ...pins.results, ...kmlFiles.results];
+  const all = [...comments.results, ...pins.results, ...kmlFiles.results, ...folderShares.results, ...kmlFolderShares.results];
   all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return json(all.slice(0, 50));

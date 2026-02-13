@@ -2447,6 +2447,32 @@ async function openNotificationsPopup() {
           <i class="fas fa-folder"></i> ${escHtml(item.folder_name || '未分類')}
         </div>
       </div>`;
+    } else if (item.type === 'folder_share') {
+      return `<div onclick="closeNotificationsPopup()" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#6f42c1;"><i class="fas fa-share-alt"></i> フォルダ共有</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          <i class="fas fa-folder" style="color:#6f42c1;"></i> ${escHtml(item.folder_name)}
+        </div>
+        <div style="font-size:12px;color:#666;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span> さんがピンフォルダを共有しました
+        </div>
+      </div>`;
+    } else if (item.type === 'kml_folder_share') {
+      return `<div onclick="closeNotificationsPopup()" style="padding:10px;border-bottom:1px solid #eee;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:bold;color:#e83e8c;"><i class="fas fa-share-alt"></i> KMLフォルダ共有</span>
+          <span style="font-size:11px;color:#999;">${dateStr}</span>
+        </div>
+        <div style="font-size:12px;color:#333;margin-bottom:4px;">
+          <i class="fas fa-folder" style="color:#e83e8c;"></i> ${escHtml(item.folder_name)}
+        </div>
+        <div style="font-size:12px;color:#666;">
+          <span style="font-weight:bold;">${escHtml(item.author_name)}</span> さんがKMLフォルダを共有しました
+        </div>
+      </div>`;
     }
     return '';
   }).join('');
