@@ -657,12 +657,13 @@ async function checkFreeTierLimit(env, user, limitType) {
 
 async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const ipHash = await hashIP(ip);
   const userAgent = request.headers.get('User-Agent') || 'unknown';
 
   try {
     await env.DB.prepare(
       'INSERT INTO security_logs (event_type, user_id, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?)'
-    ).bind(eventType, userId, ip, userAgent, JSON.stringify(details)).run();
+    ).bind(eventType, userId, ipHash, userAgent, JSON.stringify(details)).run();
   } catch (err) {
     console.error('Failed to log security event:', err);
   }
@@ -682,6 +683,16 @@ async function hashSessionToken(token) {
   const data = encoder.encode(token);
   const hash = await crypto.subtle.digest('SHA-256', data);
   return base64urlEncode(new Uint8Array(hash));
+}
+
+// Hash IP address for privacy (GDPR compliance, prevents IP exposure if DB is leaked)
+async function hashIP(ip) {
+  if (!ip || ip === 'unknown') return 'unknown';
+  const encoder = new TextEncoder();
+  const data = encoder.encode(ip);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  // Use first 16 chars for readability while maintaining uniqueness
+  return base64urlEncode(new Uint8Array(hash)).substring(0, 16);
 }
 
 // Parse user agent to get a friendly device name
@@ -712,17 +723,18 @@ async function createSession(env, userId, request) {
   const sessionToken = generateSessionToken();
   const tokenHash = await hashSessionToken(sessionToken);
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const ipHash = await hashIP(ip);
   const userAgent = request.headers.get('User-Agent') || 'unknown';
   const deviceName = parseDeviceName(userAgent);
 
   // Session expires in 7 days
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Store hashed token to prevent session hijack if DB is leaked
+  // Store hashed token and IP to prevent data exposure if DB is leaked
   await env.DB.prepare(
     `INSERT INTO sessions (user_id, session_token, ip_address, user_agent, device_name, expires_at)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(userId, tokenHash, ip, userAgent, deviceName, expiresAt).run();
+  ).bind(userId, tokenHash, ipHash, userAgent, deviceName, expiresAt).run();
 
   // Return plain token (stored in JWT, hashed version in DB)
   return sessionToken;
@@ -1684,7 +1696,7 @@ export async function onRequest(context) {
 
     return json({ error: 'Not found' }, 404);
   } catch (err) {
-    console.error(err);
+    console.error(`API Error [${method} ${path}]:`, err.message || err);
     return json({ error: 'Server error' }, 500);
   }
 }
@@ -1869,27 +1881,18 @@ async function handleExternalMemberSync(request, env) {
         existing = await env.DB.prepare(
           'SELECT id, email, member_source FROM users WHERE stripe_customer_id = ?'
         ).bind(stripe_customer_id).first();
-        if (existing) {
-          console.log(`Found user by stripe_customer_id: ${stripe_customer_id} -> user ${existing.id}`);
-        }
       }
 
       if (!existing && user_id) {
         existing = await env.DB.prepare(
           'SELECT id, email, member_source FROM users WHERE id = ?'
         ).bind(user_id).first();
-        if (existing) {
-          console.log(`Found user by user_id: ${user_id}`);
-        }
       }
 
       if (!existing && email && isValidEmail(email)) {
         existing = await env.DB.prepare(
           'SELECT id, email, member_source FROM users WHERE email = ?'
         ).bind(email).first();
-        if (existing) {
-          console.log(`Found user by email: ${email}`);
-        }
       }
 
       if (existing) {
@@ -3574,6 +3577,14 @@ async function handleCreatePin(request, env, user) {
 
   if (!title || lat == null || lng == null) {
     return json({ error: 'タイトルと座標は必須です' }, 400);
+  }
+
+  // Validate coordinate ranges
+  if (isNaN(lat) || lat < -90 || lat > 90) {
+    return json({ error: '緯度は-90から90の範囲で指定してください' }, 400);
+  }
+  if (isNaN(lng) || lng < -180 || lng > 180) {
+    return json({ error: '経度は-180から180の範囲で指定してください' }, 400);
   }
 
   // Check free tier limit (skip if creating in admin's public/shared folder)
