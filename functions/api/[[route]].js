@@ -143,8 +143,9 @@ function base64urlDecodeToString(str) {
 async function createToken(payload, secret) {
   const encoder = new TextEncoder();
   // Encode header and payload as Base64URL (UTF-8 safe)
+  // JWT expires in 1 hour - use /auth/refresh to get a new token while session is valid
   const header = base64urlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payloadStr = base64urlEncode(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+  const payloadStr = base64urlEncode(JSON.stringify({ ...payload, exp: Date.now() + 60 * 60 * 1000 }));
   const data = encoder.encode(`${header}.${payloadStr}`);
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
@@ -1243,17 +1244,15 @@ export async function onRequest(context) {
   if (token) {
     const tokenPayload = await verifyToken(token, env.JWT_SECRET);
     if (tokenPayload) {
-      // Validate session if session token exists in JWT
+      // Validate session - session token (sid) is required
       if (tokenPayload.sid) {
         const session = await validateSession(env, tokenPayload.sid);
         if (session) {
           user = tokenPayload;  // Session is valid
         }
         // If session is invalid/revoked, user remains null (forces re-login)
-      } else {
-        // Legacy token without session (for backwards compatibility during migration)
-        user = tokenPayload;
       }
+      // Tokens without sid are rejected (legacy support removed)
     }
   }
 

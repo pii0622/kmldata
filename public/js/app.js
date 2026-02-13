@@ -76,7 +76,7 @@ function notify(msg, type = 'success') {
   setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
 }
 
-async function api(url, opts = {}) {
+async function api(url, opts = {}, isRetry = false) {
   let res;
   try {
     res = await fetch(url, {
@@ -86,6 +86,13 @@ async function api(url, opts = {}) {
     });
   } catch (err) {
     throw new Error('ネットワークエラー: サーバーに接続できません');
+  }
+  // Auto-refresh token on 401 (expired JWT)
+  if (res.status === 401 && !isRetry && !url.includes('/auth/')) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) return api(url, opts, true);
+    window.location.href = '/login.html';
+    throw new Error('セッションの有効期限が切れました');
   }
   let data;
   try {
@@ -97,12 +104,28 @@ async function api(url, opts = {}) {
   return data;
 }
 
-async function apiFormData(url, formData) {
+async function tryRefreshToken() {
+  try {
+    const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function apiFormData(url, formData, isRetry = false) {
   const res = await fetch(url, {
     method: 'POST',
     body: formData,
     credentials: 'include'
   });
+  // Auto-refresh token on 401 (expired JWT)
+  if (res.status === 401 && !isRetry) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) return apiFormData(url, formData, true);
+    window.location.href = '/login.html';
+    throw new Error('セッションの有効期限が切れました');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'エラーが発生しました');
   return data;
