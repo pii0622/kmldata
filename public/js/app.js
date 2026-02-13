@@ -3180,8 +3180,26 @@ function preventLeafletFormInterference() {
   });
 }
 
+// ==================== Sidebar Header Image ====================
+const heroImages = [
+  '/images/hero/_SDI8143.jpg',
+  '/images/hero/_SDI8149.jpg',
+  '/images/hero/_SDI8162.jpg',
+  '/images/hero/_SDI8166.jpg',
+  '/images/hero/_SDI8169.jpg'
+];
+
+function initSidebarHeaderImage() {
+  const bgElement = document.getElementById('sidebar-header-bg');
+  if (bgElement && heroImages.length > 0) {
+    const randomIndex = Math.floor(Math.random() * heroImages.length);
+    bgElement.style.backgroundImage = `url('${heroImages[randomIndex]}')`;
+  }
+}
+
 // ==================== Init ====================
 async function init() {
+  initSidebarHeaderImage();
   preventLeafletFormInterference();
   registerServiceWorker();
   initInstallPrompt();

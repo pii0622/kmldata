@@ -13,7 +13,11 @@
   <title>Fieldnota commons</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/images/logo-icon.png" type="image/png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/images/logo-icon.png">
   <link rel="apple-touch-icon" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/images/logo-icon.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="/images/logo-icon.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="stylesheet" href="/css/style.css" />
@@ -88,12 +92,16 @@
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
-  <div class="sidebar-header">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <img src="/images/logo-icon.png" alt="Fieldnota" style="width:28px;height:28px;">
-      <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:20px;">
+  <div class="sidebar-header" id="sidebar-header">
+    <div class="sidebar-header-bg" id="sidebar-header-bg"></div>
+    <div class="sidebar-header-overlay"></div>
+    <div class="sidebar-header-content">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <img src="/images/logo-icon.png" alt="Fieldnota" style="width:28px;height:28px;">
+        <img src="/images/logo-title.png" alt="Fieldnota commons" style="height:20px;">
+      </div>
+      <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
     </div>
-    <button class="sidebar-close" onclick="toggleSidebar()">&times;</button>
   </div>
   <div class="sidebar-content" id="sidebar-content">
     <!-- Dynamic content -->
