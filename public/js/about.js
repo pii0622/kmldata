@@ -286,19 +286,247 @@ async function proceedToPayment() {
   }
 }
 
+// ==================== Organization Creation Flow ====================
+
+// Show org creation modal
+function showOrgCreateModal() {
+  var modal = document.getElementById('org-create-modal');
+  checkLoginAndShowOrgModal(modal);
+}
+
+// Check login for org creation
+async function checkLoginAndShowOrgModal(modal) {
+  try {
+    var response = await fetch('/api/auth/session', { credentials: 'include' });
+    if (response.ok) {
+      var data = await response.json();
+      if (data.user) {
+        showOrgModalContent(modal, 'create');
+      } else {
+        showOrgModalContent(modal, 'login-required');
+      }
+    } else {
+      showOrgModalContent(modal, 'login-required');
+    }
+  } catch (err) {
+    showOrgModalContent(modal, 'login-required');
+  }
+}
+
+// Show org modal with appropriate content
+function showOrgModalContent(modal, type) {
+  var modalInner = modal.querySelector('.upgrade-modal');
+
+  if (type === 'login-required') {
+    modalInner.innerHTML = '\
+      <button class="upgrade-modal__close" onclick="closeOrgCreateModal()" aria-label="閉じる">&times;</button>\
+      <h3 class="upgrade-modal__title">ログインが必要です</h3>\
+      <div class="upgrade-modal__login-form">\
+        <p class="upgrade-modal__login-desc">団体プランの作成には、まず無料アカウントの登録・ログインが必要です。</p>\
+        <form id="org-login-form" onsubmit="handleOrgLogin(event)">\
+          <div class="upgrade-modal__form-group">\
+            <label for="org-login-username">ユーザー名</label>\
+            <input type="text" id="org-login-username" required autocomplete="username">\
+          </div>\
+          <div class="upgrade-modal__form-group">\
+            <label for="org-login-password">パスワード</label>\
+            <input type="password" id="org-login-password" required autocomplete="current-password">\
+          </div>\
+          <div id="org-login-error" class="upgrade-modal__error" style="display:none;"></div>\
+          <button type="submit" class="upgrade-modal__submit" id="org-login-btn" style="background:linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);">ログイン</button>\
+        </form>\
+        <p class="upgrade-modal__register-link">アカウントをお持ちでない方は<a href="/">こちらから無料登録</a></p>\
+      </div>\
+    ';
+  } else if (type === 'create') {
+    resetOrgModalContent();
+  }
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+// Handle login from org modal
+async function handleOrgLogin(event) {
+  event.preventDefault();
+  var username = document.getElementById('org-login-username').value.trim();
+  var password = document.getElementById('org-login-password').value;
+  var errorEl = document.getElementById('org-login-error');
+  var submitBtn = document.getElementById('org-login-btn');
+  var originalText = submitBtn.textContent;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'ログイン中...';
+  errorEl.style.display = 'none';
+
+  try {
+    var response = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    if (!response.ok) {
+      var errorData = await response.json();
+      throw new Error(errorData.error || 'ログインに失敗しました');
+    }
+    // Login success - show org creation form
+    resetOrgModalContent();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
+}
+
+// Reset org modal to creation form
+function resetOrgModalContent() {
+  var modal = document.getElementById('org-create-modal');
+  var modalInner = modal.querySelector('.upgrade-modal');
+
+  modalInner.innerHTML = '\
+    <button class="upgrade-modal__close" onclick="closeOrgCreateModal()" aria-label="閉じる">&times;</button>\
+    <h3 class="upgrade-modal__title">団体プランの作成</h3>\
+    <div class="upgrade-modal__info" style="background:linear-gradient(135deg, #f5f0ff 0%, #ede5ff 100%);">\
+      <div class="upgrade-modal__price">\
+        <span class="upgrade-modal__price-amount" style="color:#7c3aed;">¥1,000</span>\
+        <span class="upgrade-modal__price-period">/ 月・団体</span>\
+      </div>\
+      <p class="upgrade-modal__desc">団体フォルダ・ピン・KMLが無制限。招待でメンバーを追加できます。</p>\
+    </div>\
+    <div class="upgrade-modal__form-group">\
+      <label for="org-name-input">団体名 *</label>\
+      <input type="text" id="org-name-input" placeholder="例：フィールド調査チーム" maxlength="100">\
+    </div>\
+    <div class="upgrade-modal__terms">\
+      <div class="upgrade-modal__terms-scroll">\
+        <h4>利用規約（要約）</h4>\
+        <ul>\
+          <li>本サービスはフィールドワークや探索の情報記録・共有ツールです</li>\
+          <li>現地での安全性・合法性は保証しません。自己責任で行動してください</li>\
+          <li>投稿データの著作権はユーザーに帰属します</li>\
+          <li>サービス内容は予告なく変更・停止する場合があります</li>\
+        </ul>\
+        <h4>プライバシーポリシー（要約）</h4>\
+        <ul>\
+          <li>アカウント情報、投稿データ、位置情報を取得します</li>\
+          <li>サービス提供・改善・セキュリティ目的で利用します</li>\
+          <li>法令に基づく場合を除き、第三者に提供しません</li>\
+        </ul>\
+        <p class="upgrade-modal__terms-link">\
+          <a href="#terms" target="_blank">利用規約全文</a> / <a href="#privacy" target="_blank">プライバシーポリシー全文</a>\
+        </p>\
+      </div>\
+    </div>\
+    <label class="upgrade-modal__checkbox">\
+      <input type="checkbox" id="org-agree-checkbox" onchange="updateOrgCreateButton()">\
+      <span>利用規約とプライバシーポリシーに同意する</span>\
+    </label>\
+    <button class="upgrade-modal__submit" id="org-confirm-btn" disabled onclick="proceedToOrgPayment()" style="background:linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);">\
+      お支払いへ進む\
+    </button>\
+    <p class="upgrade-modal__note">Stripeの安全な決済画面に移動します</p>\
+  ';
+}
+
+// Close org creation modal
+function closeOrgCreateModal() {
+  var modal = document.getElementById('org-create-modal');
+  modal.classList.remove('active');
+  document.body.style.overflow = '';
+}
+
+// Update org create button state
+function updateOrgCreateButton() {
+  var checkbox = document.getElementById('org-agree-checkbox');
+  var button = document.getElementById('org-confirm-btn');
+  if (checkbox && button) {
+    button.disabled = !checkbox.checked;
+  }
+}
+
+// Proceed to Stripe payment for org plan
+async function proceedToOrgPayment() {
+  var orgName = document.getElementById('org-name-input').value.trim();
+  if (!orgName) {
+    var nameInput = document.getElementById('org-name-input');
+    nameInput.style.borderColor = '#dc2626';
+    nameInput.focus();
+    return;
+  }
+
+  var button = document.getElementById('org-confirm-btn');
+  var originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = '処理中...';
+
+  try {
+    var response = await fetch('/api/stripe/create-org-checkout-session', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        org_name: orgName,
+        success_url: window.location.origin + '?org-created=success',
+        cancel_url: window.location.origin + '/about.html#pricing'
+      })
+    });
+
+    if (!response.ok) {
+      var error = await response.json();
+      throw new Error(error.error || 'チェックアウトセッションの作成に失敗しました');
+    }
+
+    var data = await response.json();
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      throw new Error('チェックアウトURLの取得に失敗しました');
+    }
+  } catch (err) {
+    console.error('Org payment error:', err);
+    var modalInner = document.querySelector('#org-create-modal .upgrade-modal');
+    var existingError = modalInner.querySelector('.upgrade-modal__error');
+    if (existingError) {
+      existingError.textContent = err.message;
+    } else {
+      var errorEl = document.createElement('div');
+      errorEl.className = 'upgrade-modal__error';
+      errorEl.textContent = err.message;
+      var checkbox = modalInner.querySelector('.upgrade-modal__checkbox');
+      modalInner.insertBefore(errorEl, checkbox);
+    }
+    button.disabled = false;
+    button.textContent = originalText;
+    var cb = document.getElementById('org-agree-checkbox');
+    if (cb && !cb.checked) button.disabled = true;
+  }
+}
+
+// ==================== Modal Event Handlers ====================
+
 // Close modal on overlay click
 document.addEventListener('click', function(e) {
   if (e.target.classList.contains('upgrade-modal-overlay')) {
-    closeUpgradeModal();
+    if (e.target.id === 'org-create-modal') {
+      closeOrgCreateModal();
+    } else {
+      closeUpgradeModal();
+    }
   }
 });
 
 // Close modal on escape key
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
-    var modal = document.getElementById('upgrade-modal');
-    if (modal && modal.classList.contains('active')) {
+    var upgradeModal = document.getElementById('upgrade-modal');
+    if (upgradeModal && upgradeModal.classList.contains('active')) {
       closeUpgradeModal();
+    }
+    var orgModal = document.getElementById('org-create-modal');
+    if (orgModal && orgModal.classList.contains('active')) {
+      closeOrgCreateModal();
     }
   }
 });

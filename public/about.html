@@ -223,24 +223,18 @@
         <span class="pricing-card__badge pricing-card__badge--org">団体向け</span>
         <h3 class="pricing-card__name">団体プラン</h3>
         <div class="pricing-card__price">
-          <span class="pricing-card__price-amount">¥500</span>
+          <span class="pricing-card__price-amount">¥1,000</span>
           <span class="pricing-card__price-period">/ 月・団体</span>
         </div>
         <ul class="pricing-card__features">
           <li>
             <span class="feature-icon feature-icon--unlimited">∞</span>
-            団体フォルダ
-            <span class="feature-value feature-value--unlimited">無制限</span>
-          </li>
-          <li>
-            <span class="feature-icon feature-icon--unlimited">∞</span>
-            団体KMLフォルダ
+            団体フォルダ・ピン・KML
             <span class="feature-value feature-value--unlimited">無制限</span>
           </li>
           <li>
             <span class="feature-icon feature-icon--org">👥</span>
-            メンバー管理
-            <span class="feature-value feature-value--org">招待制</span>
+            招待でメンバー追加
           </li>
           <li>
             <span class="feature-icon feature-icon--org">👥</span>
@@ -259,11 +253,11 @@
             個人プランと併用可
           </li>
         </ul>
-        <a href="/?action=create-org" class="pricing-card__cta pricing-card__cta--org">団体アカウントを作成</a>
+        <button class="pricing-card__cta pricing-card__cta--org" onclick="showOrgCreateModal()">団体アカウントを作成</button>
       </article>
     </div>
     <p class="pricing__note">※ プレミアムプランはStripeによる安全な決済でお支払いいただけます。いつでもキャンセル可能です。</p>
-    <p class="pricing__note">※ 団体プランは個人アカウント（無料/プレミアム）に加えて、団体用の共有スペースを提供します。</p>
+    <p class="pricing__note">※ 団体プランは個人アカウント（無料/プレミアム）に加えて、団体用の共有スペースを提供します。管理者の個人フォルダは各自のプランに依存します。</p>
   </div>
 </section>
 
@@ -308,6 +302,59 @@
     </label>
 
     <button class="upgrade-modal__submit" id="confirm-upgrade-btn" disabled onclick="proceedToPayment()">
+      お支払いへ進む
+    </button>
+
+    <p class="upgrade-modal__note">Stripeの安全な決済画面に移動します</p>
+  </div>
+</div>
+
+<!-- Organization creation modal -->
+<div class="upgrade-modal-overlay" id="org-create-modal">
+  <div class="upgrade-modal">
+    <button class="upgrade-modal__close" onclick="closeOrgCreateModal()" aria-label="閉じる">&times;</button>
+    <h3 class="upgrade-modal__title">団体プランの作成</h3>
+
+    <div class="upgrade-modal__info" style="background:linear-gradient(135deg, #f5f0ff 0%, #ede5ff 100%);">
+      <div class="upgrade-modal__price">
+        <span class="upgrade-modal__price-amount" style="color:#7c3aed;">¥1,000</span>
+        <span class="upgrade-modal__price-period">/ 月・団体</span>
+      </div>
+      <p class="upgrade-modal__desc">団体フォルダ・ピン・KMLが無制限。招待でメンバーを追加できます。</p>
+    </div>
+
+    <div class="upgrade-modal__form-group" id="org-name-group">
+      <label for="org-name-input">団体名 *</label>
+      <input type="text" id="org-name-input" placeholder="例：フィールド調査チーム" maxlength="100">
+    </div>
+
+    <div class="upgrade-modal__terms">
+      <div class="upgrade-modal__terms-scroll">
+        <h4>利用規約（要約）</h4>
+        <ul>
+          <li>本サービスはフィールドワークや探索の情報記録・共有ツールです</li>
+          <li>現地での安全性・合法性は保証しません。自己責任で行動してください</li>
+          <li>投稿データの著作権はユーザーに帰属します</li>
+          <li>サービス内容は予告なく変更・停止する場合があります</li>
+        </ul>
+        <h4>プライバシーポリシー（要約）</h4>
+        <ul>
+          <li>アカウント情報、投稿データ、位置情報を取得します</li>
+          <li>サービス提供・改善・セキュリティ目的で利用します</li>
+          <li>法令に基づく場合を除き、第三者に提供しません</li>
+        </ul>
+        <p class="upgrade-modal__terms-link">
+          <a href="#terms" target="_blank">利用規約全文</a> / <a href="#privacy" target="_blank">プライバシーポリシー全文</a>
+        </p>
+      </div>
+    </div>
+
+    <label class="upgrade-modal__checkbox">
+      <input type="checkbox" id="org-agree-checkbox" onchange="updateOrgCreateButton()">
+      <span>利用規約とプライバシーポリシーに同意する</span>
+    </label>
+
+    <button class="upgrade-modal__submit" id="org-confirm-btn" disabled onclick="proceedToOrgPayment()" style="background:linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);">
       お支払いへ進む
     </button>
 
