@@ -135,6 +135,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
 }
 .modal h3 { margin-bottom: 16px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+.icon-picker {
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px;
+  max-height: 200px; overflow-y: auto; padding: 8px;
+  border: 1px solid #ddd; border-radius: 6px; background: #fafafa;
+}
+.icon-picker-item {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  border: 2px solid transparent; border-radius: 6px; cursor: pointer;
+  font-size: 16px; color: #333; background: white; transition: all 0.15s;
+}
+.icon-picker-item:hover { border-color: #1a73e8; background: #e8f0fe; }
+.icon-picker-item.selected { border-color: #1a73e8; background: #d2e3fc; }
 
 /* Folder tree */
 .folder-tree { list-style: none; padding-left: 0; }
