@@ -3411,6 +3411,11 @@ async function loadOrgMembers(orgId) {
           <button class="btn btn-sm btn-danger" onclick="removeOrgMember(${orgId}, ${m.user_id})" title="削除">
             <i class="fas fa-times"></i>
           </button>`;
+      } else if (isSelf && m.role === 'admin') {
+        actions = `
+          <button class="btn btn-sm btn-secondary" onclick="stepDownFromAdmin(${orgId})" title="管理者を降格">
+            <i class="fas fa-arrow-down"></i> 降格
+          </button>`;
       }
       html += `<div style="padding:8px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
         <div>
@@ -3442,6 +3447,19 @@ async function changeOrgMemberRole(orgId, userId, newRole) {
       body: JSON.stringify({ role: newRole })
     });
     notify('ロールを変更しました');
+    await loadOrgMembers(orgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function stepDownFromAdmin(orgId) {
+  if (!confirm('管理者権限を降格してメンバーになります。よろしいですか？')) return;
+  try {
+    await api(`/api/organizations/${orgId}/members/${currentUser.id}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role: 'member' })
+    });
+    notify('メンバーに降格しました');
+    currentOrgRole = 'member';
     await loadOrgMembers(orgId);
   } catch (err) { notify(err.message, 'error'); }
 }

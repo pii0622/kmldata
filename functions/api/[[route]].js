@@ -4516,15 +4516,20 @@ async function handleChangeOrgMemberRole(request, env, user, orgId, memberId) {
     return json({ error: '無効なロールです' }, 400);
   }
 
-  // Cannot change own role
-  if (parseInt(memberId) === user.id) {
-    return json({ error: '自分自身のロールは変更できません' }, 400);
-  }
-
   const member = await env.DB.prepare(
     'SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?'
   ).bind(orgId, memberId).first();
   if (!member) return json({ error: 'メンバーが見つかりません' }, 404);
+
+  // If demoting an admin to member, ensure at least one other admin remains
+  if (member.role === 'admin' && role === 'member') {
+    const adminCount = await env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM organization_members WHERE organization_id = ? AND role = ?'
+    ).bind(orgId, 'admin').first();
+    if (adminCount.cnt <= 1) {
+      return json({ error: '管理者が1人のため降格できません。先に他のメンバーを管理者にしてください。' }, 400);
+    }
+  }
 
   await env.DB.prepare(
     'UPDATE organization_members SET role = ? WHERE organization_id = ? AND user_id = ?'
