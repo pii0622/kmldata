@@ -539,10 +539,12 @@ function renderSidebar() {
           : '<span class="badge badge-free">Free</span>')
       : '';
     html += `<div class="user-info">
-      <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
-      ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
-      ${tierBadge}
-      <div style="float:right;display:flex;gap:4px;">
+      <div style="margin-bottom:6px;">
+        <i class="fas fa-user"></i> <span>${escHtml(currentUser.display_name || currentUser.username)}</span>
+        ${currentUser.is_admin ? ' <span class="badge badge-public">管理者</span>' : ''}
+        ${tierBadge}
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
         </button>` : ''}
@@ -2204,8 +2206,10 @@ function createPinPopup(pin) {
   const div = document.createElement('div');
   div.style.cssText = 'max-width:280px;';
   const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared, pin.organization_name);
+  const folder = pin.folder_id ? folders.find(f => f.id === pin.folder_id) : null;
+  const folderBadge = folder ? `<span class="badge badge-shared" style="font-size:10px;">${escHtml(folder.name)}</span>` : '';
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
-  let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${visBadge}</h4>`;
+  let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${visBadge} ${folderBadge}</h4>`;
   html += `<p style="font-size:12px;color:#666;margin:0 0 4px;">${escHtml(pin.description || '')}</p>`;
   html += `<p style="font-size:11px;color:#999;">作成者: ${escHtml(pin.author || '')} | ${dateStr}</p>`;
 
