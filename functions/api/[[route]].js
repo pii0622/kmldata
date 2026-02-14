@@ -3214,10 +3214,12 @@ async function handleGetPins(env, user) {
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author,
         CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
-        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared
+        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared,
+        o.name as organization_name
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
+      LEFT JOIN organizations o ON f.organization_id = o.id
       ORDER BY p.created_at DESC
     `).all();
   } else if (user) {
@@ -3225,10 +3227,12 @@ async function handleGetPins(env, user) {
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author,
         CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
-        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared
+        CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared,
+        o.name as organization_name
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
+      LEFT JOIN organizations o ON f.organization_id = o.id
       WHERE p.user_id = ?
         OR f.is_public = 1
         OR p.folder_id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
@@ -3238,10 +3242,12 @@ async function handleGetPins(env, user) {
   } else {
     // Non-logged in users see only pins in public folders
     pins = await env.DB.prepare(`
-      SELECT p.*, u.display_name as author, 1 as is_public, 0 as is_shared
+      SELECT p.*, u.display_name as author, 1 as is_public, 0 as is_shared,
+        o.name as organization_name
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
+      LEFT JOIN organizations o ON f.organization_id = o.id
       WHERE f.is_public = 1
       ORDER BY p.created_at DESC
     `).all();
