@@ -659,7 +659,7 @@ function toggleKmlFolder(folderId) {
   files.classList.toggle('open');
 }
 
-async function toggleKmlFolderVisibility(folderId, visible) {
+async function toggleKmlFolderVisibility(folderId, visible, skipMapUpdate = false) {
   if (!currentUser) return;
   try {
     await api(`/api/kml-folders/${folderId}/visibility`, {
@@ -669,11 +669,20 @@ async function toggleKmlFolderVisibility(folderId, visible) {
     // Update local state
     const folder = kmlFolders.find(f => f.id === folderId);
     if (folder) folder.is_visible = visible ? 1 : 0;
-    // Update map layers
-    updateKmlLayers();
+    // Update map layers (skip when called in batch from cascade toggle)
+    if (!skipMapUpdate) updateKmlLayers();
   } catch (err) {
     notify(err.message, 'error');
   }
+}
+
+function isKmlFolderEffectivelyVisible(folder) {
+  if (!folder.is_visible) return false;
+  if (folder.parent_id) {
+    const parent = kmlFolders.find(f => f.id === folder.parent_id);
+    if (parent && !isKmlFolderEffectivelyVisible(parent)) return false;
+  }
+  return true;
 }
 
 function updateKmlLayers() {
@@ -681,9 +690,9 @@ function updateKmlLayers() {
   Object.values(kmlLayers).forEach(layer => map.removeLayer(layer));
   kmlLayers = {};
 
-  // Add visible folders' files
+  // Add visible folders' files (respecting parent hierarchy)
   for (const folder of kmlFolders) {
-    if (!folder.is_visible) continue;
+    if (!isKmlFolderEffectivelyVisible(folder)) continue;
     const files = kmlFiles.filter(f => f.folder_id === folder.id);
     for (const file of files) {
       displayKmlFile(file);
@@ -727,13 +736,30 @@ async function toggleKmlFolderVisibilityBtn(folderId) {
 
   const newVisible = !folder.is_visible;
 
-  // Update icon immediately
-  const btn = document.querySelector(`.kml-folder-item[data-folder-id="${folderId}"] .icon-btn[title="表示切替"]`);
-  if (btn) {
-    btn.classList.toggle('active', newVisible);
+  // Collect this folder + all descendant folder IDs
+  const descendantIds = getDescendantKmlFolderIds(folderId);
+  const allIds = [folderId, ...descendantIds];
+
+  // Update icons immediately for all affected folders
+  for (const id of allIds) {
+    const btn = document.querySelector(`.kml-folder-item[data-folder-id="${id}"] .icon-btn[title="表示切替"]`);
+    if (btn) btn.classList.toggle('active', newVisible);
   }
 
-  await toggleKmlFolderVisibility(folderId, newVisible);
+  // Update server & local state for all affected folders (skip intermediate map updates)
+  const promises = allIds.map(id => toggleKmlFolderVisibility(id, newVisible, true));
+  await Promise.all(promises);
+  updateKmlLayers();
+}
+
+function getDescendantKmlFolderIds(parentId) {
+  const children = kmlFolders.filter(f => f.parent_id === parentId);
+  let ids = [];
+  for (const child of children) {
+    ids.push(child.id);
+    ids = ids.concat(getDescendantKmlFolderIds(child.id));
+  }
+  return ids;
 }
 
 function displayKmlFile(file) {
@@ -1645,7 +1671,7 @@ function togglePinFolder(folderId) {
   }
 }
 
-async function toggleFolderVisibility(folderId, visible) {
+async function toggleFolderVisibility(folderId, visible, skipMapUpdate = false) {
   if (!currentUser) return;
   try {
     await api(`/api/folders/${folderId}/visibility`, {
@@ -1655,8 +1681,8 @@ async function toggleFolderVisibility(folderId, visible) {
     // Update local state
     const folder = folders.find(f => f.id === folderId);
     if (folder) folder.is_visible = visible ? 1 : 0;
-    // Update pin markers
-    updatePinMarkers();
+    // Update pin markers (skip when called in batch from cascade toggle)
+    if (!skipMapUpdate) updatePinMarkers();
   } catch (err) {
     notify(err.message, 'error');
   }
@@ -1668,13 +1694,39 @@ async function toggleFolderVisibilityBtn(folderId) {
 
   const newVisible = !folder.is_visible;
 
-  // Update icon immediately
-  const btn = document.querySelector(`.pin-folder-section[data-folder-id="${folderId}"] .icon-btn[title="表示切替"]`);
-  if (btn) {
-    btn.classList.toggle('active', newVisible);
+  // Collect this folder + all descendant folder IDs
+  const descendantIds = getDescendantPinFolderIds(folderId);
+  const allIds = [folderId, ...descendantIds];
+
+  // Update icons immediately for all affected folders
+  for (const id of allIds) {
+    const btn = document.querySelector(`.pin-folder-section[data-folder-id="${id}"] .icon-btn[title="表示切替"]`);
+    if (btn) btn.classList.toggle('active', newVisible);
   }
 
-  await toggleFolderVisibility(folderId, newVisible);
+  // Update server & local state for all affected folders (skip intermediate map updates)
+  const promises = allIds.map(id => toggleFolderVisibility(id, newVisible, true));
+  await Promise.all(promises);
+  updatePinMarkers();
+}
+
+function getDescendantPinFolderIds(parentId) {
+  const children = folders.filter(f => f.parent_id === parentId);
+  let ids = [];
+  for (const child of children) {
+    ids.push(child.id);
+    ids = ids.concat(getDescendantPinFolderIds(child.id));
+  }
+  return ids;
+}
+
+function isPinFolderEffectivelyVisible(folder) {
+  if (!folder.is_visible) return false;
+  if (folder.parent_id) {
+    const parent = folders.find(f => f.id === folder.parent_id);
+    if (parent && !isPinFolderEffectivelyVisible(parent)) return false;
+  }
+  return true;
 }
 
 function updatePinMarkers() {
@@ -1682,13 +1734,13 @@ function updatePinMarkers() {
   Object.values(pinMarkers).forEach(m => map.removeLayer(m));
   pinMarkers = {};
 
-  // Add visible pins based on folder visibility
+  // Add visible pins based on folder visibility (respecting parent hierarchy)
   for (const pin of pins) {
     // Check if pin's folder is visible (or pin has no folder)
     let isVisible = true;
     if (pin.folder_id) {
       const folder = folders.find(f => f.id === pin.folder_id);
-      if (folder && !folder.is_visible) {
+      if (folder && !isPinFolderEffectivelyVisible(folder)) {
         isVisible = false;
       }
     }
