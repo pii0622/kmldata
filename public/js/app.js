@@ -3656,9 +3656,45 @@ async function init() {
   // Check for upgrade success
   checkUpgradeSuccess();
 
+  // Check for org creation action from landing page
+  checkCreateOrgAction();
+
   // Check for org invite
   await checkOrgInvite();
   await checkPendingInvite();
+}
+
+// Check if user wants to create an organization (from landing page CTA)
+function checkCreateOrgAction() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('action') === 'create-org') {
+    // Remove the parameter from URL without reloading
+    const newUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, newUrl);
+
+    if (currentUser) {
+      // Logged in: open org panel on create tab
+      setTimeout(() => {
+        showOrgPanel();
+        switchOrgTab('create');
+      }, 300);
+    } else {
+      // Not logged in: store intent and show login prompt
+      sessionStorage.setItem('pendingAction', 'create-org');
+      setTimeout(() => {
+        notify('団体アカウントを作成するにはログインが必要です', 'error');
+      }, 500);
+    }
+  }
+
+  // Check if returning from login with pending action
+  if (currentUser && sessionStorage.getItem('pendingAction') === 'create-org') {
+    sessionStorage.removeItem('pendingAction');
+    setTimeout(() => {
+      showOrgPanel();
+      switchOrgTab('create');
+    }, 300);
+  }
 }
 
 // Check if user just upgraded to premium

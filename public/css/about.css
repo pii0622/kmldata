@@ -502,9 +502,9 @@ p { margin-bottom: 16px; }
 
 .pricing__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 24px;
-  max-width: 700px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
@@ -530,6 +530,14 @@ p { margin-bottom: 16px; }
   transform: scale(1.04);
 }
 
+.pricing-card--org {
+  border: 2px solid #7c3aed;
+}
+
+.pricing-card--org:hover {
+  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.15);
+}
+
 .pricing-card__badge {
   position: absolute;
   top: -12px;
@@ -541,6 +549,11 @@ p { margin-bottom: 16px; }
   border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.pricing-card__badge--org {
+  background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
+  color: #fff;
 }
 
 .pricing-card__name {
@@ -614,6 +627,15 @@ p { margin-bottom: 16px; }
   color: white;
 }
 
+.pricing-card__features .feature-icon--org {
+  background: #ede9fe;
+  color: #7c3aed;
+}
+
+.pricing-card__features .feature-value--org {
+  color: #7c3aed;
+}
+
 .pricing-card__features .feature-value {
   margin-left: auto;
   font-weight: 600;
@@ -655,6 +677,18 @@ p { margin-bottom: 16px; }
 .pricing-card__cta--primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
+}
+
+.pricing-card__cta--org {
+  background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
+  color: white;
+  cursor: pointer;
+  border: none;
+}
+
+.pricing-card__cta--org:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.3);
 }
 
 .pricing__note {
