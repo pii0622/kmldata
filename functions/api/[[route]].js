@@ -934,6 +934,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleAcceptOrgInvitation(request, env, user);
     }
+    if (path.match(/^\/organizations\/(\d+)\/leave$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/leave$/)[1];
+      return await handleLeaveOrganization(env, user, id);
+    }
     // Organization folders
     if (path.match(/^\/organizations\/(\d+)\/folders$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
@@ -1170,7 +1175,7 @@ async function handleExternalMemberSync(request, env) {
       }
     }
 
-    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
+    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id, org_name } = await getRequestBody(request);
 
     // Verify shared secret
     // TODO: Remove debug response after fixing auth issue
@@ -1215,7 +1220,8 @@ async function handleExternalMemberSync(request, env) {
         // Update existing user's plan
         if (existing.member_source === 'wordpress') {
           await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?').bind(plan || 'premium', existing.id).run();
-          return json({ success: true, action: 'updated', user_id: existing.id });
+          const inviteResult = await autoInviteToOrg(env, existing.email || email, org_name, existing.id);
+          return json({ success: true, action: 'updated', user_id: existing.id, invitation: inviteResult });
         } else {
           // User registered normally or via Stripe, update their plan
           // Don't change member_source if it's already 'stripe' - that takes precedence
@@ -1226,7 +1232,8 @@ async function handleExternalMemberSync(request, env) {
             await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?')
               .bind(plan || 'premium', existing.id).run();
           }
-          return json({ success: true, action: 'upgraded', user_id: existing.id });
+          const inviteResult = await autoInviteToOrg(env, existing.email || email, org_name, existing.id);
+          return json({ success: true, action: 'upgraded', user_id: existing.id, invitation: inviteResult });
         }
       }
 
@@ -1258,7 +1265,10 @@ async function handleExternalMemberSync(request, env) {
       // Send welcome email with password setup link
       await sendExternalWelcomeEmail(env, email, actualDisplayName);
 
-      return json({ success: true, action: 'created', user_id: userId });
+      // Auto-invite to organization if org_name is specified
+      const inviteResult = await autoInviteToOrg(env, email, org_name, userId);
+
+      return json({ success: true, action: 'created', user_id: userId, invitation: inviteResult });
 
     } else if (action === 'delete') {
       // Find user by multiple identifiers
@@ -1294,6 +1304,45 @@ async function handleExternalMemberSync(request, env) {
   }
 }
 
+// Auto-add user to an organization by name (used during WordPress member sync)
+// Directly adds as member without sending invitation email
+async function autoInviteToOrg(env, email, orgName, userId) {
+  if (!orgName) return null;
+
+  try {
+    // Find organization by name
+    const org = await env.DB.prepare('SELECT id FROM organizations WHERE name = ?').bind(orgName).first();
+    if (!org) {
+      console.log(`autoInviteToOrg: organization '${orgName}' not found`);
+      return { status: 'org_not_found' };
+    }
+
+    // Check if user is already a member
+    const existingMember = await env.DB.prepare(
+      'SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?'
+    ).bind(org.id, userId).first();
+    if (existingMember) {
+      return { status: 'already_member' };
+    }
+
+    // Directly add as member (no invitation email for WordPress members)
+    await env.DB.prepare(
+      'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+    ).bind(org.id, userId, 'member').run();
+
+    // Clean up any pending invitations for this email
+    const normalizedEmail = email.trim().toLowerCase();
+    await env.DB.prepare(
+      'DELETE FROM organization_invitations WHERE organization_id = ? AND email = ?'
+    ).bind(org.id, normalizedEmail).run();
+
+    console.log(`autoInviteToOrg: added ${normalizedEmail} directly to '${orgName}'`);
+    return { status: 'added', org_name: orgName };
+  } catch (err) {
+    console.error('autoInviteToOrg error:', err);
+    return { status: 'error', message: err.message };
+  }
+}
 
 // Handle account setup for external members (username + password)
 async function handleSetupPassword(request, env) {
@@ -4654,6 +4703,34 @@ async function handleAcceptOrgInvitation(request, env, user) {
   const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(invitation.organization_id).first();
 
   return json({ ok: true, organization_name: org?.name, message: `${org?.name || '団体'} に参加しました` });
+}
+
+// Leave organization (for regular members)
+async function handleLeaveOrganization(env, user, orgId) {
+  const membership = await env.DB.prepare(
+    'SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(orgId, user.id).first();
+
+  if (!membership) {
+    return json({ error: 'この団体のメンバーではありません' }, 400);
+  }
+
+  // If admin, check if they're the last admin
+  if (membership.role === 'admin') {
+    const adminCount = await env.DB.prepare(
+      "SELECT COUNT(*) as count FROM organization_members WHERE organization_id = ? AND role = 'admin'"
+    ).bind(orgId).first();
+    if (adminCount.count <= 1) {
+      return json({ error: '最後の管理者は脱退できません。先に別のメンバーを管理者に昇格してください' }, 400);
+    }
+  }
+
+  await env.DB.prepare(
+    'DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(orgId, user.id).run();
+
+  const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(orgId).first();
+  return json({ ok: true, message: `${org?.name || '団体'} から脱退しました` });
 }
 
 // Organization folder creation
