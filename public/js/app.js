@@ -18,6 +18,7 @@ let pendingUsersCount = 0;
 let pushSubscription = null;
 let deferredInstallPrompt = null;
 let userUsageData = null;
+let userOrganizations = [];
 
 // ==================== Map Init ====================
 const map = L.map('map', {
@@ -149,15 +150,20 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
-// Get visibility badge based on public/shared status
-function getVisibilityBadge(isPublic, isShared) {
-  if (isPublic) {
-    return '<span class="badge badge-public">公開</span>';
-  } else if (isShared) {
-    return '<span class="badge badge-shared">共有</span>';
-  } else {
-    return '<span class="badge badge-private">非公開</span>';
+// Get visibility badge based on public/shared/org status
+function getVisibilityBadge(isPublic, isShared, orgName) {
+  let badges = '';
+  if (orgName) {
+    badges += `<span class="badge badge-org" title="${escHtml(orgName)}">${escHtml(orgName)}</span>`;
   }
+  if (isPublic) {
+    badges += '<span class="badge badge-public">公開</span>';
+  } else if (isShared) {
+    badges += '<span class="badge badge-shared">共有</span>';
+  } else if (!orgName) {
+    badges += '<span class="badge badge-private">非公開</span>';
+  }
+  return badges;
 }
 
 // ==================== Auth ====================
@@ -455,6 +461,7 @@ function renderSidebar() {
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
         </button>` : ''}
+        <button class="btn btn-sm btn-secondary" onclick="showOrgPanel()" title="団体管理"><i class="fas fa-building"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
       </div>
@@ -552,9 +559,9 @@ function renderKmlFolderList() {
 function renderKmlFolderNode(folder, depth) {
   const files = kmlFiles.filter(f => f.folder_id === folder.id);
   const childFolders = kmlFolders.filter(f => f.parent_id === folder.id);
-  const isOwner = folder.is_owner;
+  const isOwner = folder.is_owner || !!folder.organization_id;
   const isVisible = folder.is_visible;
-  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared);
+  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared, folder.organization_name);
   const totalCount = files.length + childFolders.length;
 
   let html = `<div class="kml-folder-item" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
@@ -1546,9 +1553,9 @@ function renderPinFolderList() {
 function renderFolderNode(folder, folderPins, depth) {
   const pinsInFolder = folderPins[folder.id] || [];
   const childFolders = folders.filter(f => f.parent_id === folder.id);
-  const isOwner = folder.is_owner;
+  const isOwner = folder.is_owner || !!folder.organization_id;
   const isVisible = folder.is_visible;
-  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared);
+  const visBadge = getVisibilityBadge(folder.is_public, folder.is_shared, folder.organization_name);
   const totalCount = pinsInFolder.length + childFolders.length;
 
   let html = `<div class="pin-folder-section" style="margin-left:${depth * 12}px;" data-folder-id="${folder.id}">
@@ -2921,7 +2928,9 @@ async function loadFolders() {
 }
 
 async function loadAll() {
-  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers(), loadUsageData()]);
+  await Promise.all([loadUsers(), loadKmlFolders(), loadPins(), loadFolders(), loadPendingUsers(), loadUsageData(), loadOrganizations()]);
+  // Check for pending org invite after data loads (e.g., after login)
+  await checkPendingInvite();
 }
 
 // ==================== Service Worker ====================
@@ -3283,6 +3292,354 @@ function preloadSidebarImage() {
   img.src = selectedHeroImage;
 }
 
+// ==================== Organizations ====================
+
+async function loadOrganizations() {
+  if (!currentUser) { userOrganizations = []; return; }
+  try {
+    userOrganizations = await api('/api/organizations');
+  } catch (err) {
+    userOrganizations = [];
+  }
+}
+
+function showOrgPanel() {
+  if (!currentUser) return;
+  loadOrgList();
+  openModal('modal-org');
+}
+
+function switchOrgTab(tab) {
+  document.querySelectorAll('#modal-org .tab').forEach(t => t.classList.remove('active'));
+  const tabIdx = tab === 'list' ? 1 : 2;
+  document.querySelector(`#modal-org .tab:nth-child(${tabIdx})`).classList.add('active');
+  document.getElementById('org-tab-list').style.display = tab === 'list' ? '' : 'none';
+  document.getElementById('org-tab-create').style.display = tab === 'create' ? '' : 'none';
+}
+
+async function loadOrgList() {
+  const listEl = document.getElementById('org-list');
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+  try {
+    await loadOrganizations();
+    if (userOrganizations.length === 0) {
+      listEl.innerHTML = '<p style="color:#999;">参加している団体はありません</p>';
+      return;
+    }
+    let html = '';
+    for (const org of userOrganizations) {
+      const roleBadge = org.role === 'admin'
+        ? '<span class="badge badge-public">管理者</span>'
+        : '<span class="badge badge-free">メンバー</span>';
+      html += `<div style="padding:8px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="showOrgDetail(${org.id})">
+        <div>
+          <strong>${escHtml(org.name)}</strong> ${roleBadge}
+          <div style="font-size:12px;color:#999;">${org.member_count}人のメンバー</div>
+        </div>
+        <i class="fas fa-chevron-right" style="color:#ccc;"></i>
+      </div>`;
+    }
+    listEl.innerHTML = html;
+  } catch (err) {
+    listEl.innerHTML = '<p style="color:red;">読み込みに失敗しました</p>';
+  }
+}
+
+async function createOrganization() {
+  const name = document.getElementById('org-create-name').value.trim();
+  if (!name) { notify('団体名を入力してください', 'error'); return; }
+  try {
+    await api('/api/organizations', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+    document.getElementById('org-create-name').value = '';
+    notify('団体を作成しました');
+    switchOrgTab('list');
+    await loadOrgList();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+let currentOrgId = null;
+let currentOrgRole = null;
+
+async function showOrgDetail(orgId) {
+  currentOrgId = orgId;
+  const org = userOrganizations.find(o => o.id === orgId);
+  if (!org) return;
+  currentOrgRole = org.role;
+
+  document.getElementById('org-detail-name').textContent = org.name;
+  document.getElementById('org-edit-name').value = org.name;
+
+  // Show/hide admin-only tabs
+  const settingsTab = document.querySelector('#modal-org-detail .tab:nth-child(4)');
+  const inviteTab = document.querySelector('#modal-org-detail .tab:nth-child(2)');
+  const foldersTab = document.querySelector('#modal-org-detail .tab:nth-child(3)');
+  if (org.role !== 'admin') {
+    settingsTab.style.display = 'none';
+    inviteTab.style.display = 'none';
+    foldersTab.style.display = 'none';
+  } else {
+    settingsTab.style.display = '';
+    inviteTab.style.display = '';
+    foldersTab.style.display = '';
+  }
+
+  closeModal('modal-org');
+  switchOrgDetailTab('members');
+  openModal('modal-org-detail');
+  await loadOrgMembers(orgId);
+}
+
+function switchOrgDetailTab(tab) {
+  const tabs = ['members', 'invite', 'folders', 'settings'];
+  document.querySelectorAll('#modal-org-detail .tab').forEach(t => t.classList.remove('active'));
+  const idx = tabs.indexOf(tab);
+  if (idx >= 0) {
+    document.querySelector(`#modal-org-detail .tab:nth-child(${idx + 1})`).classList.add('active');
+  }
+  tabs.forEach(t => {
+    const el = document.getElementById(`org-detail-tab-${t}`);
+    if (el) el.style.display = t === tab ? '' : 'none';
+  });
+  if (tab === 'invite') loadOrgInvitations(currentOrgId);
+  if (tab === 'folders') loadOrgFolders(currentOrgId);
+}
+
+async function loadOrgMembers(orgId) {
+  const listEl = document.getElementById('org-members-list');
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+  try {
+    const members = await api(`/api/organizations/${orgId}/members`);
+    if (members.length === 0) {
+      listEl.innerHTML = '<p style="color:#999;">メンバーがいません</p>';
+      return;
+    }
+    let html = '';
+    for (const m of members) {
+      const roleBadge = m.role === 'admin'
+        ? '<span class="badge badge-public">管理者</span>'
+        : '<span class="badge badge-free">メンバー</span>';
+      const isSelf = m.user_id === currentUser.id;
+      let actions = '';
+      if (currentOrgRole === 'admin' && !isSelf) {
+        const newRole = m.role === 'admin' ? 'member' : 'admin';
+        const roleLabel = m.role === 'admin' ? 'メンバーに変更' : '管理者に変更';
+        actions = `
+          <button class="btn btn-sm btn-secondary" onclick="changeOrgMemberRole(${orgId}, ${m.user_id}, '${newRole}')" title="${roleLabel}">
+            <i class="fas fa-exchange-alt"></i>
+          </button>
+          <button class="btn btn-sm btn-danger" onclick="removeOrgMember(${orgId}, ${m.user_id})" title="削除">
+            <i class="fas fa-times"></i>
+          </button>`;
+      }
+      html += `<div style="padding:8px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <strong>${escHtml(m.display_name || m.username)}</strong> ${roleBadge}
+          ${isSelf ? '<span style="color:#999;font-size:12px;">(自分)</span>' : ''}
+        </div>
+        <div style="display:flex;gap:4px;">${actions}</div>
+      </div>`;
+    }
+    listEl.innerHTML = html;
+  } catch (err) {
+    listEl.innerHTML = '<p style="color:red;">読み込みに失敗しました</p>';
+  }
+}
+
+async function removeOrgMember(orgId, userId) {
+  if (!confirm('このメンバーを削除しますか？')) return;
+  try {
+    await api(`/api/organizations/${orgId}/members/${userId}`, { method: 'DELETE' });
+    notify('メンバーを削除しました');
+    await loadOrgMembers(orgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function changeOrgMemberRole(orgId, userId, newRole) {
+  try {
+    await api(`/api/organizations/${orgId}/members/${userId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role: newRole })
+    });
+    notify('ロールを変更しました');
+    await loadOrgMembers(orgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function sendOrgInvitation() {
+  const email = document.getElementById('org-invite-email').value.trim();
+  if (!email) { notify('メールアドレスを入力してください', 'error'); return; }
+  try {
+    await api(`/api/organizations/${currentOrgId}/invite`, {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+    document.getElementById('org-invite-email').value = '';
+    notify('招待メールを送信しました');
+    await loadOrgInvitations(currentOrgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function loadOrgInvitations(orgId) {
+  const listEl = document.getElementById('org-invitations-list');
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+  try {
+    const invitations = await api(`/api/organizations/${orgId}/invitations`);
+    if (invitations.length === 0) {
+      listEl.innerHTML = '<p style="color:#999;">送信済みの招待はありません</p>';
+      return;
+    }
+    let html = '';
+    for (const inv of invitations) {
+      html += `<div style="padding:6px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div>${escHtml(inv.email)}</div>
+          <div style="font-size:11px;color:#999;">期限: ${new Date(inv.expires_at).toLocaleDateString('ja-JP')}</div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="cancelOrgInvitation(${inv.id})" title="取消">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>`;
+    }
+    listEl.innerHTML = html;
+  } catch (err) {
+    listEl.innerHTML = '<p style="color:red;">読み込みに失敗しました</p>';
+  }
+}
+
+async function cancelOrgInvitation(invitationId) {
+  try {
+    await api(`/api/organizations/invitations/${invitationId}`, { method: 'DELETE' });
+    notify('招待を取り消しました');
+    await loadOrgInvitations(currentOrgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function loadOrgFolders(orgId) {
+  const listEl = document.getElementById('org-folders-list');
+  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
+
+  const orgPinFolders = folders.filter(f => f.organization_id === parseInt(orgId));
+  const orgKmlFolders_ = kmlFolders.filter(f => f.organization_id === parseInt(orgId));
+
+  let html = '';
+  if (orgPinFolders.length === 0 && orgKmlFolders_.length === 0) {
+    html = '<p style="color:#999;">フォルダはありません</p>';
+  } else {
+    if (orgPinFolders.length > 0) {
+      html += '<div class="section-title" style="font-size:12px;">ピンフォルダ</div>';
+      for (const f of orgPinFolders) {
+        html += `<div style="padding:4px 8px;font-size:13px;"><i class="fas fa-folder" style="color:#f39c12;margin-right:4px;"></i> ${escHtml(f.name)}</div>`;
+      }
+    }
+    if (orgKmlFolders_.length > 0) {
+      html += '<div class="section-title" style="font-size:12px;">KMLフォルダ</div>';
+      for (const f of orgKmlFolders_) {
+        html += `<div style="padding:4px 8px;font-size:13px;"><i class="fas fa-folder" style="color:#3498db;margin-right:4px;"></i> ${escHtml(f.name)}</div>`;
+      }
+    }
+  }
+  listEl.innerHTML = html;
+}
+
+let orgFolderType = null;
+
+function showCreateOrgFolderModal(type) {
+  orgFolderType = type;
+  document.getElementById('org-folder-name').value = '';
+  openModal('modal-org-folder');
+}
+
+async function createOrgFolder() {
+  const name = document.getElementById('org-folder-name').value.trim();
+  if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
+  try {
+    const endpoint = orgFolderType === 'kml'
+      ? `/api/organizations/${currentOrgId}/kml-folders`
+      : `/api/organizations/${currentOrgId}/folders`;
+    await api(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+    closeModal('modal-org-folder');
+    notify('フォルダを作成しました');
+    // Reload folders from backend
+    await Promise.all([loadKmlFolders(), loadFolders()]);
+    renderSidebar();
+    loadOrgFolders(currentOrgId);
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function updateOrganization() {
+  const name = document.getElementById('org-edit-name').value.trim();
+  if (!name) { notify('団体名を入力してください', 'error'); return; }
+  try {
+    await api(`/api/organizations/${currentOrgId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name })
+    });
+    notify('団体名を更新しました');
+    document.getElementById('org-detail-name').textContent = name;
+    await loadOrganizations();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function deleteOrganization() {
+  if (!confirm('この団体を削除しますか？団体のフォルダとデータも全て削除されます。')) return;
+  try {
+    await api(`/api/organizations/${currentOrgId}`, { method: 'DELETE' });
+    closeModal('modal-org-detail');
+    notify('団体を削除しました');
+    await loadAll();
+    renderSidebar();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+// Handle invite token from URL
+async function checkOrgInvite() {
+  const params = new URLSearchParams(window.location.search);
+  const inviteToken = params.get('invite');
+  if (!inviteToken) return;
+
+  // Clear URL param
+  window.history.replaceState({}, document.title, window.location.pathname);
+
+  if (!currentUser) {
+    notify('招待を承認するにはログインが必要です', 'error');
+    showAuthModal('login');
+    // Store token for after login
+    sessionStorage.setItem('pendingInviteToken', inviteToken);
+    return;
+  }
+
+  await acceptOrgInvite(inviteToken);
+}
+
+async function acceptOrgInvite(token) {
+  try {
+    const result = await api('/api/organizations/accept-invite', {
+      method: 'POST',
+      body: JSON.stringify({ token })
+    });
+    notify(result.message || '団体に参加しました');
+    await loadAll();
+    renderSidebar();
+  } catch (err) {
+    notify(err.message || '招待の承認に失敗しました', 'error');
+  }
+}
+
+// Check for pending invite after login
+async function checkPendingInvite() {
+  const token = sessionStorage.getItem('pendingInviteToken');
+  if (token && currentUser) {
+    sessionStorage.removeItem('pendingInviteToken');
+    await acceptOrgInvite(token);
+  }
+}
+
 // ==================== Init ====================
 async function init() {
   initSidebarHeaderImage();
@@ -3298,6 +3655,10 @@ async function init() {
 
   // Check for upgrade success
   checkUpgradeSuccess();
+
+  // Check for org invite
+  await checkOrgInvite();
+  await checkPendingInvite();
 }
 
 // Check if user just upgraded to premium

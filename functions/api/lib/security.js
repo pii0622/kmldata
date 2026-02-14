@@ -96,14 +96,14 @@ export async function isUserFreeTier(user) {
 
 export async function getUserKmlFolderCount(env, userId) {
   const result = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM kml_folders WHERE user_id = ?'
+    'SELECT COUNT(*) as count FROM kml_folders WHERE user_id = ? AND organization_id IS NULL'
   ).bind(userId).first();
   return result.count;
 }
 
 export async function getUserPinFolderCount(env, userId) {
   const result = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM folders WHERE user_id = ?'
+    'SELECT COUNT(*) as count FROM folders WHERE user_id = ? AND organization_id IS NULL'
   ).bind(userId).first();
   return result.count;
 }
@@ -204,6 +204,68 @@ export async function checkFreeTierLimit(env, user, limitType) {
     return { allowed: false, message, currentCount, maxLimit };
   }
   return { allowed: true, currentCount, maxLimit };
+}
+
+// ==================== Organization Permission Helpers ====================
+
+// Get all organization IDs a user belongs to
+export async function getUserOrgIds(env, userId) {
+  const result = await env.DB.prepare(
+    'SELECT organization_id FROM organization_members WHERE user_id = ?'
+  ).bind(userId).all();
+  return result.results.map(r => r.organization_id);
+}
+
+// Check if user is an admin of the given organization
+export async function isOrgAdmin(env, userId, organizationId) {
+  const member = await env.DB.prepare(
+    'SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(organizationId, userId).first();
+  return member?.role === 'admin';
+}
+
+// Check if user is a member (any role) of the given organization
+export async function isOrgMember(env, userId, organizationId) {
+  const member = await env.DB.prepare(
+    'SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(organizationId, userId).first();
+  return !!member;
+}
+
+// Can user edit this folder? (owner, site admin, or org admin)
+export async function canEditFolder(env, user, folder) {
+  if (user.is_admin) return true;
+  if (folder.user_id === user.id) return true;
+  if (folder.organization_id) {
+    return await isOrgAdmin(env, user.id, folder.organization_id);
+  }
+  return false;
+}
+
+// Can user edit this pin? (owner, site admin, or org admin of the folder's org)
+export async function canEditPin(env, user, pin) {
+  if (user.is_admin) return true;
+  if (pin.user_id === user.id) return true;
+  if (pin.folder_id) {
+    const folder = await env.DB.prepare('SELECT organization_id FROM folders WHERE id = ?').bind(pin.folder_id).first();
+    if (folder?.organization_id) {
+      return await isOrgAdmin(env, user.id, folder.organization_id);
+    }
+  }
+  return false;
+}
+
+// Can user edit this KML file? (owner, site admin, or org admin of the folder's org)
+export async function canEditKmlFile(env, user, file) {
+  if (user.is_admin) return true;
+  if (file.user_id === user.id) return true;
+  if (file.folder_id) {
+    const folder = await env.DB.prepare('SELECT organization_id FROM kml_folders WHERE id = ?').bind(file.folder_id).first();
+    if (folder?.organization_id) {
+      return await isOrgAdmin(env, user.id, folder.organization_id);
+    }
+  }
+  return false;
 }
 
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
