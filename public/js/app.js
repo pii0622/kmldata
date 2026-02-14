@@ -24,7 +24,7 @@ let userOrganizations = [];
 const map = L.map('map', {
 
   center: [34.86, 139.00],
-  zoom: 12,
+  zoom: 8,
   zoomControl: false,
   minZoom: 2,
   maxBounds: [[-90, -180], [90, 180]],
