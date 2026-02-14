@@ -3461,6 +3461,16 @@ async function loadOrganizations() {
   }
 }
 
+function applyOrgMapSettings() {
+  if (!userOrganizations || userOrganizations.length === 0) return;
+  // Use the first org that has map settings configured
+  const org = userOrganizations.find(o => o.map_center_lat != null && o.map_center_lng != null);
+  if (org) {
+    const zoom = org.map_zoom || 12;
+    map.setView([org.map_center_lat, org.map_center_lng], zoom);
+  }
+}
+
 function showOrgPanel() {
   if (!currentUser) return;
   if (!userOrganizations || userOrganizations.length === 0) return;
@@ -3507,6 +3517,9 @@ async function showOrgDetail(orgId) {
 
   document.getElementById('org-detail-name').textContent = org.name;
   document.getElementById('org-edit-name').value = org.name;
+  document.getElementById('org-map-lat').value = org.map_center_lat ?? '';
+  document.getElementById('org-map-lng').value = org.map_center_lng ?? '';
+  document.getElementById('org-map-zoom').value = org.map_zoom ?? '';
 
   // Show/hide admin-only tabs
   const settingsTab = document.querySelector('#modal-org-detail .tab:nth-child(4)');
@@ -3735,15 +3748,31 @@ async function createOrgFolder() {
 async function updateOrganization() {
   const name = document.getElementById('org-edit-name').value.trim();
   if (!name) { notify('団体名を入力してください', 'error'); return; }
+  const latVal = document.getElementById('org-map-lat').value;
+  const lngVal = document.getElementById('org-map-lng').value;
+  const zoomVal = document.getElementById('org-map-zoom').value;
   try {
     await api(`/api/organizations/${currentOrgId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({
+        name,
+        map_center_lat: latVal !== '' ? parseFloat(latVal) : null,
+        map_center_lng: lngVal !== '' ? parseFloat(lngVal) : null,
+        map_zoom: zoomVal !== '' ? parseInt(zoomVal) : null
+      })
     });
-    notify('団体名を更新しました');
+    notify('団体設定を更新しました');
     document.getElementById('org-detail-name').textContent = name;
     await loadOrganizations();
   } catch (err) { notify(err.message, 'error'); }
+}
+
+function setOrgMapFromCurrent() {
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  document.getElementById('org-map-lat').value = center.lat.toFixed(6);
+  document.getElementById('org-map-lng').value = center.lng.toFixed(6);
+  document.getElementById('org-map-zoom').value = Math.round(zoom);
 }
 
 async function deleteOrganization() {
@@ -3836,6 +3865,7 @@ async function init() {
   checkPasswordSetup();
   await checkAuth();
   await loadAll();
+  applyOrgMapSettings();
   startWatchingLocation();
   initPushNotifications();
 

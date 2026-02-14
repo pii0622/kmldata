@@ -685,6 +685,24 @@
         <label>団体名</label>
         <input type="text" id="org-edit-name" placeholder="団体名">
       </div>
+      <div style="border-top:1px solid #eee;padding-top:12px;margin-top:12px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px;"><i class="fas fa-map"></i> 地図の開始位置</label>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <div class="form-group" style="flex:1;margin-bottom:0;">
+            <label>緯度</label>
+            <input type="number" id="org-map-lat" placeholder="例: 35.68" step="0.000001" min="-90" max="90">
+          </div>
+          <div class="form-group" style="flex:1;margin-bottom:0;">
+            <label>経度</label>
+            <input type="number" id="org-map-lng" placeholder="例: 139.76" step="0.000001" min="-180" max="180">
+          </div>
+          <div class="form-group" style="flex:0 0 80px;margin-bottom:0;">
+            <label>ズーム</label>
+            <input type="number" id="org-map-zoom" placeholder="12" min="2" max="18">
+          </div>
+        </div>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="setOrgMapFromCurrent()"><i class="fas fa-crosshairs"></i> 現在の地図位置を取得</button>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-primary" onclick="updateOrganization()">保存</button>
         <button class="btn btn-danger" onclick="deleteOrganization()" style="margin-left:auto;">団体を削除</button>

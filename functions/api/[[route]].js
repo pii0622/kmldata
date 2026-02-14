@@ -338,6 +338,15 @@ async function ensureTablesExist(env) {
     try {
       await env.DB.prepare("ALTER TABLE kml_folders ADD COLUMN line_color TEXT DEFAULT '#e53935'").run();
     } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare('ALTER TABLE organizations ADD COLUMN map_center_lat REAL').run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare('ALTER TABLE organizations ADD COLUMN map_center_lng REAL').run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare('ALTER TABLE organizations ADD COLUMN map_zoom INTEGER').run();
+    } catch (e) { /* Column might already exist */ }
 
     tablesInitialized = true;
   } catch (err) {
@@ -4551,12 +4560,16 @@ async function handleUpdateOrganization(request, env, user, id) {
     return json({ error: '団体管理者権限が必要です' }, 403);
   }
 
-  const { name } = await getRequestBody(request);
+  const { name, map_center_lat, map_center_lng, map_zoom } = await getRequestBody(request);
   if (!name || !name.trim()) return json({ error: '団体名を入力してください' }, 400);
   if (name.length > 100) return json({ error: '団体名は100文字以内にしてください' }, 400);
 
-  await env.DB.prepare('UPDATE organizations SET name = ? WHERE id = ?')
-    .bind(name.trim(), id).run();
+  const lat = (map_center_lat !== undefined && map_center_lat !== null && map_center_lat !== '') ? parseFloat(map_center_lat) : null;
+  const lng = (map_center_lng !== undefined && map_center_lng !== null && map_center_lng !== '') ? parseFloat(map_center_lng) : null;
+  const zoom = (map_zoom !== undefined && map_zoom !== null && map_zoom !== '') ? parseInt(map_zoom) : null;
+
+  await env.DB.prepare('UPDATE organizations SET name = ?, map_center_lat = ?, map_center_lng = ?, map_zoom = ? WHERE id = ?')
+    .bind(name.trim(), lat, lng, zoom, id).run();
   return json({ ok: true });
 }
 
