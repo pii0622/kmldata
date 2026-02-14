@@ -1,6 +1,6 @@
 // Security utilities - Rate limiting, CSRF protection, logging
 
-import { getClientIP } from './utils.js';
+import { hashIP } from './utils.js';
 
 // Rate limiting configuration
 export const RATE_LIMITS = {
@@ -10,6 +10,10 @@ export const RATE_LIMITS = {
   passwordSetup: { maxRequests: 3, windowSeconds: 3600 },
   passkey: { maxRequests: 5, windowSeconds: 300 },
   admin: { maxRequests: 30, windowSeconds: 60 },
+  pinCreate: { maxRequests: 20, windowSeconds: 60 },
+  kmlUpload: { maxRequests: 10, windowSeconds: 60 },
+  folderCreate: { maxRequests: 10, windowSeconds: 60 },
+  commentCreate: { maxRequests: 30, windowSeconds: 60 },
   default: { maxRequests: 100, windowSeconds: 60 }
 };
 
@@ -22,17 +26,13 @@ export const FREE_TIER_LIMITS = {
   shares: 1
 };
 
-// Check rate limit
 export async function checkRateLimit(env, ip, endpoint) {
   const config = RATE_LIMITS[endpoint] || RATE_LIMITS.default;
   const key = `${ip}:${endpoint}`;
   const now = new Date();
   const windowStart = new Date(now.getTime() - config.windowSeconds * 1000).toISOString();
-
   await env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(windowStart).run();
-
   const existing = await env.DB.prepare('SELECT * FROM rate_limits WHERE key = ?').bind(key).first();
-
   if (existing) {
     if (existing.count >= config.maxRequests) {
       return { allowed: false, retryAfter: config.windowSeconds };
@@ -41,51 +41,39 @@ export async function checkRateLimit(env, ip, endpoint) {
   } else {
     await env.DB.prepare('INSERT INTO rate_limits (key, count, window_start) VALUES (?, 1, ?)').bind(key, now.toISOString()).run();
   }
-
   return { allowed: true };
 }
 
-// Log security event
 export async function logSecurityEvent(env, eventType, userId, request, details = {}) {
   const ip = request?.headers?.get('CF-Connecting-IP') || request?.headers?.get('X-Forwarded-For') || 'unknown';
+  const ipHash = await hashIP(ip);
   const userAgent = request?.headers?.get('User-Agent') || 'unknown';
-
   try {
     await env.DB.prepare(
       'INSERT INTO security_logs (event_type, user_id, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?)'
-    ).bind(eventType, userId, ip, userAgent, JSON.stringify(details)).run();
+    ).bind(eventType, userId, ipHash, userAgent, JSON.stringify(details)).run();
   } catch (err) {
     console.error('Failed to log security event:', err);
   }
 }
 
-// CSRF protection
 export function validateCSRF(request, url) {
   const method = request.method;
-
   if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
     return { valid: true };
   }
-
   const origin = request.headers.get('Origin');
   const referer = request.headers.get('Referer');
-
   if (!origin && !referer) {
     return { valid: false, error: 'Missing Origin/Referer header' };
   }
-
-  const allowedOrigins = [
-    url.origin,
-    'https://fieldnota-commons.com'
-  ];
-
+  const allowedOrigins = [url.origin, 'https://fieldnota-commons.com'];
   if (origin) {
     if (!allowedOrigins.includes(origin)) {
       return { valid: false, error: 'Invalid Origin header' };
     }
     return { valid: true };
   }
-
   if (referer) {
     try {
       const refererUrl = new URL(referer);
@@ -98,7 +86,6 @@ export function validateCSRF(request, url) {
       return { valid: false, error: 'Malformed Referer header' };
     }
   }
-
   return { valid: false, error: 'CSRF validation failed' };
 }
 
@@ -158,30 +145,24 @@ export async function getUserPinCount(env, userId) {
 export async function getUserShareCount(env, userId) {
   const givenKml = await env.DB.prepare(`
     SELECT COUNT(DISTINCT kfs.kml_folder_id) as count FROM kml_folder_shares kfs
-    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
-    WHERE kf.user_id = ?
+    JOIN kml_folders kf ON kfs.kml_folder_id = kf.id WHERE kf.user_id = ?
   `).bind(userId).first();
-
   const givenPin = await env.DB.prepare(`
     SELECT COUNT(DISTINCT fs.folder_id) as count FROM folder_shares fs
-    JOIN folders f ON fs.folder_id = f.id
-    WHERE f.user_id = ?
+    JOIN folders f ON fs.folder_id = f.id WHERE f.user_id = ?
   `).bind(userId).first();
-
   const receivedKml = await env.DB.prepare(`
     SELECT COUNT(*) as count FROM kml_folder_shares kfs
     JOIN kml_folders kf ON kfs.kml_folder_id = kf.id
     JOIN users u ON kf.user_id = u.id
     WHERE kfs.shared_with_user_id = ? AND u.is_admin = 0
   `).bind(userId).first();
-
   const receivedPin = await env.DB.prepare(`
     SELECT COUNT(*) as count FROM folder_shares fs
     JOIN folders f ON fs.folder_id = f.id
     JOIN users u ON f.user_id = u.id
     WHERE fs.shared_with_user_id = ? AND u.is_admin = 0
   `).bind(userId).first();
-
   return givenKml.count + givenPin.count + receivedKml.count + receivedPin.count;
 }
 
@@ -189,9 +170,7 @@ export async function checkFreeTierLimit(env, user, limitType) {
   if (!await isUserFreeTier(user)) {
     return { allowed: true };
   }
-
   let currentCount, maxLimit, message;
-
   switch (limitType) {
     case 'kmlFolder':
       currentCount = await getUserKmlFolderCount(env, user.id);
@@ -221,15 +200,12 @@ export async function checkFreeTierLimit(env, user, limitType) {
     default:
       return { allowed: true };
   }
-
   if (currentCount >= maxLimit) {
     return { allowed: false, message, currentCount, maxLimit };
   }
-
   return { allowed: true, currentCount, maxLimit };
 }
 
-// File validation
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
 export const MAX_KML_SIZE = 50 * 1024 * 1024;
