@@ -263,7 +263,10 @@ async function submitLogin() {
   }
 }
 
-function showAuthModal(mode = 'login') {
+let pendingInviteToken = null;
+let pendingInviteOrgName = null;
+
+function showAuthModal(mode = 'login', opts = {}) {
   authMode = mode;
   document.getElementById('auth-title').textContent = mode === 'login' ? 'ログイン' : 'アカウント作成';
   document.getElementById('auth-submit').textContent = mode === 'login' ? 'ログイン' : '作成';
@@ -273,6 +276,30 @@ function showAuthModal(mode = 'login') {
   document.getElementById('auth-display-name').value = '';
   document.getElementById('auth-display-name-group').style.display = mode === 'register' ? '' : 'none';
   document.getElementById('auth-error').style.display = 'none';
+
+  // Invite-specific UI
+  const emailGroup = document.getElementById('auth-email-group');
+  const emailInput = document.getElementById('auth-email');
+  const inviteBanner = document.getElementById('auth-invite-banner');
+  const toggleWrap = document.getElementById('auth-toggle-wrap');
+
+  if (opts.inviteEmail) {
+    emailGroup.style.display = '';
+    emailInput.value = opts.inviteEmail;
+    inviteBanner.style.display = '';
+    document.getElementById('auth-invite-org-name').textContent = opts.orgName || '';
+    // Hide mode toggle when in invite flow
+    toggleWrap.style.display = 'none';
+  } else {
+    emailGroup.style.display = mode === 'register' ? '' : 'none';
+    emailInput.value = '';
+    emailInput.removeAttribute('readonly');
+    emailInput.style.background = '';
+    emailInput.style.cursor = '';
+    inviteBanner.style.display = 'none';
+    toggleWrap.style.display = '';
+  }
+
   openModal('modal-auth');
 }
 
@@ -285,24 +312,43 @@ async function submitAuth() {
   const username = document.getElementById('auth-username').value.trim();
   const password = document.getElementById('auth-password').value;
   const displayName = document.getElementById('auth-display-name').value.trim();
+  const email = document.getElementById('auth-email').value.trim();
   const errEl = document.getElementById('auth-error');
   try {
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const body = authMode === 'login'
-      ? { username, password }
-      : { username, password, display_name: displayName || username };
+    let body;
+    if (authMode === 'login') {
+      body = { username, password };
+    } else {
+      body = { username, password, email, display_name: displayName || username };
+      if (pendingInviteToken) {
+        body.invite_token = pendingInviteToken;
+      }
+    }
     const result = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
 
     // Handle pending registration
     if (result.pending) {
       closeModal('modal-auth');
       notify(result.message, 'success');
+      pendingInviteToken = null;
+      pendingInviteOrgName = null;
       return;
     }
 
     currentUser = result;
     closeModal('modal-auth');
-    notify(authMode === 'login' ? 'ログインしました' : 'アカウントを作成しました');
+
+    if (result.org_joined) {
+      notify(`アカウントを作成し、${result.org_joined} に参加しました`);
+      pendingInviteToken = null;
+      pendingInviteOrgName = null;
+    } else if (authMode === 'login') {
+      notify('ログインしました');
+    } else {
+      notify('アカウントを作成しました');
+    }
+
     updateUI();
     loadAll();
   } catch (err) {
@@ -3619,15 +3665,30 @@ async function checkOrgInvite() {
   // Clear URL param
   window.history.replaceState({}, document.title, window.location.pathname);
 
-  if (!currentUser) {
-    notify('招待を承認するにはログインが必要です', 'error');
-    showAuthModal('login');
-    // Store token for after login
-    sessionStorage.setItem('pendingInviteToken', inviteToken);
+  // If already logged in, accept directly
+  if (currentUser) {
+    await acceptOrgInvite(inviteToken);
     return;
   }
 
-  await acceptOrgInvite(inviteToken);
+  // Fetch invite info to determine flow
+  try {
+    const info = await api(`/api/organizations/invite-info?token=${encodeURIComponent(inviteToken)}`);
+
+    pendingInviteToken = inviteToken;
+    pendingInviteOrgName = info.org_name;
+
+    if (info.has_account) {
+      // User has account → show login form
+      sessionStorage.setItem('pendingInviteToken', inviteToken);
+      showAuthModal('login', { inviteEmail: info.email, orgName: info.org_name });
+    } else {
+      // No account → show registration form with email pre-filled
+      showAuthModal('register', { inviteEmail: info.email, orgName: info.org_name });
+    }
+  } catch (err) {
+    notify(err.message || '招待情報の取得に失敗しました', 'error');
+  }
 }
 
 async function acceptOrgInvite(token) {

@@ -26,7 +26,7 @@ import {
   parseAuthenticatorData, coseKeyToCryptoKey, verifyWebAuthnSignature,
   derToRaw, getRelyingPartyId,
   // email
-  sendEmail, sendExternalWelcomeEmail, sendOrgInvitationEmail
+  sendEmail, sendExternalWelcomeEmail, sendOrgInvitationEmail, sendOrgAddedNotificationEmail
 } from './lib/index.js';
 
 // Content Security Policy for HTML responses
@@ -934,6 +934,11 @@ export async function onRequest(context) {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleAcceptOrgInvitation(request, env, user);
     }
+    if (path === '/organizations/invite-info' && method === 'GET') {
+      const url = new URL(request.url);
+      const token = url.searchParams.get('token');
+      return await handleGetInviteInfo(env, token);
+    }
     if (path.match(/^\/organizations\/(\d+)\/leave$/) && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       const id = path.match(/^\/organizations\/(\d+)\/leave$/)[1];
@@ -1037,7 +1042,7 @@ async function handleTokenRefresh(env, user, request) {
 }
 
 async function handleRegister(request, env) {
-  const { username, password, email, display_name } = await getRequestBody(request);
+  const { username, password, email, display_name, invite_token } = await getRequestBody(request);
   if (!username || !password) {
     return json({ error: 'ユーザー名とパスワードを入力してください' }, 400);
   }
@@ -1060,6 +1065,20 @@ async function handleRegister(request, env) {
     return json({ error: 'パスワードは12文字以上にしてください' }, 400);
   }
 
+  // If invite_token provided, validate it and ensure email matches
+  let invitation = null;
+  if (invite_token) {
+    invitation = await env.DB.prepare(
+      "SELECT * FROM organization_invitations WHERE token = ? AND expires_at > datetime('now')"
+    ).bind(invite_token).first();
+    if (!invitation) {
+      return json({ error: '招待が見つからないか、有効期限が切れています' }, 400);
+    }
+    if (invitation.email !== email.trim().toLowerCase()) {
+      return json({ error: '招待メールアドレスと一致しません' }, 400);
+    }
+  }
+
   const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
   if (existing) {
     await logSecurityEvent(env, 'register_duplicate_username', null, request, {});
@@ -1080,19 +1099,45 @@ async function handleRegister(request, env) {
   }
 
   const { hash, salt } = await hashPassword(password);
-  // New users start with 'pending' status - must be approved by admin
+
+  // Invited users are auto-approved (active), normal users need admin approval (pending)
+  const status = invitation ? 'active' : 'pending';
   const result = await env.DB.prepare(
     'INSERT INTO users (username, password_hash, password_salt, email, display_name, status) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(username, hash, salt, email, actualDisplayName, 'pending').run();
+  ).bind(username, hash, salt, email, actualDisplayName, status).run();
 
   const userId = result.meta.last_row_id;
 
-  // Create admin notification for pending approval
+  // If invited, auto-accept: add to org and delete invitation
+  if (invitation) {
+    await env.DB.prepare(
+      'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+    ).bind(invitation.organization_id, userId, 'member').run();
+    await env.DB.prepare('DELETE FROM organization_invitations WHERE id = ?').bind(invitation.id).run();
+
+    const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(invitation.organization_id).first();
+
+    // Create session and return token (auto-login)
+    const sessionToken = await createSession(env, userId, request);
+    const token = await createToken({
+      id: userId, username,
+      display_name: actualDisplayName,
+      is_admin: false,
+      sid: sessionToken
+    }, env.JWT_SECRET);
+
+    return json(
+      { id: userId, username, display_name: actualDisplayName, is_admin: false, org_joined: org?.name },
+      200,
+      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    );
+  }
+
+  // Normal registration: create admin notification and wait for approval
   await env.DB.prepare(
     'INSERT INTO admin_notifications (type, message, data) VALUES (?, ?, ?)'
   ).bind('user_pending', `新規ユーザー「${actualDisplayName}」が承認待ちです`, JSON.stringify({ user_id: userId, display_name: actualDisplayName })).run();
 
-  // Don't return token - user must wait for admin approval
   return json({
     pending: true,
     message: 'アカウント申請を受け付けました。管理者の承認をお待ちください。'
@@ -4621,7 +4666,7 @@ async function handleInviteToOrg(request, env, user, orgId) {
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  // Check if user is already a member
+  // Check if user already has an account
   const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(normalizedEmail).first();
   if (existingUser) {
     const existingMember = await env.DB.prepare(
@@ -4630,9 +4675,20 @@ async function handleInviteToOrg(request, env, user, orgId) {
     if (existingMember) {
       return json({ error: 'このユーザーは既にメンバーです' }, 400);
     }
+
+    // User has account → directly add as member (no invitation needed)
+    await env.DB.prepare(
+      'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+    ).bind(orgId, existingUser.id, 'member').run();
+
+    // Send notification email
+    const inviterName = user.display_name || user.username;
+    await sendOrgAddedNotificationEmail(env, normalizedEmail, org.name, inviterName);
+
+    return json({ ok: true, message: 'アカウントが存在するため、直接メンバーに追加しました' });
   }
 
-  // Check if invitation already exists
+  // User has no account → create invitation with link
   const existingInvite = await env.DB.prepare(
     "SELECT 1 FROM organization_invitations WHERE organization_id = ? AND email = ? AND expires_at > datetime('now')"
   ).bind(orgId, normalizedEmail).first();
@@ -4640,7 +4696,6 @@ async function handleInviteToOrg(request, env, user, orgId) {
     return json({ error: 'このメールアドレスには既に招待を送信済みです' }, 400);
   }
 
-  // Create invitation token
   const token = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
@@ -4648,7 +4703,6 @@ async function handleInviteToOrg(request, env, user, orgId) {
     'INSERT INTO organization_invitations (organization_id, email, token, invited_by, expires_at) VALUES (?, ?, ?, ?, ?)'
   ).bind(orgId, normalizedEmail, token, user.id, expiresAt).run();
 
-  // Send invitation email
   const inviterName = user.display_name || user.username;
   await sendOrgInvitationEmail(env, normalizedEmail, org.name, inviterName, token);
 
@@ -4667,6 +4721,27 @@ async function handleCancelOrgInvitation(env, user, invitationId) {
 
   await env.DB.prepare('DELETE FROM organization_invitations WHERE id = ?').bind(invitationId).run();
   return json({ ok: true });
+}
+
+// Get invite info (no auth required) - returns email, org_name, has_account
+async function handleGetInviteInfo(env, token) {
+  if (!token) return json({ error: '招待トークンが必要です' }, 400);
+
+  const invitation = await env.DB.prepare(
+    "SELECT oi.email, oi.organization_id, o.name as org_name FROM organization_invitations oi JOIN organizations o ON o.id = oi.organization_id WHERE oi.token = ? AND oi.expires_at > datetime('now')"
+  ).bind(token).first();
+
+  if (!invitation) {
+    return json({ error: '招待が見つからないか、有効期限が切れています' }, 404);
+  }
+
+  const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(invitation.email).first();
+
+  return json({
+    email: invitation.email,
+    org_name: invitation.org_name,
+    has_account: !!existingUser
+  });
 }
 
 async function handleAcceptOrgInvitation(request, env, user) {
