@@ -328,6 +328,17 @@ async function ensureTablesExist(env) {
       await env.DB.prepare('ALTER TABLE organizations ADD COLUMN stripe_subscription_id TEXT').run();
     } catch (e) { /* Column might already exist */ }
 
+    // Add icon/color customization columns
+    try {
+      await env.DB.prepare("ALTER TABLE folders ADD COLUMN pin_icon TEXT DEFAULT 'fa-map-pin'").run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare("ALTER TABLE folders ADD COLUMN pin_color TEXT DEFAULT '#1a73e8'").run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare("ALTER TABLE kml_folders ADD COLUMN line_color TEXT DEFAULT '#e53935'").run();
+    } catch (e) { /* Column might already exist */ }
+
     tablesInitialized = true;
   } catch (err) {
     console.error('Table initialization error:', err);
@@ -2489,7 +2500,7 @@ async function handleGetKmlFolders(env, user) {
 }
 
 async function handleCreateKmlFolder(request, env, user) {
-  const { name, is_public, parent_id } = await getRequestBody(request);
+  const { name, is_public, parent_id, line_color } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -2505,11 +2516,12 @@ async function handleCreateKmlFolder(request, env, user) {
   }
 
   const publicFlag = user.is_admin && is_public ? 1 : 0;
+  const colorVal = line_color || '#e53935';
   const result = await env.DB.prepare(
-    'INSERT INTO kml_folders (name, user_id, is_public, parent_id) VALUES (?, ?, ?, ?)'
-  ).bind(name, user.id, publicFlag, parent_id || null).run();
+    'INSERT INTO kml_folders (name, user_id, is_public, parent_id, line_color) VALUES (?, ?, ?, ?, ?)'
+  ).bind(name, user.id, publicFlag, parent_id || null, colorVal).run();
 
-  return json({ id: result.meta.last_row_id, name, user_id: user.id, is_public: publicFlag, parent_id: parent_id || null });
+  return json({ id: result.meta.last_row_id, name, user_id: user.id, is_public: publicFlag, parent_id: parent_id || null, line_color: colorVal });
 }
 
 async function handleRenameKmlFolder(request, env, user, id) {
@@ -2519,15 +2531,16 @@ async function handleRenameKmlFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await getRequestBody(request);
+  const { name, is_public, line_color } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : folder.is_public;
+  const colorVal = line_color || folder.line_color || '#e53935';
 
-  await env.DB.prepare('UPDATE kml_folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name, publicFlag, id).run();
-  return json({ ok: true, name: name, is_public: publicFlag });
+  await env.DB.prepare('UPDATE kml_folders SET name = ?, is_public = ?, line_color = ? WHERE id = ?')
+    .bind(name, publicFlag, colorVal, id).run();
+  return json({ ok: true, name, is_public: publicFlag, line_color: colorVal });
 }
 
 async function handleDeleteKmlFolder(env, user, id) {
@@ -2956,7 +2969,7 @@ async function handleGetFolders(env, user) {
 }
 
 async function handleCreateFolder(request, env, user) {
-  const { name, parent_id, is_public } = await getRequestBody(request);
+  const { name, parent_id, is_public, pin_icon, pin_color } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Check free tier limit
@@ -2972,11 +2985,13 @@ async function handleCreateFolder(request, env, user) {
   }
 
   const publicFlag = user.is_admin && is_public ? 1 : 0;
+  const iconVal = pin_icon || 'fa-map-pin';
+  const colorVal = pin_color || '#1a73e8';
   const result = await env.DB.prepare(
-    'INSERT INTO folders (name, parent_id, user_id, is_public) VALUES (?, ?, ?, ?)'
-  ).bind(name, parent_id || null, user.id, publicFlag).run();
+    'INSERT INTO folders (name, parent_id, user_id, is_public, pin_icon, pin_color) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(name, parent_id || null, user.id, publicFlag, iconVal, colorVal).run();
 
-  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, is_public: publicFlag });
+  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, is_public: publicFlag, pin_icon: iconVal, pin_color: colorVal });
 }
 
 async function handleRenameFolder(request, env, user, id) {
@@ -2986,15 +3001,17 @@ async function handleRenameFolder(request, env, user, id) {
     return json({ error: '権限がありません' }, 403);
   }
 
-  const { name, is_public } = await getRequestBody(request);
+  const { name, is_public, pin_icon, pin_color } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   // Only admin can change is_public
   const publicFlag = user.is_admin && is_public !== undefined ? (is_public ? 1 : 0) : (folder.is_public || 0);
+  const iconVal = pin_icon || folder.pin_icon || 'fa-map-pin';
+  const colorVal = pin_color || folder.pin_color || '#1a73e8';
 
-  await env.DB.prepare('UPDATE folders SET name = ?, is_public = ? WHERE id = ?')
-    .bind(name, publicFlag, id).run();
-  return json({ ok: true, name: name, is_public: publicFlag });
+  await env.DB.prepare('UPDATE folders SET name = ?, is_public = ?, pin_icon = ?, pin_color = ? WHERE id = ?')
+    .bind(name, publicFlag, iconVal, colorVal, id).run();
+  return json({ ok: true, name, is_public: publicFlag, pin_icon: iconVal, pin_color: colorVal });
 }
 
 async function handleDeleteFolder(env, user, id) {
@@ -3215,7 +3232,8 @@ async function handleGetPins(env, user) {
       SELECT p.*, u.display_name as author,
         CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
         CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared,
-        o.name as organization_name
+        o.name as organization_name,
+        f.pin_icon as folder_pin_icon, f.pin_color as folder_pin_color
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
@@ -3228,7 +3246,8 @@ async function handleGetPins(env, user) {
       SELECT p.*, u.display_name as author,
         CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
         CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = p.folder_id) THEN 1 ELSE 0 END as is_shared,
-        o.name as organization_name
+        o.name as organization_name,
+        f.pin_icon as folder_pin_icon, f.pin_color as folder_pin_color
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id
@@ -3243,7 +3262,8 @@ async function handleGetPins(env, user) {
     // Non-logged in users see only pins in public folders
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author, 1 as is_public, 0 as is_shared,
-        o.name as organization_name
+        o.name as organization_name,
+        f.pin_icon as folder_pin_icon, f.pin_color as folder_pin_color
       FROM pins p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN folders f ON p.folder_id = f.id

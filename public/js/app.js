@@ -150,6 +150,45 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
+// ==================== Icon Picker ====================
+const PIN_ICONS = [
+  'fa-map-pin','fa-location-dot','fa-thumbtack','fa-star','fa-heart','fa-flag','fa-house','fa-building',
+  'fa-store','fa-hospital','fa-school','fa-church','fa-landmark','fa-monument','fa-tree','fa-mountain',
+  'fa-water','fa-umbrella-beach','fa-campground','fa-utensils','fa-mug-hot','fa-wine-glass','fa-beer-mug-empty','fa-cart-shopping',
+  'fa-car','fa-bicycle','fa-bus','fa-train','fa-plane','fa-ship','fa-gas-pump','fa-parking',
+  'fa-futbol','fa-baseball','fa-basketball-ball','fa-volleyball','fa-golf-ball-tee','fa-person-swimming','fa-person-running','fa-dumbbell',
+  'fa-music','fa-camera','fa-palette','fa-book','fa-graduation-cap','fa-briefcase','fa-wrench','fa-scissors',
+  'fa-paw','fa-fish','fa-dove','fa-bug','fa-seedling','fa-leaf','fa-fire','fa-snowflake',
+  'fa-sun','fa-moon','fa-cloud','fa-bolt','fa-circle-info','fa-circle-exclamation','fa-triangle-exclamation','fa-circle-check'
+];
+
+function renderIconPicker(prefix) {
+  const container = document.getElementById(`${prefix}-icon-picker`);
+  const currentIcon = document.getElementById(`${prefix}-pin-icon`).value;
+  container.innerHTML = PIN_ICONS.map(icon =>
+    `<div class="icon-picker-item${icon === currentIcon ? ' selected' : ''}" data-icon="${icon}" onclick="selectIcon('${prefix}','${icon}')">
+      <i class="fas ${icon}"></i>
+    </div>`
+  ).join('');
+}
+
+function selectIcon(prefix, icon) {
+  document.getElementById(`${prefix}-pin-icon`).value = icon;
+  document.getElementById(`${prefix}-icon-current`).innerHTML = `<i class="fas ${icon}"></i>`;
+  // Update selected state
+  const picker = document.getElementById(`${prefix}-icon-picker`);
+  picker.querySelectorAll('.icon-picker-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.icon === icon);
+  });
+}
+
+function toggleIconPicker(prefix) {
+  const picker = document.getElementById(`${prefix}-icon-picker`);
+  const isHidden = picker.style.display === 'none';
+  picker.style.display = isHidden ? 'grid' : 'none';
+  if (isHidden) renderIconPicker(prefix);
+}
+
 // Get visibility badge based on public/shared/org status
 function getVisibilityBadge(isPublic, isShared, orgName) {
   let badges = '';
@@ -763,10 +802,13 @@ function getDescendantKmlFolderIds(parentId) {
 }
 
 function displayKmlFile(file) {
+  // Use folder line_color if available
+  const folder = file.folder_id ? kmlFolders.find(f => f.id === file.folder_id) : null;
+  const lineColor = (folder && folder.line_color) || '#e53935';
   const geoJsonOptions = {
     interactive: false,
     style: function() {
-      return { color: '#e53935', weight: 2, opacity: 0.9, fillOpacity: 0 };
+      return { color: lineColor, weight: 2, opacity: 0.9, fillOpacity: 0 };
     }
   };
 
@@ -975,6 +1017,7 @@ function showRenameKmlFolderModal(folderId) {
   document.getElementById('rename-kml-folder-name').value = folder.name;
   document.getElementById('rename-kml-folder-public').checked = !!folder.is_public;
   document.getElementById('rename-kml-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
+  document.getElementById('rename-kml-folder-line-color').value = folder.line_color || '#e53935';
   openModal('modal-rename-kml-folder');
 }
 
@@ -988,7 +1031,8 @@ async function renameKmlFolder() {
       method: 'PUT',
       body: JSON.stringify({
         name,
-        is_public: document.getElementById('rename-kml-folder-public').checked
+        is_public: document.getElementById('rename-kml-folder-public').checked,
+        line_color: document.getElementById('rename-kml-folder-line-color').value
       })
     });
     closeModal('modal-rename-kml-folder');
@@ -1751,15 +1795,17 @@ function updatePinMarkers() {
 }
 
 function addPinMarker(pin) {
-  const isOwn = currentUser && pin.user_id === currentUser.id;
-  const color = isOwn ? '#1a73e8' : '#e53935';
+  // Use folder icon/color if available, otherwise defaults
+  const folder = pin.folder_id ? folders.find(f => f.id === pin.folder_id) : null;
+  const color = (folder && folder.pin_color) || pin.folder_pin_color || '#1a73e8';
+  const faIcon = (folder && folder.pin_icon) || pin.folder_pin_icon || 'fa-map-pin';
   const icon = L.divIcon({
     className: '',
     html: `<div style="
       background:${color};width:28px;height:28px;border-radius:50% 50% 50% 0;
       transform:rotate(-45deg);border:2px solid white;
       box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;
-    "><i class="fas fa-map-pin" style="color:white;font-size:12px;transform:rotate(45deg);"></i></div>`,
+    "><i class="fas ${faIcon}" style="color:white;font-size:12px;transform:rotate(45deg);"></i></div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 28],
     popupAnchor: [0, -28]
@@ -1847,6 +1893,13 @@ function showRenameFolderModal(folderId) {
   document.getElementById('rename-folder-name').value = folder.name;
   document.getElementById('rename-folder-public').checked = !!folder.is_public;
   document.getElementById('rename-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
+  // Set icon and color
+  const icon = folder.pin_icon || 'fa-map-pin';
+  const color = folder.pin_color || '#1a73e8';
+  document.getElementById('rename-folder-pin-icon').value = icon;
+  document.getElementById('rename-folder-pin-color').value = color;
+  document.getElementById('rename-folder-icon-current').innerHTML = `<i class="fas ${icon}"></i>`;
+  document.getElementById('rename-folder-icon-picker').style.display = 'none';
   openModal('modal-rename-folder');
 }
 
@@ -1860,12 +1913,15 @@ async function renameFolder() {
       method: 'PUT',
       body: JSON.stringify({
         name,
-        is_public: document.getElementById('rename-folder-public').checked
+        is_public: document.getElementById('rename-folder-public').checked,
+        pin_icon: document.getElementById('rename-folder-pin-icon').value,
+        pin_color: document.getElementById('rename-folder-pin-color').value
       })
     });
     closeModal('modal-rename-folder');
     notify('フォルダ設定を変更しました');
     loadFolders();
+    loadPins();
   } catch (err) { notify(err.message, 'error'); }
 }
 
