@@ -1771,7 +1771,7 @@ function addPinMarker(pin) {
 }
 
 function renderPinItem(pin) {
-  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared);
+  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared, pin.organization_name);
   const canEdit = currentUser && (pin.user_id === currentUser.id || currentUser.is_admin);
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   return `<div class="pin-item" data-pin-id="${pin.id}">
@@ -2147,7 +2147,7 @@ function renderPinMarkers() {
 function createPinPopup(pin) {
   const div = document.createElement('div');
   div.style.cssText = 'max-width:280px;';
-  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared);
+  const visBadge = getVisibilityBadge(pin.is_public, pin.is_shared, pin.organization_name);
   const dateStr = pin.created_at ? pin.created_at.split('T')[0] : '';
   let html = `<h4 style="margin:0 0 4px;">${escHtml(pin.title)} ${visBadge}</h4>`;
   html += `<p style="font-size:12px;color:#666;margin:0 0 4px;">${escHtml(pin.description || '')}</p>`;
