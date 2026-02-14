@@ -2567,12 +2567,40 @@ async function handleKmlFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await getRequestBody(request);
+  const { is_visible, cascade } = await getRequestBody(request);
+  const visibleVal = is_visible ? 1 : 0;
+
+  // Update this folder
   await env.DB.prepare(`
     INSERT INTO kml_folder_visibility (kml_folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(kml_folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
-  `).bind(id, user.id, is_visible ? 1 : 0).run();
+  `).bind(id, user.id, visibleVal).run();
+
+  // Cascade to descendant folders if requested
+  if (cascade) {
+    const descendantIds = await getDescendantKmlFolderIds(env, id);
+    for (const descId of descendantIds) {
+      await env.DB.prepare(`
+        INSERT INTO kml_folder_visibility (kml_folder_id, user_id, is_visible) VALUES (?, ?, ?)
+        ON CONFLICT(kml_folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
+      `).bind(descId, user.id, visibleVal).run();
+    }
+  }
+
   return json({ ok: true });
+}
+
+async function getDescendantKmlFolderIds(env, parentId) {
+  const children = await env.DB.prepare(
+    'SELECT id FROM kml_folders WHERE parent_id = ?'
+  ).bind(parentId).all();
+  let ids = [];
+  for (const child of children.results) {
+    ids.push(child.id);
+    const grandchildren = await getDescendantKmlFolderIds(env, child.id);
+    ids = ids.concat(grandchildren);
+  }
+  return ids;
 }
 
 async function handleGetKmlFolderShares(env, user, id) {
@@ -3198,12 +3226,40 @@ async function handleFolderVisibility(request, env, user, id) {
   `).bind(id, user.id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  const { is_visible } = await getRequestBody(request);
+  const { is_visible, cascade } = await getRequestBody(request);
+  const visibleVal = is_visible ? 1 : 0;
+
+  // Update this folder
   await env.DB.prepare(`
     INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
     ON CONFLICT(folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
-  `).bind(id, user.id, is_visible ? 1 : 0).run();
+  `).bind(id, user.id, visibleVal).run();
+
+  // Cascade to descendant folders if requested
+  if (cascade) {
+    const descendantIds = await getDescendantPinFolderIds(env, id);
+    for (const descId of descendantIds) {
+      await env.DB.prepare(`
+        INSERT INTO folder_visibility (folder_id, user_id, is_visible) VALUES (?, ?, ?)
+        ON CONFLICT(folder_id, user_id) DO UPDATE SET is_visible = excluded.is_visible
+      `).bind(descId, user.id, visibleVal).run();
+    }
+  }
+
   return json({ ok: true });
+}
+
+async function getDescendantPinFolderIds(env, parentId) {
+  const children = await env.DB.prepare(
+    'SELECT id FROM folders WHERE parent_id = ?'
+  ).bind(parentId).all();
+  let ids = [];
+  for (const child of children.results) {
+    ids.push(child.id);
+    const grandchildren = await getDescendantPinFolderIds(env, child.id);
+    ids = ids.concat(grandchildren);
+  }
+  return ids;
 }
 
 // ==================== Pins Handlers ====================
