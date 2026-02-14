@@ -2837,14 +2837,14 @@ async function handleUploadKmlFile(request, env, user) {
   // Send push notification for new KML file
   if (folderId) {
     try {
-      const folder = await env.DB.prepare('SELECT is_public FROM kml_folders WHERE id = ?').bind(folderId).first();
+      const folder = await env.DB.prepare('SELECT is_public, organization_id FROM kml_folders WHERE id = ?').bind(folderId).first();
       if (folder) {
         await sendPushNotifications(env, 'kml', {
           title: '新しいKMLファイル',
           body: `${user.display_name || user.username}: ${file.name.substring(0, 30)}`,
           id: result.meta.last_row_id,
           creatorId: user.id
-        }, { id: folderId, is_public: folder.is_public === 1, type: 'kml' });
+        }, { id: folderId, is_public: folder.is_public === 1, organization_id: folder.organization_id, type: 'kml' });
       }
     } catch (e) {
       console.error('Push notification error:', e);
@@ -3361,14 +3361,14 @@ async function handleCreatePin(request, env, user) {
   // Send push notification for new pin
   if (folder_id) {
     try {
-      const folder = await env.DB.prepare('SELECT is_public FROM folders WHERE id = ?').bind(folder_id).first();
+      const folder = await env.DB.prepare('SELECT is_public, organization_id FROM folders WHERE id = ?').bind(folder_id).first();
       if (folder) {
         await sendPushNotifications(env, 'pin', {
           title: '新しいピン',
           body: `${user.display_name || user.username}: ${title.substring(0, 30)}`,
           id: pinId,
           creatorId: user.id
-        }, { id: folder_id, is_public: folder.is_public === 1, type: 'pin' });
+        }, { id: folder_id, is_public: folder.is_public === 1, organization_id: folder.organization_id, type: 'pin' });
       }
     } catch (e) {
       console.error('Push notification error:', e);
@@ -3584,7 +3584,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
       body: `${user.display_name || user.username}: ${content.substring(0, 30)}`,
       id: pinId,
       creatorId: user.id
-    }, { id: pin.folder_id, is_public: folderIsPublic, type: 'pin' });
+    }, { id: pin.folder_id, is_public: folderIsPublic, organization_id: pin.folder_org_id, type: 'pin' });
   } catch (e) {
     console.error('Push notification error:', e);
   }
@@ -3889,6 +3889,26 @@ async function sendPushNotifications(env, type, data, folderInfo) {
       'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?'
     ).bind(data.creatorId).all();
     targetUserIds = users.results.map(u => u.user_id);
+  } else if (folderInfo.organization_id) {
+    // Organization folder - get all org members except the creator
+    const orgMembers = await env.DB.prepare(
+      'SELECT user_id FROM organization_members WHERE organization_id = ? AND user_id != ?'
+    ).bind(folderInfo.organization_id, data.creatorId).all();
+    targetUserIds = orgMembers.results.map(m => m.user_id);
+
+    // Also include direct folder shares (non-org members who were shared)
+    let shares;
+    if (folderInfo.type === 'kml') {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id != ?'
+      ).bind(folderInfo.id, data.creatorId).all();
+    } else {
+      shares = await env.DB.prepare(
+        'SELECT shared_with_user_id FROM folder_shares WHERE folder_id = ? AND shared_with_user_id != ?'
+      ).bind(folderInfo.id, data.creatorId).all();
+    }
+    const shareIds = shares.results.map(s => s.shared_with_user_id);
+    targetUserIds = [...new Set([...targetUserIds, ...shareIds])];
   } else if (folderInfo.id) {
     // Shared folder - get users who have been shared this folder
     // Use separate queries to avoid dynamic SQL construction
