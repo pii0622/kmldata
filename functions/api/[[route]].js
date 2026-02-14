@@ -1170,7 +1170,7 @@ async function handleExternalMemberSync(request, env) {
       }
     }
 
-    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
+    const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id, org_name } = await getRequestBody(request);
 
     // Verify shared secret
     // TODO: Remove debug response after fixing auth issue
@@ -1215,7 +1215,8 @@ async function handleExternalMemberSync(request, env) {
         // Update existing user's plan
         if (existing.member_source === 'wordpress') {
           await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?').bind(plan || 'premium', existing.id).run();
-          return json({ success: true, action: 'updated', user_id: existing.id });
+          const inviteResult = await autoInviteToOrg(env, existing.email || email, org_name, existing.id);
+          return json({ success: true, action: 'updated', user_id: existing.id, invitation: inviteResult });
         } else {
           // User registered normally or via Stripe, update their plan
           // Don't change member_source if it's already 'stripe' - that takes precedence
@@ -1226,7 +1227,8 @@ async function handleExternalMemberSync(request, env) {
             await env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?')
               .bind(plan || 'premium', existing.id).run();
           }
-          return json({ success: true, action: 'upgraded', user_id: existing.id });
+          const inviteResult = await autoInviteToOrg(env, existing.email || email, org_name, existing.id);
+          return json({ success: true, action: 'upgraded', user_id: existing.id, invitation: inviteResult });
         }
       }
 
@@ -1258,7 +1260,10 @@ async function handleExternalMemberSync(request, env) {
       // Send welcome email with password setup link
       await sendExternalWelcomeEmail(env, email, actualDisplayName);
 
-      return json({ success: true, action: 'created', user_id: userId });
+      // Auto-invite to organization if org_name is specified
+      const inviteResult = await autoInviteToOrg(env, email, org_name, userId);
+
+      return json({ success: true, action: 'created', user_id: userId, invitation: inviteResult });
 
     } else if (action === 'delete') {
       // Find user by multiple identifiers
@@ -1294,6 +1299,56 @@ async function handleExternalMemberSync(request, env) {
   }
 }
 
+// Auto-invite user to an organization by name (used during WordPress member sync)
+async function autoInviteToOrg(env, email, orgName, userId) {
+  if (!orgName) return null;
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Find organization by name
+    const org = await env.DB.prepare('SELECT id, created_by FROM organizations WHERE name = ?').bind(orgName).first();
+    if (!org) {
+      console.log(`autoInviteToOrg: organization '${orgName}' not found`);
+      return { status: 'org_not_found' };
+    }
+
+    // Check if user is already a member
+    const existingMember = await env.DB.prepare(
+      'SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?'
+    ).bind(org.id, userId).first();
+    if (existingMember) {
+      return { status: 'already_member' };
+    }
+
+    // Check if there's already a pending invitation
+    const existingInvite = await env.DB.prepare(
+      "SELECT 1 FROM organization_invitations WHERE organization_id = ? AND email = ? AND expires_at > datetime('now')"
+    ).bind(org.id, normalizedEmail).first();
+    if (existingInvite) {
+      return { status: 'already_invited' };
+    }
+
+    // Create invitation (invited_by = org creator)
+    const token = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    await env.DB.prepare(
+      'INSERT INTO organization_invitations (organization_id, email, token, invited_by, expires_at) VALUES (?, ?, ?, ?, ?)'
+    ).bind(org.id, normalizedEmail, token, org.created_by, expiresAt).run();
+
+    // Send invitation email
+    const inviter = await env.DB.prepare('SELECT display_name, username FROM users WHERE id = ?').bind(org.created_by).first();
+    const inviterName = inviter?.display_name || inviter?.username || orgName;
+    await sendOrgInvitationEmail(env, normalizedEmail, orgName, inviterName, token);
+
+    console.log(`autoInviteToOrg: invited ${normalizedEmail} to '${orgName}'`);
+    return { status: 'invited', org_name: orgName };
+  } catch (err) {
+    console.error('autoInviteToOrg error:', err);
+    return { status: 'error', message: err.message };
+  }
+}
 
 // Handle account setup for external members (username + password)
 async function handleSetupPassword(request, env) {

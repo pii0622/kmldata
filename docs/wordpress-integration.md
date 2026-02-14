@@ -8,6 +8,7 @@ WordPress の有料会員を Fieldnota commons と自動同期するための設
 - WordPress で有料会員になると、Fieldnota commons のアカウントが自動作成されます
 - ユーザーは初回ログイン時にユーザー名とパスワードを設定します
 - WordPress の会員が解約されると、Fieldnota commons のアカウントも自動削除されます
+- `org_name` を指定すると、団体への招待メールも自動送信されます
 
 ---
 
@@ -96,7 +97,8 @@ Content-Type: application/json
   "display_name": "山田 太郎",
   "plan": "premium",
   "external_id": "wp_123",
-  "secret": "あなたの共有シークレット"
+  "secret": "あなたの共有シークレット",
+  "org_name": "yafomans"
 }
 ```
 
@@ -122,20 +124,25 @@ define('FIELDNOTA_SECRET', 'あなたの共有シークレット');
 /**
  * Stripe 決済完了時に Fieldnota にアカウント作成
  */
-function sync_to_fieldnota_on_payment($user_id, $plan = 'premium') {
+function sync_to_fieldnota_on_payment($user_id, $plan = 'premium', $org_name = 'yafomans') {
     $user = get_userdata($user_id);
     if (!$user) return false;
 
+    $body = array(
+        'action' => 'create',
+        'email' => $user->user_email,
+        'display_name' => $user->display_name,
+        'plan' => $plan,
+        'external_id' => 'wp_' . $user_id,
+        'secret' => FIELDNOTA_SECRET
+    );
+    if ($org_name) {
+        $body['org_name'] = $org_name;
+    }
+
     $response = wp_remote_post(FIELDNOTA_API_URL, array(
         'headers' => array('Content-Type' => 'application/json'),
-        'body' => json_encode(array(
-            'action' => 'create',
-            'email' => $user->user_email,
-            'display_name' => $user->display_name,
-            'plan' => $plan,
-            'external_id' => 'wp_' . $user_id,
-            'secret' => FIELDNOTA_SECRET
-        )),
+        'body' => json_encode($body),
         'timeout' => 30
     ));
 
@@ -210,11 +217,12 @@ case 'customer.subscription.deleted':
 
 1. ユーザーが WordPress で有料会員登録
 2. Stripe 決済完了
-3. WordPress が Fieldnota API を呼び出し、アカウント作成
-4. ユーザーにウェルカムメールが送信される
-5. メール内のリンクをクリック
-6. ユーザー名（ローマ字フルネーム）とパスワードを設定
-7. 自動ログインして利用開始
+3. WordPress が Fieldnota API を呼び出し（`org_name` 付き）
+4. アカウント作成 + ウェルカムメール送信
+5. 団体への招待メールも自動送信
+6. ユーザーがウェルカムメールのリンクからパスワードを設定
+7. 招待メールのリンクから団体に参加
+8. 自動ログインして利用開始
 
 ### 4.2 ウェルカムメールの内容
 
@@ -239,12 +247,13 @@ Fieldnota commons をご利用いただくには、
 
 ### 5.1 成功レスポンス
 
-**アカウント作成成功：**
+**アカウント作成成功（団体招待あり）：**
 ```json
 {
   "success": true,
   "action": "created",
-  "user_id": 123
+  "user_id": 123,
+  "invitation": { "status": "invited", "org_name": "yafomans" }
 }
 ```
 
@@ -253,7 +262,8 @@ Fieldnota commons をご利用いただくには、
 {
   "success": true,
   "action": "updated",
-  "user_id": 123
+  "user_id": 123,
+  "invitation": { "status": "invited", "org_name": "yafomans" }
 }
 ```
 
@@ -262,7 +272,8 @@ Fieldnota commons をご利用いただくには、
 {
   "success": true,
   "action": "upgraded",
-  "user_id": 123
+  "user_id": 123,
+  "invitation": { "status": "already_member" }
 }
 ```
 
