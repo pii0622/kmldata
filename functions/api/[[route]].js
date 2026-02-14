@@ -1849,6 +1849,12 @@ async function handleRegister(request, env) {
     return json({ error: 'そのユーザー名は既に使われています' }, 400);
   }
 
+  // Check if email is already used
+  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (existingEmail) {
+    return json({ error: 'このメールアドレスは既に登録されています' }, 400);
+  }
+
   // Check if display name is already used
   const actualDisplayName = display_name || username;
   const existingDisplayName = await env.DB.prepare('SELECT id FROM users WHERE display_name = ?').bind(actualDisplayName).first();
