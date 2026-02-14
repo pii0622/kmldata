@@ -3410,10 +3410,10 @@ async function showOrgDetail(orgId) {
     foldersTab.style.display = '';
   }
 
-  // Show leave button for non-admin members (admins can also leave if not last admin)
+  // Show leave button for all members (server-side check prevents last admin from leaving)
   const leaveBtn = document.getElementById('org-leave-btn');
   if (leaveBtn) {
-    leaveBtn.style.display = org.role === 'admin' ? 'none' : '';
+    leaveBtn.style.display = '';
   }
 
   closeModal('modal-org');
