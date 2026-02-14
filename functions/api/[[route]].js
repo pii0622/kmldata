@@ -2544,22 +2544,9 @@ async function handleCreatePortalSession(request, env, user) {
       return json({ error: 'Stripe is not configured' }, 500);
     }
 
-    // Require password verification for security
-    const body = await getRequestBody(request).catch(() => ({}));
-    const { password } = body;
-
-    if (!password) {
-      return json({ error: 'パスワードが必要です' }, 400);
-    }
-
     const dbUser = await env.DB.prepare(
-      'SELECT stripe_customer_id, member_source, password_hash, password_salt FROM users WHERE id = ?'
+      'SELECT stripe_customer_id, member_source FROM users WHERE id = ?'
     ).bind(user.id).first();
-
-    // Verify password
-    if (!dbUser.password_hash || !(await verifyPassword(password, dbUser.password_hash, dbUser.password_salt))) {
-      return json({ error: 'パスワードが正しくありません' }, 401);
-    }
 
     if (dbUser.member_source === 'wordpress') {
       return json({ error: 'WordPress経由の会員はWordPress側で管理してください' }, 400);
