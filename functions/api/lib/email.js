@@ -61,25 +61,28 @@ export async function sendExternalWelcomeEmail(env, email, displayName) {
     </a>
   </p>
   <p style="color: #666; font-size: 14px;">
-    このメールに心当たりがない場合は、このメールを無視してください。
+    ※ このメールに心当たりがない場合は、無視してください。
   </p>
   <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
   <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
 </body>
-</html>`;
+</html>
+  `;
 
-  const textBody = `${displayName} 様
+  const textBody = `
+${displayName} 様
 
 Fieldnota commons へようこそ！
 
 有料会員登録ありがとうございます。
-以下のリンクからパスワードを設定してください：
 
+以下のリンクからパスワードを設定してください：
 ${appUrl}?setup=password&email=${encodeURIComponent(email)}
 
-このメールに心当たりがない場合は、このメールを無視してください。
+※ このメールに心当たりがない場合は、無視してください。
 
-Fieldnota commons`;
+Fieldnota commons
+  `;
 
   return await sendEmail(env, email, subject, htmlBody, textBody);
 }

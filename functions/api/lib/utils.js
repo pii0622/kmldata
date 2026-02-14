@@ -2,14 +2,11 @@
 
 // Base64URL encoding (RFC 4648) - URL-safe, no padding
 export function base64urlEncode(data) {
-  const bytes = data instanceof Uint8Array ? data :
-    typeof data === 'string' ? new TextEncoder().encode(data) :
-    new Uint8Array(data);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const bytes = typeof data === 'string'
+    ? new TextEncoder().encode(data)
+    : data;
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 export function base64urlDecode(str) {
@@ -41,11 +38,21 @@ export function setCookieHeader(name, value, options = {}) {
   return cookie;
 }
 
-// JSON response helper
+// Security headers
+export const securityHeaders = {
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-XSS-Protection': '1; mode=block',
+  'Permissions-Policy': 'geolocation=(self), camera=(), microphone()'
+};
+
+// JSON response helper (includes security headers)
 export function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...headers }
+    headers: { 'Content-Type': 'application/json', ...securityHeaders, ...headers }
   });
 }
 
@@ -89,12 +96,38 @@ export function isValidEmail(email) {
   return true;
 }
 
-// Security headers
-export const securityHeaders = {
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'X-XSS-Protection': '1; mode=block',
-  'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()'
-};
+// Input sanitization
+export function sanitizeValue(value) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  return value;
+}
+
+export function sanitizeObject(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string') return obj.trim();
+  if (Array.isArray(obj)) return obj.map(item => sanitizeObject(item));
+  if (typeof obj === 'object') {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(obj)) {
+      sanitized[key] = sanitizeObject(value);
+    }
+    return sanitized;
+  }
+  return obj;
+}
+
+export async function getRequestBody(request) {
+  const body = await request.json();
+  return sanitizeObject(body);
+}
+
+// Hash IP address for privacy (GDPR compliance)
+export async function hashIP(ip) {
+  if (!ip || ip === 'unknown') return 'unknown';
+  const encoder = new TextEncoder();
+  const data = encoder.encode(ip);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64urlEncode(new Uint8Array(hash)).substring(0, 16);
+}
