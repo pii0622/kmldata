@@ -601,6 +601,104 @@
   </div>
 </div>
 
+<!-- Organization management modal -->
+<div class="modal-overlay" id="modal-org">
+  <div class="modal" style="max-width:600px;">
+    <h3><i class="fas fa-building"></i> 団体管理</h3>
+    <div class="tabs">
+      <div class="tab active" onclick="switchOrgTab('list')">団体一覧</div>
+      <div class="tab" onclick="switchOrgTab('create')">団体作成</div>
+    </div>
+    <div id="org-tab-list">
+      <div id="org-list" style="max-height:400px;overflow-y:auto;">
+        <p style="color:#999;">読み込み中...</p>
+      </div>
+    </div>
+    <div id="org-tab-create" style="display:none;">
+      <div class="form-group">
+        <label>団体名 *</label>
+        <input type="text" id="org-create-name" placeholder="団体名">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="createOrganization()">作成</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-org')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Organization detail modal -->
+<div class="modal-overlay" id="modal-org-detail">
+  <div class="modal" style="max-width:600px;">
+    <h3><i class="fas fa-building"></i> <span id="org-detail-name"></span></h3>
+    <div class="tabs">
+      <div class="tab active" onclick="switchOrgDetailTab('members')">メンバー</div>
+      <div class="tab" onclick="switchOrgDetailTab('invite')">招待</div>
+      <div class="tab" onclick="switchOrgDetailTab('folders')">フォルダ</div>
+      <div class="tab" onclick="switchOrgDetailTab('settings')">設定</div>
+    </div>
+    <div id="org-detail-tab-members">
+      <div id="org-members-list" style="max-height:300px;overflow-y:auto;">
+        <p style="color:#999;">読み込み中...</p>
+      </div>
+    </div>
+    <div id="org-detail-tab-invite" style="display:none;">
+      <div class="form-group">
+        <label>メールアドレス *</label>
+        <input type="email" id="org-invite-email" placeholder="member@example.com">
+      </div>
+      <button class="btn btn-primary" onclick="sendOrgInvitation()" style="margin-bottom:12px;">招待メールを送信</button>
+      <div class="section-title">送信済み招待</div>
+      <div id="org-invitations-list" style="max-height:200px;overflow-y:auto;">
+        <p style="color:#999;">読み込み中...</p>
+      </div>
+    </div>
+    <div id="org-detail-tab-folders" style="display:none;">
+      <div style="margin-bottom:8px;display:flex;gap:4px;">
+        <button class="btn btn-sm btn-primary" onclick="showCreateOrgFolderModal('pin')">
+          <i class="fas fa-folder-plus"></i> ピンフォルダ
+        </button>
+        <button class="btn btn-sm btn-primary" onclick="showCreateOrgFolderModal('kml')">
+          <i class="fas fa-folder-plus"></i> KMLフォルダ
+        </button>
+      </div>
+      <div id="org-folders-list" style="max-height:300px;overflow-y:auto;">
+        <p style="color:#999;">読み込み中...</p>
+      </div>
+    </div>
+    <div id="org-detail-tab-settings" style="display:none;">
+      <div class="form-group">
+        <label>団体名</label>
+        <input type="text" id="org-edit-name" placeholder="団体名">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="updateOrganization()">保存</button>
+        <button class="btn btn-danger" onclick="deleteOrganization()" style="margin-left:auto;">団体を削除</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-org-detail')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Organization folder creation modal -->
+<div class="modal-overlay" id="modal-org-folder">
+  <div class="modal">
+    <h3><i class="fas fa-folder-plus"></i> 団体フォルダを作成</h3>
+    <div class="form-group">
+      <label>フォルダ名 *</label>
+      <input type="text" id="org-folder-name" placeholder="フォルダ名">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-org-folder')">キャンセル</button>
+      <button class="btn btn-primary" id="org-folder-create-btn" onclick="createOrgFolder()">作成</button>
+    </div>
+  </div>
+</div>
+
 <!-- Lightbox -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <button class="lightbox-close">&times;</button>

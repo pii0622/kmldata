@@ -266,6 +266,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
 .badge-public { background: #d4edda; color: #155724; }
 .badge-private { background: #f8d7da; color: #721c24; }
 .badge-shared { background: #cce5ff; color: #004085; }
+.badge-org { background: #e8daef; color: #6c3483; }
 .badge-premium { background: linear-gradient(135deg, #f0c14b 0%, #e8a92e 100%); color: #5c4103; }
 .badge-free { background: #6c757d; color: white; }
 

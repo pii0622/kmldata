@@ -18,12 +18,15 @@ import {
   checkFreeTierLimit, logSecurityEvent,
   ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE, MAX_KML_SIZE,
   validateImageFile, convertKmlPolygonToLine, validateCSRF,
+  // organization permissions
+  getUserOrgIds, isOrgAdmin, isOrgMember,
+  canEditFolder, canEditPin, canEditKmlFile,
   // webauthn
   generateWebAuthnChallenge, decodeCBOR, parseAttestationObject,
   parseAuthenticatorData, coseKeyToCryptoKey, verifyWebAuthnSignature,
   derToRaw, getRelyingPartyId,
   // email
-  sendEmail, sendExternalWelcomeEmail
+  sendEmail, sendExternalWelcomeEmail, sendOrgInvitationEmail
 } from './lib/index.js';
 
 // Content Security Policy for HTML responses
@@ -280,6 +283,46 @@ async function ensureTablesExist(env) {
     } catch (e) {
       // Column might already exist, ignore error
     }
+
+    // Organization tables
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS organizations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        created_by INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS organization_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(organization_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS organization_invitations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL,
+        email TEXT NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        invited_by INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (invited_by) REFERENCES users(id)
+      )`)
+    ]);
+
+    // Add organization_id to folders and kml_folders
+    try {
+      await env.DB.prepare('ALTER TABLE folders ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL').run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare('ALTER TABLE kml_folders ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL').run();
+    } catch (e) { /* Column might already exist */ }
 
     tablesInitialized = true;
   } catch (err) {
@@ -829,6 +872,73 @@ export async function onRequest(context) {
     if (path.match(/^\/images\/(.+)$/) && method === 'GET') {
       const key = path.match(/^\/images\/(.+)$/)[1];
       return await handleGetImage(env, user, key);
+    }
+
+    // Organizations
+    if (path === '/organizations' && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleGetOrganizations(env, user);
+    }
+    if (path === '/organizations' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleCreateOrganization(request, env, user);
+    }
+    if (path.match(/^\/organizations\/(\d+)$/) && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)$/)[1];
+      return await handleUpdateOrganization(request, env, user, id);
+    }
+    if (path.match(/^\/organizations\/(\d+)$/) && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)$/)[1];
+      return await handleDeleteOrganization(env, user, id);
+    }
+    // Organization members
+    if (path.match(/^\/organizations\/(\d+)\/members$/) && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/members$/)[1];
+      return await handleGetOrgMembers(env, user, id);
+    }
+    if (path.match(/^\/organizations\/(\d+)\/members\/(\d+)$/) && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const match = path.match(/^\/organizations\/(\d+)\/members\/(\d+)$/);
+      return await handleRemoveOrgMember(env, user, match[1], match[2]);
+    }
+    if (path.match(/^\/organizations\/(\d+)\/members\/(\d+)\/role$/) && method === 'PUT') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const match = path.match(/^\/organizations\/(\d+)\/members\/(\d+)\/role$/);
+      return await handleChangeOrgMemberRole(request, env, user, match[1], match[2]);
+    }
+    // Organization invitations
+    if (path.match(/^\/organizations\/(\d+)\/invitations$/) && method === 'GET') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/invitations$/)[1];
+      return await handleGetOrgInvitations(env, user, id);
+    }
+    if (path.match(/^\/organizations\/(\d+)\/invite$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/invite$/)[1];
+      return await handleInviteToOrg(request, env, user, id);
+    }
+    if (path.match(/^\/organizations\/invitations\/(\d+)$/) && method === 'DELETE') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/invitations\/(\d+)$/)[1];
+      return await handleCancelOrgInvitation(env, user, id);
+    }
+    if (path === '/organizations/accept-invite' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleAcceptOrgInvitation(request, env, user);
+    }
+    // Organization folders
+    if (path.match(/^\/organizations\/(\d+)\/folders$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/folders$/)[1];
+      return await handleCreateOrgFolder(request, env, user, id);
+    }
+    if (path.match(/^\/organizations\/(\d+)\/kml-folders$/) && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      const id = path.match(/^\/organizations\/(\d+)\/kml-folders$/)[1];
+      return await handleCreateOrgKmlFolder(request, env, user, id);
     }
 
     // External Member Sync API (for WordPress/Stripe integration)
@@ -1871,9 +1981,11 @@ async function handleDeleteAccount(request, env, user) {
       return json({ error: 'ユーザーが見つかりません' }, 404);
     }
 
-    // Delete user's R2 images (pin_images)
+    // Delete user's R2 images (pin_images) - only personal pins, not org folder pins
     try {
-      const userPins = await env.DB.prepare('SELECT id FROM pins WHERE user_id = ?').bind(user.id).all();
+      const userPins = await env.DB.prepare(
+        'SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))'
+      ).bind(user.id).all();
       for (const pin of userPins.results) {
         const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
         for (const img of images.results) {
@@ -1882,40 +1994,40 @@ async function handleDeleteAccount(request, env, user) {
       }
     } catch (e) { console.error('R2 pin image cleanup error:', e); }
 
-    // Delete user's R2 files (kml_files)
+    // Delete user's R2 files (kml_files) - only personal, not org folder files
     try {
       const userKmlFiles = await env.DB.prepare(
-        'SELECT r2_key FROM kml_files WHERE user_id = ?'
+        'SELECT r2_key FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))'
       ).bind(user.id).all();
       for (const f of userKmlFiles.results) {
         try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
       }
     } catch (e) { console.error('R2 kml file cleanup error:', e); }
 
-    // Delete DB data owned by user (split into smaller batches for reliability)
-    // Batch 1: Pin-related data
+    // Delete DB data owned by user (only personal data, not org folder content)
+    // Batch 1: Pin-related data (personal only)
     await env.DB.batch([
-      env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM pins WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(user.id),
+      env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(user.id),
+      env.DB.prepare('DELETE FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))').bind(user.id),
     ]);
 
-    // Batch 2: Folder-related data
+    // Batch 2: Folder-related data (personal only, not org folders)
     await env.DB.batch([
-      env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM folders WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
+      env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
+      env.DB.prepare('DELETE FROM folders WHERE user_id = ? AND organization_id IS NULL').bind(user.id),
     ]);
 
-    // Batch 3: KML-related data
+    // Batch 3: KML-related data (personal only, not org folders)
     await env.DB.batch([
-      env.DB.prepare('DELETE FROM kml_files WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ? AND organization_id IS NULL').bind(user.id),
     ]);
 
-    // Batch 4: User metadata
+    // Batch 4: User metadata + organization memberships
     await env.DB.batch([
       env.DB.prepare('DELETE FROM comment_read_status WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(user.id),
@@ -1923,6 +2035,8 @@ async function handleDeleteAccount(request, env, user) {
       env.DB.prepare('DELETE FROM passkey_challenges WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM verification_codes WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM organization_members WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM organization_invitations WHERE invited_by = ?').bind(user.id),
     ]);
 
     // Soft-delete: anonymize user row (keep for counting)
@@ -2109,14 +2223,17 @@ async function handleGetKmlFolders(env, user) {
       SELECT kf.*, u.display_name as owner_name,
         CASE WHEN kf.user_id = ? THEN 1 ELSE 0 END as is_owner,
         COALESCE(kfv.is_visible, 1) as is_visible,
-        CASE WHEN EXISTS (SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = kf.id) THEN 1 ELSE 0 END as is_shared
+        CASE WHEN EXISTS (SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = kf.id) THEN 1 ELSE 0 END as is_shared,
+        o.name as organization_name
       FROM kml_folders kf
       LEFT JOIN users u ON kf.user_id = u.id
       LEFT JOIN kml_folder_visibility kfv ON kf.id = kfv.kml_folder_id AND kfv.user_id = ?
+      LEFT JOIN organizations o ON kf.organization_id = o.id
       WHERE kf.user_id = ? OR kf.is_public = 1
         OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+        OR kf.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
       ORDER BY kf.sort_order, kf.name
-    `).bind(user.id, user.id, user.id, user.id).all();
+    `).bind(user.id, user.id, user.id, user.id, user.id).all();
   } else {
     folders = await env.DB.prepare(`
       SELECT kf.*, u.display_name as owner_name, 0 as is_owner, 1 as is_visible, 0 as is_shared
@@ -2156,7 +2273,7 @@ async function handleCreateKmlFolder(request, env, user) {
 async function handleRenameKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2174,7 +2291,7 @@ async function handleRenameKmlFolder(request, env, user, id) {
 async function handleDeleteKmlFolder(env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2199,12 +2316,13 @@ async function handleDeleteKmlFolder(env, user, id) {
 }
 
 async function handleKmlFolderVisibility(request, env, user, id) {
-  // Verify user has access to this folder (owner, public, or shared)
+  // Verify user has access to this folder (owner, public, shared, or org member)
   const folder = await env.DB.prepare(`
     SELECT kf.* FROM kml_folders kf
     WHERE kf.id = ? AND (kf.user_id = ? OR kf.is_public = 1
-      OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
-  `).bind(id, user.id, user.id).first();
+      OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+      OR kf.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?))
+  `).bind(id, user.id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
   const { is_visible } = await getRequestBody(request);
@@ -2219,14 +2337,15 @@ async function handleGetKmlFolderShares(env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  // User must be owner, admin, or shared with this folder
+  // User must be owner, admin, shared with this folder, or org member
   const isOwner = folder.user_id === user.id;
-  const isAdmin = user.is_admin;
+  const isSiteAdmin = user.is_admin;
   const isSharedWith = await env.DB.prepare(
     'SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id = ?'
   ).bind(id, user.id).first();
+  const isMember = folder.organization_id && await isOrgMember(env, user.id, folder.organization_id);
 
-  if (!isOwner && !isAdmin && !isSharedWith) {
+  if (!isOwner && !isSiteAdmin && !isSharedWith && !isMember) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2243,7 +2362,7 @@ async function handleGetKmlFolderShares(env, user, id) {
 async function handleShareKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
+  if (!await canEditFolder(env, user, folder)) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
@@ -2277,25 +2396,39 @@ async function handleShareKmlFolder(request, env, user, id) {
 async function handleReorderKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
   const { target_id } = await getRequestBody(request);
 
-  // Get all folders at the same level owned by the user
-  // Use separate queries to avoid dynamic SQL construction
+  // Get all folders at the same level (scoped by org or user)
   let siblings;
-  if (folder.parent_id) {
+  if (folder.organization_id) {
+    // Organization folder: scope to org
+    if (folder.parent_id) {
+      siblings = await env.DB.prepare(`
+        SELECT id, sort_order FROM kml_folders
+        WHERE organization_id = ? AND parent_id = ?
+        ORDER BY sort_order, id
+      `).bind(folder.organization_id, folder.parent_id).all();
+    } else {
+      siblings = await env.DB.prepare(`
+        SELECT id, sort_order FROM kml_folders
+        WHERE organization_id = ? AND parent_id IS NULL
+        ORDER BY sort_order, id
+      `).bind(folder.organization_id).all();
+    }
+  } else if (folder.parent_id) {
     siblings = await env.DB.prepare(`
       SELECT id, sort_order FROM kml_folders
-      WHERE user_id = ? AND parent_id = ?
+      WHERE user_id = ? AND organization_id IS NULL AND parent_id = ?
       ORDER BY sort_order, id
     `).bind(user.id, folder.parent_id).all();
   } else {
     siblings = await env.DB.prepare(`
       SELECT id, sort_order FROM kml_folders
-      WHERE user_id = ? AND parent_id IS NULL
+      WHERE user_id = ? AND organization_id IS NULL AND parent_id IS NULL
       ORDER BY sort_order, id
     `).bind(user.id).all();
   }
@@ -2324,7 +2457,7 @@ async function handleReorderKmlFolder(request, env, user, id) {
 async function handleMoveKmlFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2335,11 +2468,11 @@ async function handleMoveKmlFolder(request, env, user, id) {
     return json({ error: '自分自身には移動できません' }, 400);
   }
 
-  // Check if target parent exists and belongs to user
+  // Check if target parent exists and user has edit permission
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(parent_id).first();
     if (!parent) return json({ error: '移動先フォルダが見つかりません' }, 404);
-    if (parent.user_id !== user.id && !user.is_admin) {
+    if (!await canEditFolder(env, user, parent)) {
       return json({ error: '移動先フォルダの権限がありません' }, 403);
     }
 
@@ -2371,21 +2504,23 @@ async function handleGetKmlFiles(env, user, url) {
         FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
-        WHERE kf.folder_id = ? AND (kf.user_id = ? OR f.is_public = 1 OR
-          kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
+        WHERE kf.folder_id = ? AND (kf.user_id = ? OR f.is_public = 1
+          OR kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+          OR f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?))
         ORDER BY kf.original_name`;
-      bindings = [folderId, user.id, user.id];
+      bindings = [folderId, user.id, user.id, user.id];
     } else {
-      // All KML files user can access (own files, public folder files, shared folder files)
+      // All KML files user can access (own files, public folder files, shared folder files, org folder files)
       query = `SELECT kf.*, u.display_name as owner_name,
           COALESCE(f.is_public, 0) as is_public
         FROM kml_files kf
         LEFT JOIN users u ON kf.user_id = u.id
         LEFT JOIN kml_folders f ON kf.folder_id = f.id
-        WHERE kf.user_id = ? OR f.is_public = 1 OR
-          kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+        WHERE kf.user_id = ? OR f.is_public = 1
+          OR kf.folder_id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+          OR f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
         ORDER BY kf.original_name`;
-      bindings = [user.id, user.id];
+      bindings = [user.id, user.id, user.id];
     }
   } else {
     // Non-logged in users see only KML files in public folders
@@ -2417,21 +2552,25 @@ async function handleUploadKmlFile(request, env, user) {
     return json({ error: 'ファイルサイズが大きすぎます（最大50MB）' }, 400);
   }
 
-  // Check free tier limit (skip if uploading to admin's public/shared folder)
-  let isAdminFolder = false;
+  // Check free tier limit (skip if uploading to admin's public/shared folder or org folder)
+  let isExemptFolder = false;
   if (folderId) {
     const folder = await env.DB.prepare(`
       SELECT f.*, u.is_admin FROM kml_folders f
       JOIN users u ON f.user_id = u.id
       WHERE f.id = ?
     `).bind(folderId).first();
-    if (folder && folder.is_admin) {
-      isAdminFolder = folder.is_public === 1 ||
-        await env.DB.prepare('SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id = ?')
-          .bind(folderId, user.id).first();
+    if (folder) {
+      if (folder.organization_id) {
+        isExemptFolder = true;
+      } else if (folder.is_admin) {
+        isExemptFolder = folder.is_public === 1 ||
+          await env.DB.prepare('SELECT 1 FROM kml_folder_shares WHERE kml_folder_id = ? AND shared_with_user_id = ?')
+            .bind(folderId, user.id).first();
+      }
     }
   }
-  if (!isAdminFolder) {
+  if (!isExemptFolder) {
     const limitCheck = await checkFreeTierLimit(env, user, 'kmlFile');
     if (!limitCheck.allowed) {
       return json({ error: limitCheck.message }, 403);
@@ -2488,8 +2627,9 @@ async function handleGetKmlFile(env, user, key) {
       (file.folder_id && await env.DB.prepare(`
         SELECT 1 FROM kml_folders kf
         WHERE kf.id = ? AND (kf.user_id = ? OR kf.is_public = 1
-          OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?))
-      `).bind(file.folder_id, user.id, user.id).first());
+          OR kf.id IN (SELECT kml_folder_id FROM kml_folder_shares WHERE shared_with_user_id = ?)
+          OR kf.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?))
+      `).bind(file.folder_id, user.id, user.id, user.id).first());
 
     if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
   }
@@ -2508,7 +2648,7 @@ async function handleGetKmlFile(env, user, key) {
 async function handleDeleteKmlFile(env, user, id) {
   const file = await env.DB.prepare('SELECT * FROM kml_files WHERE id = ?').bind(id).first();
   if (!file) return json({ error: 'ファイルが見つかりません' }, 404);
-  if (file.user_id !== user.id && !user.is_admin) {
+  if (!await canEditKmlFile(env, user, file)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2520,17 +2660,17 @@ async function handleDeleteKmlFile(env, user, id) {
 async function handleMoveKmlFile(request, env, user, id) {
   const file = await env.DB.prepare('SELECT * FROM kml_files WHERE id = ?').bind(id).first();
   if (!file) return json({ error: 'ファイルが見つかりません' }, 404);
-  if (file.user_id !== user.id && !user.is_admin) {
+  if (!await canEditKmlFile(env, user, file)) {
     return json({ error: '権限がありません' }, 403);
   }
 
   const { folder_id } = await getRequestBody(request);
 
-  // Check if target folder exists and user has access
+  // Check if target folder exists and user has edit permission
   if (folder_id) {
     const folder = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ?').bind(folder_id).first();
     if (!folder) return json({ error: '移動先フォルダが見つかりません' }, 404);
-    if (folder.user_id !== user.id && !user.is_admin) {
+    if (!await canEditFolder(env, user, folder)) {
       return json({ error: '移動先フォルダの権限がありません' }, 403);
     }
   }
@@ -2558,13 +2698,17 @@ async function handleGetFolders(env, user) {
     SELECT f.*, u.display_name as owner_name,
       CASE WHEN f.user_id = ? THEN 1 ELSE 0 END as is_owner,
       COALESCE(fv.is_visible, 1) as is_visible,
-      CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = f.id) THEN 1 ELSE 0 END as is_shared
+      CASE WHEN EXISTS (SELECT 1 FROM folder_shares WHERE folder_id = f.id) THEN 1 ELSE 0 END as is_shared,
+      o.name as organization_name
     FROM folders f
     LEFT JOIN users u ON f.user_id = u.id
     LEFT JOIN folder_visibility fv ON f.id = fv.folder_id AND fv.user_id = ?
-    WHERE f.user_id = ? OR f.is_public = 1 OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+    LEFT JOIN organizations o ON f.organization_id = o.id
+    WHERE f.user_id = ? OR f.is_public = 1
+      OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+      OR f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
     ORDER BY f.sort_order, f.name
-  `).bind(user.id, user.id, user.id, user.id).all();
+  `).bind(user.id, user.id, user.id, user.id, user.id).all();
 
   return json(folders.results);
 }
@@ -2596,7 +2740,7 @@ async function handleCreateFolder(request, env, user) {
 async function handleRenameFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2614,7 +2758,7 @@ async function handleRenameFolder(request, env, user, id) {
 async function handleDeleteFolder(env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2649,14 +2793,15 @@ async function handleGetFolderShares(env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
-  // User must be owner, admin, or shared with this folder
+  // User must be owner, admin, shared with this folder, or org member
   const isOwner = folder.user_id === user.id;
-  const isAdmin = user.is_admin;
+  const isSiteAdmin = user.is_admin;
   const isSharedWith = await env.DB.prepare(
     'SELECT 1 FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
   ).bind(id, user.id).first();
+  const isMember = folder.organization_id && await isOrgMember(env, user.id, folder.organization_id);
 
-  if (!isOwner && !isAdmin && !isSharedWith) {
+  if (!isOwner && !isSiteAdmin && !isSharedWith && !isMember) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2673,7 +2818,7 @@ async function handleGetFolderShares(env, user, id) {
 async function handleShareFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) return json({ error: '権限がありません' }, 403);
+  if (!await canEditFolder(env, user, folder)) return json({ error: '権限がありません' }, 403);
 
   const { user_ids } = await getRequestBody(request);
   const newUserIds = user_ids || [];
@@ -2707,25 +2852,38 @@ async function handleShareFolder(request, env, user, id) {
 async function handleReorderFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
   const { target_id } = await getRequestBody(request);
 
-  // Get all folders at the same level owned by the user
-  // Use separate queries to avoid dynamic SQL construction
+  // Get all folders at the same level (scoped by org or user)
   let siblings;
-  if (folder.parent_id) {
+  if (folder.organization_id) {
+    if (folder.parent_id) {
+      siblings = await env.DB.prepare(`
+        SELECT id, sort_order FROM folders
+        WHERE organization_id = ? AND parent_id = ?
+        ORDER BY sort_order, id
+      `).bind(folder.organization_id, folder.parent_id).all();
+    } else {
+      siblings = await env.DB.prepare(`
+        SELECT id, sort_order FROM folders
+        WHERE organization_id = ? AND parent_id IS NULL
+        ORDER BY sort_order, id
+      `).bind(folder.organization_id).all();
+    }
+  } else if (folder.parent_id) {
     siblings = await env.DB.prepare(`
       SELECT id, sort_order FROM folders
-      WHERE user_id = ? AND parent_id = ?
+      WHERE user_id = ? AND organization_id IS NULL AND parent_id = ?
       ORDER BY sort_order, id
     `).bind(user.id, folder.parent_id).all();
   } else {
     siblings = await env.DB.prepare(`
       SELECT id, sort_order FROM folders
-      WHERE user_id = ? AND parent_id IS NULL
+      WHERE user_id = ? AND organization_id IS NULL AND parent_id IS NULL
       ORDER BY sort_order, id
     `).bind(user.id).all();
   }
@@ -2754,7 +2912,7 @@ async function handleReorderFolder(request, env, user, id) {
 async function handleMoveFolder(request, env, user, id) {
   const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
-  if (folder.user_id !== user.id && !user.is_admin) {
+  if (!await canEditFolder(env, user, folder)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2765,11 +2923,11 @@ async function handleMoveFolder(request, env, user, id) {
     return json({ error: '自分自身には移動できません' }, 400);
   }
 
-  // Check if target parent exists and belongs to user
+  // Check if target parent exists and user has edit permission
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(parent_id).first();
     if (!parent) return json({ error: '移動先フォルダが見つかりません' }, 404);
-    if (parent.user_id !== user.id && !user.is_admin) {
+    if (!await canEditFolder(env, user, parent)) {
       return json({ error: '移動先フォルダの権限がありません' }, 403);
     }
 
@@ -2789,12 +2947,13 @@ async function handleMoveFolder(request, env, user, id) {
 }
 
 async function handleFolderVisibility(request, env, user, id) {
-  // Verify user has access to this folder (owner, public, or shared)
+  // Verify user has access to this folder (owner, public, shared, or org member)
   const folder = await env.DB.prepare(`
     SELECT f.* FROM folders f
     WHERE f.id = ? AND (f.user_id = ? OR f.is_public = 1
-      OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?))
-  `).bind(id, user.id, user.id).first();
+      OR f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+      OR f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?))
+  `).bind(id, user.id, user.id, user.id).first();
   if (!folder) return json({ error: 'フォルダが見つかりません' }, 404);
 
   const { is_visible } = await getRequestBody(request);
@@ -2820,7 +2979,7 @@ async function handleGetPins(env, user) {
       ORDER BY p.created_at DESC
     `).all();
   } else if (user) {
-    // User sees: own pins, pins in public folders, pins in shared folders
+    // User sees: own pins, pins in public folders, pins in shared folders, pins in org folders
     pins = await env.DB.prepare(`
       SELECT p.*, u.display_name as author,
         CASE WHEN f.is_public = 1 THEN 1 ELSE 0 END as is_public,
@@ -2831,8 +2990,9 @@ async function handleGetPins(env, user) {
       WHERE p.user_id = ?
         OR f.is_public = 1
         OR p.folder_id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+        OR f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
       ORDER BY p.created_at DESC
-    `).bind(user.id, user.id).all();
+    `).bind(user.id, user.id, user.id).all();
   } else {
     // Non-logged in users see only pins in public folders
     pins = await env.DB.prepare(`
@@ -2888,21 +3048,26 @@ async function handleCreatePin(request, env, user) {
     return json({ error: '経度は-180から180の範囲で指定してください' }, 400);
   }
 
-  // Check free tier limit (skip if creating in admin's public/shared folder)
-  let isAdminFolder = false;
+  // Check free tier limit (skip if creating in admin's public/shared folder or org folder)
+  let isExemptFolder = false;
   if (folder_id) {
     const folder = await env.DB.prepare(`
       SELECT f.*, u.is_admin FROM folders f
       JOIN users u ON f.user_id = u.id
       WHERE f.id = ?
     `).bind(folder_id).first();
-    if (folder && folder.is_admin) {
-      isAdminFolder = folder.is_public === 1 ||
-        await env.DB.prepare('SELECT 1 FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?')
-          .bind(folder_id, user.id).first();
+    if (folder) {
+      // Exempt: admin's public/shared folders or org folders
+      if (folder.organization_id) {
+        isExemptFolder = true;
+      } else if (folder.is_admin) {
+        isExemptFolder = folder.is_public === 1 ||
+          await env.DB.prepare('SELECT 1 FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?')
+            .bind(folder_id, user.id).first();
+      }
     }
   }
-  if (!isAdminFolder) {
+  if (!isExemptFolder) {
     const limitCheck = await checkFreeTierLimit(env, user, 'pin');
     if (!limitCheck.allowed) {
       return json({ error: limitCheck.message }, 403);
@@ -2916,9 +3081,10 @@ async function handleCreatePin(request, env, user) {
       WHERE f.id = ? AND (
         f.user_id = ? OR
         f.is_public = 1 OR
-        f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?)
+        f.id IN (SELECT folder_id FROM folder_shares WHERE shared_with_user_id = ?) OR
+        f.organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
       )
-    `).bind(folder_id, user.id, user.id).first();
+    `).bind(folder_id, user.id, user.id, user.id).first();
     if (!folder) {
       return json({ error: 'このフォルダへのアクセス権限がありません' }, 403);
     }
@@ -2973,7 +3139,7 @@ async function handleCreatePin(request, env, user) {
 async function handleUpdatePin(request, env, user, id) {
   const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(id).first();
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
-  if (pin.user_id !== user.id && !user.is_admin) {
+  if (!await canEditPin(env, user, pin)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -2991,7 +3157,7 @@ async function handleUpdatePin(request, env, user, id) {
 async function handleDeletePin(env, user, id) {
   const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(id).first();
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
-  if (pin.user_id !== user.id && !user.is_admin) {
+  if (!await canEditPin(env, user, pin)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -3007,7 +3173,7 @@ async function handleDeletePin(env, user, id) {
 async function handleAddPinImages(request, env, user, id) {
   const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(id).first();
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
-  if (pin.user_id !== user.id && !user.is_admin) {
+  if (!await canEditPin(env, user, pin)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -3039,7 +3205,7 @@ async function handleAddPinImages(request, env, user, id) {
 async function handleDeletePinImage(env, user, pinId, imageId) {
   const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(pinId).first();
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
-  if (pin.user_id !== user.id && !user.is_admin) {
+  if (!await canEditPin(env, user, pin)) {
     return json({ error: '権限がありません' }, 403);
   }
 
@@ -3055,17 +3221,17 @@ async function handleDeletePinImage(env, user, pinId, imageId) {
 async function handleMovePin(request, env, user, id) {
   const pin = await env.DB.prepare('SELECT * FROM pins WHERE id = ?').bind(id).first();
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
-  if (pin.user_id !== user.id && !user.is_admin) {
+  if (!await canEditPin(env, user, pin)) {
     return json({ error: '権限がありません' }, 403);
   }
 
   const { folder_id } = await getRequestBody(request);
 
-  // Check if target folder exists and user has access
+  // Check if target folder exists and user has edit permission
   if (folder_id) {
     const folder = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(folder_id).first();
     if (!folder) return json({ error: '移動先フォルダが見つかりません' }, 404);
-    if (folder.user_id !== user.id && !user.is_admin) {
+    if (!await canEditFolder(env, user, folder)) {
       return json({ error: '移動先フォルダの権限がありません' }, 403);
     }
   }
@@ -3079,7 +3245,7 @@ async function handleMovePin(request, env, user, id) {
 async function handleGetPinComments(env, user, pinId) {
   // Check if pin exists and user has access
   const pin = await env.DB.prepare(`
-    SELECT p.*, f.is_public as folder_is_public, f.user_id as folder_user_id
+    SELECT p.*, f.is_public as folder_is_public, f.user_id as folder_user_id, f.organization_id as folder_org_id
     FROM pins p
     LEFT JOIN folders f ON p.folder_id = f.id
     WHERE p.id = ?
@@ -3087,18 +3253,22 @@ async function handleGetPinComments(env, user, pinId) {
 
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
 
-  // Check access: owner, admin, public folder, or shared folder
+  // Check access: owner, admin, public folder, shared folder, or org member
   const folderIsPublic = pin.folder_is_public === 1;
   const isOwner = user && pin.user_id === user.id;
-  const isAdmin = user && user.is_admin;
+  const isSiteAdmin = user && user.is_admin;
 
-  let hasAccess = isOwner || isAdmin || folderIsPublic;
+  let hasAccess = isOwner || isSiteAdmin || folderIsPublic;
 
   if (!hasAccess && user && pin.folder_id) {
     const share = await env.DB.prepare(
       'SELECT * FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
     ).bind(pin.folder_id, user.id).first();
     hasAccess = !!share;
+  }
+
+  if (!hasAccess && user && pin.folder_org_id) {
+    hasAccess = await isOrgMember(env, user.id, pin.folder_org_id);
   }
 
   if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
@@ -3126,7 +3296,7 @@ async function handleCreatePinComment(request, env, user, pinId) {
 
   // Check if pin exists and user has access to view it
   const pin = await env.DB.prepare(`
-    SELECT p.*, f.is_public as folder_is_public
+    SELECT p.*, f.is_public as folder_is_public, f.organization_id as folder_org_id
     FROM pins p
     LEFT JOIN folders f ON p.folder_id = f.id
     WHERE p.id = ?
@@ -3134,18 +3304,22 @@ async function handleCreatePinComment(request, env, user, pinId) {
 
   if (!pin) return json({ error: 'ピンが見つかりません' }, 404);
 
-  // Check access: owner, admin, public folder, or shared folder
+  // Check access: owner, admin, public folder, shared folder, or org member
   const folderIsPublic = pin.folder_is_public === 1;
   const isOwner = pin.user_id === user.id;
-  const isAdmin = user.is_admin;
+  const isSiteAdmin = user.is_admin;
 
-  let hasAccess = isOwner || isAdmin || folderIsPublic;
+  let hasAccess = isOwner || isSiteAdmin || folderIsPublic;
 
   if (!hasAccess && pin.folder_id) {
     const share = await env.DB.prepare(
       'SELECT * FROM folder_shares WHERE folder_id = ? AND shared_with_user_id = ?'
     ).bind(pin.folder_id, user.id).first();
     hasAccess = !!share;
+  }
+
+  if (!hasAccess && pin.folder_org_id) {
+    hasAccess = await isOrgMember(env, user.id, pin.folder_org_id);
   }
 
   if (!hasAccess) return json({ error: 'アクセス権限がありません' }, 403);
@@ -4050,4 +4224,330 @@ async function handleDeletePasskey(env, user, passkeyId) {
   await env.DB.prepare('DELETE FROM passkeys WHERE id = ?').bind(passkeyId).run();
 
   return json({ ok: true, message: 'パスキーを削除しました' });
+}
+
+// ==================== Organization Handlers ====================
+
+async function handleGetOrganizations(env, user) {
+  const orgs = await env.DB.prepare(`
+    SELECT o.*, om.role,
+      (SELECT COUNT(*) FROM organization_members WHERE organization_id = o.id) as member_count
+    FROM organizations o
+    JOIN organization_members om ON o.id = om.organization_id AND om.user_id = ?
+    ORDER BY o.name
+  `).bind(user.id).all();
+  return json(orgs.results);
+}
+
+async function handleCreateOrganization(request, env, user) {
+  const { name } = await getRequestBody(request);
+  if (!name || !name.trim()) return json({ error: '団体名を入力してください' }, 400);
+  if (name.length > 100) return json({ error: '団体名は100文字以内にしてください' }, 400);
+
+  const result = await env.DB.prepare(
+    'INSERT INTO organizations (name, created_by) VALUES (?, ?)'
+  ).bind(name.trim(), user.id).run();
+
+  const orgId = result.meta.last_row_id;
+
+  // Creator becomes admin
+  await env.DB.prepare(
+    'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+  ).bind(orgId, user.id, 'admin').run();
+
+  return json({ id: orgId, name: name.trim(), role: 'admin', member_count: 1 });
+}
+
+async function handleUpdateOrganization(request, env, user, id) {
+  if (!await isOrgAdmin(env, user.id, parseInt(id)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  const { name } = await getRequestBody(request);
+  if (!name || !name.trim()) return json({ error: '団体名を入力してください' }, 400);
+  if (name.length > 100) return json({ error: '団体名は100文字以内にしてください' }, 400);
+
+  await env.DB.prepare('UPDATE organizations SET name = ? WHERE id = ?')
+    .bind(name.trim(), id).run();
+  return json({ ok: true });
+}
+
+async function handleDeleteOrganization(env, user, id) {
+  const org = await env.DB.prepare('SELECT * FROM organizations WHERE id = ?').bind(id).first();
+  if (!org) return json({ error: '団体が見つかりません' }, 404);
+
+  if (!await isOrgAdmin(env, user.id, parseInt(id)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  // Delete org folders' contents first
+  // KML files in org kml_folders
+  const orgKmlFolders = await env.DB.prepare('SELECT id FROM kml_folders WHERE organization_id = ?').bind(id).all();
+  for (const f of orgKmlFolders.results) {
+    const files = await env.DB.prepare('SELECT r2_key FROM kml_files WHERE folder_id = ?').bind(f.id).all();
+    for (const file of files.results) {
+      try { await env.R2.delete(file.r2_key); } catch (e) { /* ignore */ }
+    }
+    await env.DB.prepare('DELETE FROM kml_files WHERE folder_id = ?').bind(f.id).run();
+  }
+
+  // Pin images in org folders
+  const orgFolders = await env.DB.prepare('SELECT id FROM folders WHERE organization_id = ?').bind(id).all();
+  for (const f of orgFolders.results) {
+    const pins = await env.DB.prepare('SELECT id FROM pins WHERE folder_id = ?').bind(f.id).all();
+    for (const pin of pins.results) {
+      const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
+      for (const img of images.results) {
+        try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
+      }
+    }
+    await env.DB.prepare('DELETE FROM pins WHERE folder_id = ?').bind(f.id).run();
+  }
+
+  // Delete org data
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE organization_id = ?)').bind(id),
+    env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE organization_id = ?)').bind(id),
+    env.DB.prepare('DELETE FROM kml_folders WHERE organization_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE organization_id = ?)').bind(id),
+    env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE organization_id = ?)').bind(id),
+    env.DB.prepare('DELETE FROM folders WHERE organization_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM organization_invitations WHERE organization_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM organization_members WHERE organization_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM organizations WHERE id = ?').bind(id),
+  ]);
+
+  return json({ ok: true });
+}
+
+async function handleGetOrgMembers(env, user, orgId) {
+  if (!await isOrgMember(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '権限がありません' }, 403);
+  }
+
+  const members = await env.DB.prepare(`
+    SELECT om.user_id, om.role, om.created_at, u.username, u.display_name, u.email
+    FROM organization_members om
+    JOIN users u ON om.user_id = u.id
+    WHERE om.organization_id = ?
+    ORDER BY om.role DESC, u.display_name
+  `).bind(orgId).all();
+
+  return json(members.results);
+}
+
+async function handleRemoveOrgMember(env, user, orgId, memberId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  // Cannot remove yourself
+  if (parseInt(memberId) === user.id) {
+    return json({ error: '自分自身は削除できません' }, 400);
+  }
+
+  const member = await env.DB.prepare(
+    'SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(orgId, memberId).first();
+  if (!member) return json({ error: 'メンバーが見つかりません' }, 404);
+
+  await env.DB.prepare(
+    'DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(orgId, memberId).run();
+
+  return json({ ok: true });
+}
+
+async function handleChangeOrgMemberRole(request, env, user, orgId, memberId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  const { role } = await getRequestBody(request);
+  if (!['admin', 'member'].includes(role)) {
+    return json({ error: '無効なロールです' }, 400);
+  }
+
+  // Cannot change own role
+  if (parseInt(memberId) === user.id) {
+    return json({ error: '自分自身のロールは変更できません' }, 400);
+  }
+
+  const member = await env.DB.prepare(
+    'SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(orgId, memberId).first();
+  if (!member) return json({ error: 'メンバーが見つかりません' }, 404);
+
+  await env.DB.prepare(
+    'UPDATE organization_members SET role = ? WHERE organization_id = ? AND user_id = ?'
+  ).bind(role, orgId, memberId).run();
+
+  return json({ ok: true });
+}
+
+async function handleGetOrgInvitations(env, user, orgId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  // Clean up expired invitations
+  await env.DB.prepare(
+    "DELETE FROM organization_invitations WHERE expires_at < datetime('now')"
+  ).run();
+
+  const invitations = await env.DB.prepare(`
+    SELECT oi.id, oi.email, oi.expires_at, oi.created_at, u.display_name as invited_by_name
+    FROM organization_invitations oi
+    JOIN users u ON oi.invited_by = u.id
+    WHERE oi.organization_id = ?
+    ORDER BY oi.created_at DESC
+  `).bind(orgId).all();
+
+  return json(invitations.results);
+}
+
+async function handleInviteToOrg(request, env, user, orgId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  const org = await env.DB.prepare('SELECT * FROM organizations WHERE id = ?').bind(orgId).first();
+  if (!org) return json({ error: '団体が見つかりません' }, 404);
+
+  const { email } = await getRequestBody(request);
+  if (!email || !email.trim()) return json({ error: 'メールアドレスを入力してください' }, 400);
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // Check if user is already a member
+  const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(normalizedEmail).first();
+  if (existingUser) {
+    const existingMember = await env.DB.prepare(
+      'SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?'
+    ).bind(orgId, existingUser.id).first();
+    if (existingMember) {
+      return json({ error: 'このユーザーは既にメンバーです' }, 400);
+    }
+  }
+
+  // Check if invitation already exists
+  const existingInvite = await env.DB.prepare(
+    "SELECT 1 FROM organization_invitations WHERE organization_id = ? AND email = ? AND expires_at > datetime('now')"
+  ).bind(orgId, normalizedEmail).first();
+  if (existingInvite) {
+    return json({ error: 'このメールアドレスには既に招待を送信済みです' }, 400);
+  }
+
+  // Create invitation token
+  const token = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+  await env.DB.prepare(
+    'INSERT INTO organization_invitations (organization_id, email, token, invited_by, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).bind(orgId, normalizedEmail, token, user.id, expiresAt).run();
+
+  // Send invitation email
+  const inviterName = user.display_name || user.username;
+  await sendOrgInvitationEmail(env, normalizedEmail, org.name, inviterName, token);
+
+  return json({ ok: true, message: '招待メールを送信しました' });
+}
+
+async function handleCancelOrgInvitation(env, user, invitationId) {
+  const invitation = await env.DB.prepare(
+    'SELECT * FROM organization_invitations WHERE id = ?'
+  ).bind(invitationId).first();
+  if (!invitation) return json({ error: '招待が見つかりません' }, 404);
+
+  if (!await isOrgAdmin(env, user.id, invitation.organization_id) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  await env.DB.prepare('DELETE FROM organization_invitations WHERE id = ?').bind(invitationId).run();
+  return json({ ok: true });
+}
+
+async function handleAcceptOrgInvitation(request, env, user) {
+  const { token } = await getRequestBody(request);
+  if (!token) return json({ error: '招待トークンが必要です' }, 400);
+
+  const invitation = await env.DB.prepare(
+    "SELECT * FROM organization_invitations WHERE token = ? AND expires_at > datetime('now')"
+  ).bind(token).first();
+
+  if (!invitation) {
+    return json({ error: '招待が見つからないか、有効期限が切れています' }, 404);
+  }
+
+  // Check if already a member
+  const existingMember = await env.DB.prepare(
+    'SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).bind(invitation.organization_id, user.id).first();
+
+  if (existingMember) {
+    // Already a member, just delete the invitation
+    await env.DB.prepare('DELETE FROM organization_invitations WHERE id = ?').bind(invitation.id).run();
+    return json({ ok: true, message: '既にメンバーです' });
+  }
+
+  // Add as member
+  await env.DB.prepare(
+    'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+  ).bind(invitation.organization_id, user.id, 'member').run();
+
+  // Delete invitation
+  await env.DB.prepare('DELETE FROM organization_invitations WHERE id = ?').bind(invitation.id).run();
+
+  const org = await env.DB.prepare('SELECT name FROM organizations WHERE id = ?').bind(invitation.organization_id).first();
+
+  return json({ ok: true, organization_name: org?.name, message: `${org?.name || '団体'} に参加しました` });
+}
+
+// Organization folder creation
+async function handleCreateOrgFolder(request, env, user, orgId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  const org = await env.DB.prepare('SELECT * FROM organizations WHERE id = ?').bind(orgId).first();
+  if (!org) return json({ error: '団体が見つかりません' }, 404);
+
+  const { name, parent_id } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
+
+  if (parent_id) {
+    const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ? AND organization_id = ?')
+      .bind(parent_id, orgId).first();
+    if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
+  }
+
+  const result = await env.DB.prepare(
+    'INSERT INTO folders (name, parent_id, user_id, organization_id, is_public) VALUES (?, ?, ?, ?, 0)'
+  ).bind(name, parent_id || null, user.id, orgId).run();
+
+  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, organization_id: parseInt(orgId) });
+}
+
+async function handleCreateOrgKmlFolder(request, env, user, orgId) {
+  if (!await isOrgAdmin(env, user.id, parseInt(orgId)) && !user.is_admin) {
+    return json({ error: '団体管理者権限が必要です' }, 403);
+  }
+
+  const org = await env.DB.prepare('SELECT * FROM organizations WHERE id = ?').bind(orgId).first();
+  if (!org) return json({ error: '団体が見つかりません' }, 404);
+
+  const { name, parent_id } = await getRequestBody(request);
+  if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
+
+  if (parent_id) {
+    const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ? AND organization_id = ?')
+      .bind(parent_id, orgId).first();
+    if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
+  }
+
+  const result = await env.DB.prepare(
+    'INSERT INTO kml_folders (name, user_id, organization_id, parent_id, is_public) VALUES (?, ?, ?, ?, 0)'
+  ).bind(name, user.id, orgId, parent_id || null).run();
+
+  return json({ id: result.meta.last_row_id, name, user_id: user.id, organization_id: parseInt(orgId), parent_id: parent_id || null });
 }

@@ -148,6 +148,50 @@ Fieldnota commons`;
   return await sendEmail(env, email, subject, htmlBody, textBody);
 }
 
+// Send organization invitation email
+export async function sendOrgInvitationEmail(env, email, orgName, inviterName, token) {
+  const appUrl = 'https://fieldnota-commons.com';
+  const subject = `${orgName} への招待 - Fieldnota commons`;
+
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h1 style="color: #4CAF50;">団体への招待</h1>
+  <p>${inviterName} さんから、<strong>${orgName}</strong> への招待が届いています。</p>
+  <p>以下のリンクから招待を承認してください：</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="${appUrl}?invite=${encodeURIComponent(token)}"
+       style="background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+      招待を承認する
+    </a>
+  </p>
+  <p style="color: #666; font-size: 14px;">
+    ※ この招待は7日間有効です。<br>
+    ※ このメールに心当たりがない場合は、無視してください。
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+  <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
+</body>
+</html>
+  `;
+
+  const textBody = `
+${inviterName} さんから、${orgName} への招待が届いています。
+
+以下のリンクから招待を承認してください：
+${appUrl}?invite=${encodeURIComponent(token)}
+
+※ この招待は7日間有効です。
+※ このメールに心当たりがない場合は、無視してください。
+
+Fieldnota commons
+  `;
+
+  return await sendEmail(env, email, subject, htmlBody, textBody);
+}
+
 // Send rejection notification email
 export async function sendRejectionEmail(env, email, displayName, username) {
   const subject = 'アカウント申請について - Fieldnota commons';
