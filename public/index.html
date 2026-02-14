@@ -547,10 +547,18 @@
       </button>
     </div>
     <div id="delete-account-confirm" style="display:none;margin-top:12px;border:1px solid #dc3545;border-radius:8px;padding:12px;">
-      <p style="color:#dc3545;font-size:13px;margin:0 0 8px;"><i class="fas fa-exclamation-triangle"></i> すべてのデータが完全に削除されます。この操作は取り消せません。</p>
-      <div class="form-group" style="margin-bottom:8px;">
-        <input type="password" id="delete-account-password" placeholder="パスワードを入力して確認" style="font-size:13px;">
-      </div>
+      <p style="color:#dc3545;font-size:13px;margin:0 0 8px;"><i class="fas fa-exclamation-triangle"></i> アカウントを削除すると、以下のデータがすべて完全に削除されます：</p>
+      <ul style="color:#666;font-size:12px;margin:0 0 10px;padding-left:20px;">
+        <li>ピン・画像・コメント</li>
+        <li>KMLフォルダ・ファイル</li>
+        <li>フォルダ共有設定</li>
+        <li>パスキー・セッション情報</li>
+      </ul>
+      <p style="color:#dc3545;font-size:13px;font-weight:bold;margin:0 0 10px;">この操作は取り消せません。</p>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-bottom:10px;">
+        <input type="checkbox" id="delete-account-consent">
+        <span>上記を理解し、すべてのデータの削除に同意します</span>
+      </label>
       <div id="delete-account-error" style="color:#dc3545;font-size:12px;margin-bottom:8px;display:none;"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;">
         <button class="btn btn-sm btn-secondary" onclick="hideDeleteAccountConfirm()">キャンセル</button>
