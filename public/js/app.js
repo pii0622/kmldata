@@ -21,6 +21,7 @@ let userUsageData = null;
 
 // ==================== Map Init ====================
 const map = L.map('map', {
+
   center: [34.86, 139.00],
   zoom: 8,
   zoomControl: false,
