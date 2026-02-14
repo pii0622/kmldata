@@ -89,7 +89,10 @@ async function api(url, opts = {}, isRetry = false) {
     throw new Error('ネットワークエラー: サーバーに接続できません');
   }
   // Auto-refresh token on 401 (expired JWT)
-  if (res.status === 401 && !isRetry && !url.includes('/auth/')) {
+  // Skip refresh for login/register/refresh endpoints to avoid loops
+  const skipRefreshPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/setup-password'];
+  const shouldSkipRefresh = skipRefreshPaths.some(p => url.includes(p));
+  if (res.status === 401 && !isRetry && !shouldSkipRefresh) {
     const refreshed = await tryRefreshToken();
     if (refreshed) return api(url, opts, true);
     window.location.href = '/login.html';
