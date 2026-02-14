@@ -1258,31 +1258,30 @@ async function upgradeToPremium() {
 
 async function openStripePortal() {
   try {
-    // Step 1: Send verification code via email
+    // Step 1: Request verification code (server sends email)
     notify('確認コードを送信しています...');
-    const sendResult = await api('/api/stripe/send-portal-code', {
+    const sendResult = await api('/api/stripe/create-portal-session', {
       method: 'POST'
     });
 
-    if (!sendResult.ok) {
-      notify('確認コードの送信に失敗しました', 'error');
-      return;
-    }
+    if (sendResult.needCode) {
+      // Step 2: Prompt for code input
+      const code = prompt(`確認コードを ${sendResult.email} に送信しました。\n6桁のコードを入力してください:`);
+      if (!code) return;
 
-    // Step 2: Prompt for code input
-    const code = prompt(`確認コードを ${sendResult.email} に送信しました。\n6桁のコードを入力してください:`);
-    if (!code) return;
+      // Step 3: Verify code and get portal URL
+      const data = await api('/api/stripe/create-portal-session', {
+        method: 'POST',
+        body: JSON.stringify({ code: code.trim() })
+      });
 
-    // Step 3: Verify code and get portal URL
-    const data = await api('/api/stripe/create-portal-session', {
-      method: 'POST',
-      body: JSON.stringify({ code: code.trim() })
-    });
-
-    if (data.url) {
-      window.location.href = data.url;
-    } else {
-      notify('ポータルセッションの作成に失敗しました', 'error');
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        notify('ポータルセッションの作成に失敗しました', 'error');
+      }
+    } else if (sendResult.url) {
+      window.location.href = sendResult.url;
     }
   } catch (err) {
     notify(err.message, 'error');
