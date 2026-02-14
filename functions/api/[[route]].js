@@ -1873,7 +1873,7 @@ async function handleDeleteAccount(request, env, user) {
 
     // Delete user's R2 files (kml_files)
     const userKmlFiles = await env.DB.prepare(
-      'SELECT kf.r2_key FROM kml_files kf JOIN kml_folders kd ON kf.kml_folder_id = kd.id WHERE kd.user_id = ?'
+      'SELECT r2_key FROM kml_files WHERE user_id = ?'
     ).bind(user.id).all();
     for (const f of userKmlFiles.results) {
       try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
@@ -1888,7 +1888,7 @@ async function handleDeleteAccount(request, env, user) {
       env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM folders WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_files WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_files WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ?').bind(user.id),
