@@ -1418,6 +1418,10 @@ export async function onRequest(context) {
       }
       return await handleChangePassword(request, env, user);
     }
+    if (path === '/auth/delete-account' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleDeleteAccount(request, env, user);
+    }
 
     // Session management routes
     if (path === '/auth/sessions' && method === 'GET') {
@@ -2794,6 +2798,83 @@ async function handleChangePassword(request, env, user) {
   await logSecurityEvent(env, 'password_changed', user.id, request, { revoked_sessions: revoke_other_sessions !== false });
 
   return json({ ok: true });
+}
+
+// Delete account (soft-delete: anonymize user row, delete user data)
+async function handleDeleteAccount(request, env, user) {
+  try {
+    const body = await getRequestBody(request).catch(() => ({}));
+    const { password } = body;
+
+    if (!password) {
+      return json({ error: 'パスワードを入力してください' }, 400);
+    }
+
+    // Verify password
+    const dbUser = await env.DB.prepare(
+      'SELECT id, password_hash, password_salt FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    if (!dbUser || !(await verifyPassword(password, dbUser.password_hash, dbUser.password_salt))) {
+      return json({ error: 'パスワードが正しくありません' }, 401);
+    }
+
+    // Delete user's R2 images (pin_images)
+    const userPins = await env.DB.prepare('SELECT id FROM pins WHERE user_id = ?').bind(user.id).all();
+    for (const pin of userPins.results) {
+      const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
+      for (const img of images.results) {
+        try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
+      }
+    }
+
+    // Delete user's R2 files (kml_files)
+    const userKmlFiles = await env.DB.prepare(
+      'SELECT kf.r2_key FROM kml_files kf JOIN kml_folders kd ON kf.kml_folder_id = kd.id WHERE kd.user_id = ?'
+    ).bind(user.id).all();
+    for (const f of userKmlFiles.results) {
+      try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
+    }
+
+    // Delete DB data owned by user
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM pin_shares WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM pins WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM folders WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_files WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
+      env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM comment_read_status WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM passkey_challenges WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM verification_codes WHERE user_id = ?').bind(user.id),
+    ]);
+
+    // Soft-delete: anonymize user row (keep for counting)
+    const deletedAt = new Date().toISOString();
+    await env.DB.prepare(
+      `UPDATE users SET
+        username = ?, display_name = ?, email = NULL,
+        password_hash = NULL, password_salt = NULL,
+        status = 'deleted', stripe_customer_id = NULL,
+        external_id = NULL
+      WHERE id = ?`
+    ).bind(`deleted_${user.id}`, `退会済みユーザー`, user.id).run();
+
+    await logSecurityEvent(env, 'account_deleted', user.id, request, {});
+
+    return json({ ok: true });
+  } catch (err) {
+    console.error('Delete account error:', err);
+    return json({ error: 'Server error' }, 500);
+  }
 }
 
 // ==================== Session Management Handlers ====================

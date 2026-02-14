@@ -1151,6 +1151,30 @@ async function saveAccountSettings() {
   }
 }
 
+async function deleteAccount() {
+  if (!confirm('本当にアカウントを削除しますか？\n\nすべてのデータ（ピン・フォルダ・KMLファイル・画像）が完全に削除されます。この操作は取り消せません。')) {
+    return;
+  }
+
+  const password = prompt('確認のため、パスワードを入力してください:');
+  if (!password) return;
+
+  try {
+    await api('/api/auth/delete-account', {
+      method: 'POST',
+      body: JSON.stringify({ password })
+    });
+
+    notify('アカウントが削除されました');
+    // Clear auth and redirect to login
+    setTimeout(() => {
+      window.location.href = '/login.html';
+    }, 1500);
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
 // ==================== Plan Management ====================
 async function loadPlanInfo() {
   const loadingEl = document.getElementById('plan-loading');
