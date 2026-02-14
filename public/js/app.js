@@ -974,28 +974,70 @@ function canEditPinFolder(f) {
 }
 
 // Folder reorder modals
+function getReorderGroups(folderList) {
+  // Group folders by scope: personal (no org) vs each organization
+  const personal = folderList.filter(f => !f.parent_id && !f.organization_id && f.is_owner);
+  const orgMap = {};
+  for (const f of folderList) {
+    if (!f.parent_id && f.organization_id) {
+      if (!orgMap[f.organization_id]) {
+        orgMap[f.organization_id] = { name: f.organization_name || '団体', folders: [] };
+      }
+      orgMap[f.organization_id].folders.push(f);
+    }
+  }
+  return { personal, orgGroups: Object.values(orgMap) };
+}
+
 function showReorderKmlFoldersModal() {
   const listEl = document.getElementById('reorder-kml-folder-list');
-  const topFolders = kmlFolders.filter(f => !f.parent_id && (f.is_owner || canEditKmlFolder(f)));
-  listEl.innerHTML = topFolders.map(f => `
-    <div class="reorder-item" data-id="${f.id}">
-      <span>${escHtml(f.name)}</span>
-      <div class="reorder-buttons">
-        <button onclick="reorderKmlFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
-        <button onclick="reorderKmlFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+  const editable = kmlFolders.filter(f => !f.parent_id && (f.is_owner || canEditKmlFolder(f)));
+  const { personal, orgGroups } = getReorderGroups(editable);
+  let html = '';
+  if (personal.length > 0) {
+    html += '<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:4px;">個人フォルダ</div>';
+    html += personal.map(f => `
+      <div class="reorder-item" data-id="${f.id}">
+        <span>${escHtml(f.name)}</span>
+        <div class="reorder-buttons">
+          <button onclick="reorderKmlFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+          <button onclick="reorderKmlFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+        </div>
       </div>
-    </div>
-  `).join('') || '<p style="color:#999;">フォルダがありません</p>';
+    `).join('');
+  }
+  for (const g of orgGroups) {
+    html += `<div style="font-size:12px;font-weight:600;color:#555;margin:8px 0 4px;">団体: ${escHtml(g.name)}</div>`;
+    html += g.folders.map(f => `
+      <div class="reorder-item" data-id="${f.id}">
+        <span>${escHtml(f.name)}</span>
+        <div class="reorder-buttons">
+          <button onclick="reorderKmlFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+          <button onclick="reorderKmlFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+        </div>
+      </div>
+    `).join('');
+  }
+  listEl.innerHTML = html || '<p style="color:#999;">フォルダがありません</p>';
   openModal('modal-reorder-kml-folders');
 }
 
-async function reorderKmlFolder(folderId, direction) {
-  const topFolders = kmlFolders.filter(f => !f.parent_id && (f.is_owner || canEditKmlFolder(f)));
-  const idx = topFolders.findIndex(f => f.id === folderId);
-  const targetIdx = idx + direction;
-  if (targetIdx < 0 || targetIdx >= topFolders.length) return;
+function getSameScopeKmlFolders(folderId) {
+  const folder = kmlFolders.find(f => f.id === folderId);
+  if (!folder) return [];
+  if (folder.organization_id) {
+    return kmlFolders.filter(f => !f.parent_id && f.organization_id === folder.organization_id);
+  }
+  return kmlFolders.filter(f => !f.parent_id && !f.organization_id && f.is_owner);
+}
 
-  const targetFolder = topFolders[targetIdx];
+async function reorderKmlFolder(folderId, direction) {
+  const scopeFolders = getSameScopeKmlFolders(folderId);
+  const idx = scopeFolders.findIndex(f => f.id === folderId);
+  const targetIdx = idx + direction;
+  if (targetIdx < 0 || targetIdx >= scopeFolders.length) return;
+
+  const targetFolder = scopeFolders[targetIdx];
   try {
     await api(`/api/kml-folders/${folderId}/reorder`, {
       method: 'POST',
@@ -1008,22 +1050,49 @@ async function reorderKmlFolder(folderId, direction) {
 
 function showReorderFoldersModal() {
   const listEl = document.getElementById('reorder-folder-list');
-  const topFolders = folders.filter(f => !f.parent_id && (f.is_owner || canEditPinFolder(f)));
-  listEl.innerHTML = topFolders.map(f => `
-    <div class="reorder-item" data-id="${f.id}">
-      <span>${escHtml(f.name)}</span>
-      <div class="reorder-buttons">
-        <button onclick="reorderFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
-        <button onclick="reorderFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+  const editable = folders.filter(f => !f.parent_id && (f.is_owner || canEditPinFolder(f)));
+  const { personal, orgGroups } = getReorderGroups(editable);
+  let html = '';
+  if (personal.length > 0) {
+    html += '<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:4px;">個人フォルダ</div>';
+    html += personal.map(f => `
+      <div class="reorder-item" data-id="${f.id}">
+        <span>${escHtml(f.name)}</span>
+        <div class="reorder-buttons">
+          <button onclick="reorderFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+          <button onclick="reorderFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+        </div>
       </div>
-    </div>
-  `).join('') || '<p style="color:#999;">フォルダがありません</p>';
+    `).join('');
+  }
+  for (const g of orgGroups) {
+    html += `<div style="font-size:12px;font-weight:600;color:#555;margin:8px 0 4px;">団体: ${escHtml(g.name)}</div>`;
+    html += g.folders.map(f => `
+      <div class="reorder-item" data-id="${f.id}">
+        <span>${escHtml(f.name)}</span>
+        <div class="reorder-buttons">
+          <button onclick="reorderFolder(${f.id}, -1)" class="icon-btn"><i class="fas fa-arrow-up"></i></button>
+          <button onclick="reorderFolder(${f.id}, 1)" class="icon-btn"><i class="fas fa-arrow-down"></i></button>
+        </div>
+      </div>
+    `).join('');
+  }
+  listEl.innerHTML = html || '<p style="color:#999;">フォルダがありません</p>';
   openModal('modal-reorder-folders');
 }
 
+function getSameScopeFolders(folderId) {
+  const folder = folders.find(f => f.id === folderId);
+  if (!folder) return [];
+  if (folder.organization_id) {
+    return folders.filter(f => !f.parent_id && f.organization_id === folder.organization_id);
+  }
+  return folders.filter(f => !f.parent_id && !f.organization_id && f.is_owner);
+}
+
 async function reorderFolder(folderId, direction) {
-  const topFolders = folders.filter(f => !f.parent_id && (f.is_owner || canEditPinFolder(f)));
-  const idx = topFolders.findIndex(f => f.id === folderId);
+  const scopeFolders = getSameScopeFolders(folderId);
+  const idx = scopeFolders.findIndex(f => f.id === folderId);
   const targetIdx = idx + direction;
   if (targetIdx < 0 || targetIdx >= topFolders.length) return;
 
