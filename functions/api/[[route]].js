@@ -1165,6 +1165,16 @@ async function ensureTablesExist(env) {
         expires_at TEXT NOT NULL,
         is_revoked INTEGER DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Verification codes (email-based short code authentication)
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS verification_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
     ]);
 
@@ -1755,6 +1765,10 @@ export async function onRequest(context) {
     }
     if (path === '/stripe/webhook' && method === 'POST') {
       return await handleStripeWebhook(request, env);
+    }
+    if (path === '/stripe/send-portal-code' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleSendPortalCode(env, user);
     }
     if (path === '/stripe/create-portal-session' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
@@ -2537,12 +2551,92 @@ async function verifyStripeWebhookSignature(payload, signature, secret) {
   }
 }
 
+// Send verification code for Stripe portal access
+async function handleSendPortalCode(env, user) {
+  try {
+    // Get user email
+    const dbUser = await env.DB.prepare(
+      'SELECT email FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    if (!dbUser || !dbUser.email) {
+      return json({ error: 'メールアドレスが登録されていません' }, 400);
+    }
+
+    // Delete any existing codes for this user/purpose
+    await env.DB.prepare(
+      "DELETE FROM verification_codes WHERE user_id = ? AND purpose = 'portal'"
+    ).bind(user.id).run();
+
+    // Generate 6-digit code
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+
+    await env.DB.prepare(
+      "INSERT INTO verification_codes (user_id, code, purpose, expires_at) VALUES (?, ?, 'portal', ?)"
+    ).bind(user.id, code, expiresAt).run();
+
+    // Send email
+    const subject = '管理画面アクセス確認コード - Fieldnota commons';
+    const htmlBody = `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #333;">確認コード</h2>
+        <p>Stripe管理画面へのアクセスが要求されました。</p>
+        <div style="background: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+          <span style="font-size: 32px; letter-spacing: 8px; font-weight: bold; color: #1a1a1a;">${code}</span>
+        </div>
+        <p style="color: #666; font-size: 14px;">このコードは5分間有効です。心当たりがない場合は無視してください。</p>
+      </div>
+    `;
+    const textBody = `確認コード: ${code}\nこのコードは5分間有効です。`;
+
+    const sent = await sendEmail(env, dbUser.email, subject, htmlBody, textBody);
+    if (!sent) {
+      return json({ error: 'メール送信に失敗しました' }, 500);
+    }
+
+    // Mask email for display
+    const email = dbUser.email;
+    const [local, domain] = email.split('@');
+    const masked = local.slice(0, 2) + '***@' + domain;
+
+    return json({ ok: true, email: masked });
+  } catch (err) {
+    console.error('Send portal code error:', err);
+    return json({ error: 'Server error' }, 500);
+  }
+}
+
 // Create Stripe Customer Portal session for subscription management
 async function handleCreatePortalSession(request, env, user) {
   try {
     if (!env.STRIPE_SECRET_KEY) {
       return json({ error: 'Stripe is not configured' }, 500);
     }
+
+    // Verify email code
+    const body = await getRequestBody(request).catch(() => ({}));
+    const { code } = body;
+
+    if (!code) {
+      return json({ error: '確認コードが必要です' }, 400);
+    }
+
+    const codeRecord = await env.DB.prepare(
+      "SELECT id, code, expires_at FROM verification_codes WHERE user_id = ? AND purpose = 'portal' ORDER BY created_at DESC LIMIT 1"
+    ).bind(user.id).first();
+
+    if (!codeRecord || codeRecord.code !== code) {
+      return json({ error: '確認コードが正しくありません' }, 401);
+    }
+
+    if (new Date(codeRecord.expires_at) < new Date()) {
+      await env.DB.prepare('DELETE FROM verification_codes WHERE id = ?').bind(codeRecord.id).run();
+      return json({ error: '確認コードの有効期限が切れています。再送信してください' }, 401);
+    }
+
+    // Delete used code
+    await env.DB.prepare('DELETE FROM verification_codes WHERE id = ?').bind(codeRecord.id).run();
 
     const dbUser = await env.DB.prepare(
       'SELECT stripe_customer_id, member_source FROM users WHERE id = ?'
