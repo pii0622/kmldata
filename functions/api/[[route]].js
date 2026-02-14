@@ -1917,12 +1917,13 @@ async function handleDeleteAccount(request, env, user) {
     ]);
 
     // Soft-delete: anonymize user row (keep for counting)
+    // password_hash uses placeholder (NOT NULL constraint)
     await env.DB.prepare(
       `UPDATE users SET
         username = ?, display_name = ?, email = NULL,
-        password_hash = NULL, password_salt = NULL,
+        password_hash = '', password_salt = NULL,
         status = 'deleted', stripe_customer_id = NULL,
-        external_id = NULL
+        stripe_subscription_id = NULL, external_id = NULL
       WHERE id = ?`
     ).bind(`deleted_${user.id}`, `退会済みユーザー`, user.id).run();
 
