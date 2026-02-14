@@ -1258,8 +1258,25 @@ async function upgradeToPremium() {
 
 async function openStripePortal() {
   try {
-    const data = await api('/api/stripe/create-portal-session', {
+    // Step 1: Send verification code via email
+    notify('確認コードを送信しています...');
+    const sendResult = await api('/api/stripe/send-portal-code', {
       method: 'POST'
+    });
+
+    if (!sendResult.ok) {
+      notify('確認コードの送信に失敗しました', 'error');
+      return;
+    }
+
+    // Step 2: Prompt for code input
+    const code = prompt(`確認コードを ${sendResult.email} に送信しました。\n6桁のコードを入力してください:`);
+    if (!code) return;
+
+    // Step 3: Verify code and get portal URL
+    const data = await api('/api/stripe/create-portal-session', {
+      method: 'POST',
+      body: JSON.stringify({ code: code.trim() })
     });
 
     if (data.url) {
