@@ -527,7 +527,13 @@ function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
 }
 
+let _renderSidebarTimer = null;
 function renderSidebar() {
+  if (_renderSidebarTimer) cancelAnimationFrame(_renderSidebarTimer);
+  _renderSidebarTimer = requestAnimationFrame(_renderSidebarNow);
+}
+function _renderSidebarNow() {
+  _renderSidebarTimer = null;
   const c = document.getElementById('sidebar-content');
   let html = '';
 
@@ -947,10 +953,30 @@ async function moveKmlFolder() {
   } catch (err) { notify(err.message, 'error'); }
 }
 
+// Check if current user can edit a folder (owner, admin, or org admin)
+function canEditKmlFolder(f) {
+  if (!currentUser) return false;
+  if (currentUser.is_admin) return true;
+  if (f.organization_id && userOrganizations) {
+    const org = userOrganizations.find(o => o.id === f.organization_id);
+    if (org && org.role === 'admin') return true;
+  }
+  return false;
+}
+function canEditPinFolder(f) {
+  if (!currentUser) return false;
+  if (currentUser.is_admin) return true;
+  if (f.organization_id && userOrganizations) {
+    const org = userOrganizations.find(o => o.id === f.organization_id);
+    if (org && org.role === 'admin') return true;
+  }
+  return false;
+}
+
 // Folder reorder modals
 function showReorderKmlFoldersModal() {
   const listEl = document.getElementById('reorder-kml-folder-list');
-  const topFolders = kmlFolders.filter(f => !f.parent_id && f.is_owner);
+  const topFolders = kmlFolders.filter(f => !f.parent_id && (f.is_owner || canEditKmlFolder(f)));
   listEl.innerHTML = topFolders.map(f => `
     <div class="reorder-item" data-id="${f.id}">
       <span>${escHtml(f.name)}</span>
@@ -964,7 +990,7 @@ function showReorderKmlFoldersModal() {
 }
 
 async function reorderKmlFolder(folderId, direction) {
-  const topFolders = kmlFolders.filter(f => !f.parent_id && f.is_owner);
+  const topFolders = kmlFolders.filter(f => !f.parent_id && (f.is_owner || canEditKmlFolder(f)));
   const idx = topFolders.findIndex(f => f.id === folderId);
   const targetIdx = idx + direction;
   if (targetIdx < 0 || targetIdx >= topFolders.length) return;
@@ -982,7 +1008,7 @@ async function reorderKmlFolder(folderId, direction) {
 
 function showReorderFoldersModal() {
   const listEl = document.getElementById('reorder-folder-list');
-  const topFolders = folders.filter(f => !f.parent_id && f.is_owner);
+  const topFolders = folders.filter(f => !f.parent_id && (f.is_owner || canEditPinFolder(f)));
   listEl.innerHTML = topFolders.map(f => `
     <div class="reorder-item" data-id="${f.id}">
       <span>${escHtml(f.name)}</span>
@@ -996,7 +1022,7 @@ function showReorderFoldersModal() {
 }
 
 async function reorderFolder(folderId, direction) {
-  const topFolders = folders.filter(f => !f.parent_id && f.is_owner);
+  const topFolders = folders.filter(f => !f.parent_id && (f.is_owner || canEditPinFolder(f)));
   const idx = topFolders.findIndex(f => f.id === folderId);
   const targetIdx = idx + direction;
   if (targetIdx < 0 || targetIdx >= topFolders.length) return;

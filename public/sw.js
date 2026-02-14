@@ -98,6 +98,11 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // Skip API requests - let them go directly to network
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
   // Cache GSI map tiles
   if (url.hostname === 'cyberjapandata.gsi.go.jp') {
     event.respondWith(
