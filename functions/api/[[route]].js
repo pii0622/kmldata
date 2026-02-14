@@ -3282,13 +3282,21 @@ async function handleGetPins(env, user) {
     `).all();
   }
 
-  // Get images for each pin
-  const result = [];
-  for (const p of pins.results) {
-    const images = await env.DB.prepare('SELECT id, r2_key, original_name FROM pin_images WHERE pin_id = ?').bind(p.id).all();
-    result.push({ ...p, images: images.results });
+  // Get images for all pins in one query
+  const pinIds = pins.results.map(p => p.id);
+  let imageMap = {};
+  if (pinIds.length > 0) {
+    const placeholders = pinIds.map(() => '?').join(',');
+    const allImages = await env.DB.prepare(
+      `SELECT id, pin_id, r2_key, original_name FROM pin_images WHERE pin_id IN (${placeholders})`
+    ).bind(...pinIds).all();
+    for (const img of allImages.results) {
+      if (!imageMap[img.pin_id]) imageMap[img.pin_id] = [];
+      imageMap[img.pin_id].push(img);
+    }
   }
 
+  const result = pins.results.map(p => ({ ...p, images: imageMap[p.id] || [] }));
   return json(result);
 }
 
