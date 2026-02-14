@@ -3364,6 +3364,12 @@ async function showOrgDetail(orgId) {
     foldersTab.style.display = '';
   }
 
+  // Show leave button for non-admin members (admins can also leave if not last admin)
+  const leaveBtn = document.getElementById('org-leave-btn');
+  if (leaveBtn) {
+    leaveBtn.style.display = org.role === 'admin' ? 'none' : '';
+  }
+
   closeModal('modal-org');
   switchOrgDetailTab('members');
   openModal('modal-org-detail');
@@ -3588,6 +3594,17 @@ async function deleteOrganization() {
     await api(`/api/organizations/${currentOrgId}`, { method: 'DELETE' });
     closeModal('modal-org-detail');
     notify('団体を削除しました');
+    await loadAll();
+    renderSidebar();
+  } catch (err) { notify(err.message, 'error'); }
+}
+
+async function leaveOrganization() {
+  if (!confirm('この団体から脱退しますか？')) return;
+  try {
+    await api(`/api/organizations/${currentOrgId}/leave`, { method: 'POST' });
+    closeModal('modal-org-detail');
+    notify('団体から脱退しました');
     await loadAll();
     renderSidebar();
   } catch (err) { notify(err.message, 'error'); }

@@ -8,7 +8,7 @@ WordPress の有料会員を Fieldnota commons と自動同期するための設
 - WordPress で有料会員になると、Fieldnota commons のアカウントが自動作成されます
 - ユーザーは初回ログイン時にユーザー名とパスワードを設定します
 - WordPress の会員が解約されると、Fieldnota commons のアカウントも自動削除されます
-- `org_name` を指定すると、団体への招待メールも自動送信されます
+- `org_name` を指定すると、団体メンバーとして自動追加されます（招待メール不要）
 
 ---
 
@@ -218,11 +218,9 @@ case 'customer.subscription.deleted':
 1. ユーザーが WordPress で有料会員登録
 2. Stripe 決済完了
 3. WordPress が Fieldnota API を呼び出し（`org_name` 付き）
-4. アカウント作成 + ウェルカムメール送信
-5. 団体への招待メールも自動送信
-6. ユーザーがウェルカムメールのリンクからパスワードを設定
-7. 招待メールのリンクから団体に参加
-8. 自動ログインして利用開始
+4. アカウント作成 + 団体メンバーに自動追加 + ウェルカムメール送信
+5. ユーザーがウェルカムメールのリンクからパスワードを設定
+6. 自動ログインして利用開始（既に団体に所属済み）
 
 ### 4.2 ウェルカムメールの内容
 
@@ -247,13 +245,13 @@ Fieldnota commons をご利用いただくには、
 
 ### 5.1 成功レスポンス
 
-**アカウント作成成功（団体招待あり）：**
+**アカウント作成成功（団体自動追加あり）：**
 ```json
 {
   "success": true,
   "action": "created",
   "user_id": 123,
-  "invitation": { "status": "invited", "org_name": "yafomans" }
+  "invitation": { "status": "added", "org_name": "yafomans" }
 }
 ```
 
@@ -263,7 +261,7 @@ Fieldnota commons をご利用いただくには、
   "success": true,
   "action": "updated",
   "user_id": 123,
-  "invitation": { "status": "invited", "org_name": "yafomans" }
+  "invitation": { "status": "added", "org_name": "yafomans" }
 }
 ```
 
