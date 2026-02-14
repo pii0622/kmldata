@@ -1054,15 +1054,17 @@ async function handleExternalMemberSync(request, env) {
     const { action, email, display_name, plan, external_id, secret, stripe_customer_id, user_id } = await getRequestBody(request);
 
     // Verify shared secret
+    // TODO: Remove debug response after fixing auth issue
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
-      console.log('External sync auth failed:', {
-        hasEnvSecret: !!env.EXTERNAL_SYNC_SECRET,
-        envSecretLength: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.length : 0,
-        receivedSecretLength: secret ? secret.length : 0,
-        envSecretFirst3: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.substring(0, 3) : 'N/A',
-        receivedFirst3: secret ? secret.substring(0, 3) : 'N/A',
-      });
-      return json({ error: 'Unauthorized' }, 401);
+      return json({
+        error: 'Unauthorized',
+        debug: {
+          hasEnvSecret: !!env.EXTERNAL_SYNC_SECRET,
+          envSecretLength: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.length : 0,
+          receivedSecretLength: secret ? secret.length : 0,
+          match: env.EXTERNAL_SYNC_SECRET === secret,
+        }
+      }, 401);
     }
 
     if (action === 'create') {
