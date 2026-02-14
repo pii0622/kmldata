@@ -1847,51 +1847,67 @@ async function handleChangePassword(request, env, user) {
 async function handleDeleteAccount(request, env, user) {
   try {
     const body = await getRequestBody(request).catch(() => ({}));
-    const { password } = body;
+    const { consent } = body;
 
-    if (!password) {
-      return json({ error: 'パスワードを入力してください' }, 400);
+    if (!consent) {
+      return json({ error: 'データ削除への同意が必要です' }, 400);
     }
 
-    // Verify password
+    // Verify user exists
     const dbUser = await env.DB.prepare(
-      'SELECT id, password_hash, password_salt FROM users WHERE id = ?'
+      'SELECT id FROM users WHERE id = ?'
     ).bind(user.id).first();
 
-    if (!dbUser || !(await verifyPassword(password, dbUser.password_hash, dbUser.password_salt))) {
-      return json({ error: 'パスワードが正しくありません' }, 401);
+    if (!dbUser) {
+      return json({ error: 'ユーザーが見つかりません' }, 404);
     }
 
     // Delete user's R2 images (pin_images)
-    const userPins = await env.DB.prepare('SELECT id FROM pins WHERE user_id = ?').bind(user.id).all();
-    for (const pin of userPins.results) {
-      const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
-      for (const img of images.results) {
-        try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
+    try {
+      const userPins = await env.DB.prepare('SELECT id FROM pins WHERE user_id = ?').bind(user.id).all();
+      for (const pin of userPins.results) {
+        const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
+        for (const img of images.results) {
+          try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
+        }
       }
-    }
+    } catch (e) { console.error('R2 pin image cleanup error:', e); }
 
     // Delete user's R2 files (kml_files)
-    const userKmlFiles = await env.DB.prepare(
-      'SELECT r2_key FROM kml_files WHERE user_id = ?'
-    ).bind(user.id).all();
-    for (const f of userKmlFiles.results) {
-      try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
-    }
+    try {
+      const userKmlFiles = await env.DB.prepare(
+        'SELECT r2_key FROM kml_files WHERE user_id = ?'
+      ).bind(user.id).all();
+      for (const f of userKmlFiles.results) {
+        try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
+      }
+    } catch (e) { console.error('R2 kml file cleanup error:', e); }
 
-    // Delete DB data owned by user
+    // Delete DB data owned by user (split into smaller batches for reliability)
+    // Batch 1: Pin-related data
     await env.DB.batch([
       env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
-      env.DB.prepare('DELETE FROM pin_shares WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM pins WHERE user_id = ?').bind(user.id),
+    ]);
+
+    // Batch 2: Folder-related data
+    await env.DB.batch([
       env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM folders WHERE user_id = ?').bind(user.id),
+    ]);
+
+    // Batch 3: KML-related data
+    await env.DB.batch([
       env.DB.prepare('DELETE FROM kml_files WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ?)').bind(user.id),
       env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ?').bind(user.id),
+    ]);
+
+    // Batch 4: User metadata
+    await env.DB.batch([
       env.DB.prepare('DELETE FROM comment_read_status WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(user.id),
@@ -1901,7 +1917,6 @@ async function handleDeleteAccount(request, env, user) {
     ]);
 
     // Soft-delete: anonymize user row (keep for counting)
-    const deletedAt = new Date().toISOString();
     await env.DB.prepare(
       `UPDATE users SET
         username = ?, display_name = ?, email = NULL,

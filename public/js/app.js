@@ -1155,7 +1155,7 @@ async function saveAccountSettings() {
 function showDeleteAccountConfirm() {
   document.getElementById('delete-account-trigger').style.display = 'none';
   document.getElementById('delete-account-confirm').style.display = 'block';
-  document.getElementById('delete-account-password').value = '';
+  document.getElementById('delete-account-consent').checked = false;
   document.getElementById('delete-account-error').style.display = 'none';
 }
 
@@ -1165,11 +1165,11 @@ function hideDeleteAccountConfirm() {
 }
 
 async function deleteAccount() {
-  const password = document.getElementById('delete-account-password').value;
+  const consent = document.getElementById('delete-account-consent').checked;
   const errEl = document.getElementById('delete-account-error');
 
-  if (!password) {
-    errEl.textContent = 'パスワードを入力してください';
+  if (!consent) {
+    errEl.textContent = 'データ削除への同意にチェックを入れてください';
     errEl.style.display = 'block';
     return;
   }
@@ -1177,7 +1177,7 @@ async function deleteAccount() {
   try {
     await api('/api/auth/delete-account', {
       method: 'POST',
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ consent: true })
     });
 
     notify('アカウントが削除されました');
