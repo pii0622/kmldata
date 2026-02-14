@@ -50,21 +50,50 @@ export async function sendExternalWelcomeEmail(env, email, displayName) {
 <html>
 <head><meta charset="UTF-8"></head>
 <body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <h1 style="color: #4CAF50;">Fieldnota commons へようこそ！</h1>
+  <h1 style="color: #4CAF50;">Fieldnota commons のご案内</h1>
+
   <p>${displayName} 様</p>
-  <p>有料会員登録ありがとうございます。</p>
-  <p>Fieldnota commons をご利用いただくには、以下のリンクからパスワードを設定してください：</p>
+
+  <p>
+    このたびは、「yafomans」へご参加いただきありがとうございます。
+  </p>
+
+  <p>
+    yafomansの会員にご登録いただいた方は、自動的に<br>
+    <strong>Fieldnota commonsの有料会員</strong>としてご利用いただけます。
+  </p>
+
+  <p>
+    Fieldnota commons は、フィールドワークや探索で見つけた情報を地図上に記録・共有できるアプリです。<br>
+    yafomansで活用できる地図情報や記録が掲載されており、ログインすることでより深く楽しんでいただけます。
+  </p>
+
+  <p>
+    ご利用開始のため、以下のリンクからアカウント登録（パスワード設定）を行ってください。
+  </p>
+
   <p style="text-align: center; margin: 30px 0;">
     <a href="${appUrl}?setup=password&email=${encodeURIComponent(email)}"
        style="background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-      パスワードを設定する
+      アカウントを設定する
     </a>
   </p>
-  <p style="color: #666; font-size: 14px;">
-    ※ このメールに心当たりがない場合は、無視してください。
+
+  <p>
+    Fieldnota commons について詳しくは、以下をご覧ください。<br>
+    <a href="https://fieldnota-commons.com/about" target="_blank">
+      https://fieldnota-commons.com/about
+    </a>
   </p>
+
+  <p style="color: #666; font-size: 14px;">
+    ※ このメールに心当たりがない場合は、破棄してください。
+  </p>
+
   <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-  <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
+  <p style="color: #999; font-size: 12px;">
+    Fieldnota commons
+  </p>
 </body>
 </html>
   `;
