@@ -192,6 +192,43 @@ Fieldnota commons
   return await sendEmail(env, email, subject, htmlBody, textBody);
 }
 
+// Send notification that user was directly added to organization (already has account)
+export async function sendOrgAddedNotificationEmail(env, email, orgName, inviterName) {
+  const appUrl = 'https://fieldnota-commons.com';
+  const subject = `${orgName} に追加されました - Fieldnota commons`;
+
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h1 style="color: #4CAF50;">団体に追加されました</h1>
+  <p>${inviterName} さんが、あなたを <strong>${orgName}</strong> に追加しました。</p>
+  <p>ログインして団体のコンテンツをご覧ください：</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="${appUrl}"
+       style="background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+      Fieldnota commons を開く
+    </a>
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+  <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
+</body>
+</html>
+  `;
+
+  const textBody = `
+${inviterName} さんが、あなたを ${orgName} に追加しました。
+
+ログインして団体のコンテンツをご覧ください：
+${appUrl}
+
+Fieldnota commons
+  `;
+
+  return await sendEmail(env, email, subject, htmlBody, textBody);
+}
+
 // Send rejection notification email
 export async function sendRejectionEmail(env, email, displayName, username) {
   const subject = 'アカウント申請について - Fieldnota commons';
