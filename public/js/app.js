@@ -461,7 +461,7 @@ function renderSidebar() {
         ${currentUser.is_admin ? `<button class="btn btn-sm btn-secondary admin-btn" onclick="showAdminPanel()" title="管理者パネル">
           <i class="fas fa-user-shield"></i>${pendingUsersCount > 0 ? `<span class="notification-badge">${pendingUsersCount}</span>` : ''}
         </button>` : ''}
-        <button class="btn btn-sm btn-secondary" onclick="showOrgPanel()" title="団体管理"><i class="fas fa-building"></i></button>
+        ${userOrganizations && userOrganizations.length > 0 ? `<button class="btn btn-sm btn-secondary" onclick="showOrgPanel()" title="団体管理"><i class="fas fa-building"></i></button>` : ''}
         <button class="btn btn-sm btn-secondary" onclick="showAccountSettings()" title="設定"><i class="fas fa-cog"></i></button>
         <button class="btn btn-sm btn-secondary" onclick="logout()">ログアウト</button>
       </div>
@@ -3305,16 +3305,9 @@ async function loadOrganizations() {
 
 function showOrgPanel() {
   if (!currentUser) return;
+  if (!userOrganizations || userOrganizations.length === 0) return;
   loadOrgList();
   openModal('modal-org');
-}
-
-function switchOrgTab(tab) {
-  document.querySelectorAll('#modal-org .tab').forEach(t => t.classList.remove('active'));
-  const tabIdx = tab === 'list' ? 1 : 2;
-  document.querySelector(`#modal-org .tab:nth-child(${tabIdx})`).classList.add('active');
-  document.getElementById('org-tab-list').style.display = tab === 'list' ? '' : 'none';
-  document.getElementById('org-tab-create').style.display = tab === 'create' ? '' : 'none';
 }
 
 async function loadOrgList() {
@@ -3343,21 +3336,6 @@ async function loadOrgList() {
   } catch (err) {
     listEl.innerHTML = '<p style="color:red;">読み込みに失敗しました</p>';
   }
-}
-
-async function createOrganization() {
-  const name = document.getElementById('org-create-name').value.trim();
-  if (!name) { notify('団体名を入力してください', 'error'); return; }
-  try {
-    await api('/api/organizations', {
-      method: 'POST',
-      body: JSON.stringify({ name })
-    });
-    document.getElementById('org-create-name').value = '';
-    notify('団体を作成しました');
-    switchOrgTab('list');
-    await loadOrgList();
-  } catch (err) { notify(err.message, 'error'); }
 }
 
 let currentOrgId = null;
@@ -3656,7 +3634,10 @@ async function init() {
   // Check for upgrade success
   checkUpgradeSuccess();
 
-  // Check for org creation action from landing page
+  // Check for org creation success (from Stripe payment)
+  checkOrgCreatedSuccess();
+
+  // Check for org creation action (redirect to landing page)
   checkCreateOrgAction();
 
   // Check for org invite
@@ -3664,36 +3645,27 @@ async function init() {
   await checkPendingInvite();
 }
 
-// Check if user wants to create an organization (from landing page CTA)
+// Check if user wants to create an organization (redirect to landing page)
 function checkCreateOrgAction() {
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('action') === 'create-org') {
-    // Remove the parameter from URL without reloading
+    // Redirect to landing page pricing section for org creation
+    window.location.href = '/about.html#pricing';
+    return;
+  }
+}
+
+// Check for org creation success (returned from Stripe payment)
+function checkOrgCreatedSuccess() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('org-created') === 'success') {
     const newUrl = window.location.pathname + window.location.hash;
     window.history.replaceState({}, document.title, newUrl);
-
-    if (currentUser) {
-      // Logged in: open org panel on create tab
-      setTimeout(() => {
-        showOrgPanel();
-        switchOrgTab('create');
-      }, 300);
-    } else {
-      // Not logged in: store intent and show login prompt
-      sessionStorage.setItem('pendingAction', 'create-org');
-      setTimeout(() => {
-        notify('団体アカウントを作成するにはログインが必要です', 'error');
-      }, 500);
-    }
-  }
-
-  // Check if returning from login with pending action
-  if (currentUser && sessionStorage.getItem('pendingAction') === 'create-org') {
-    sessionStorage.removeItem('pendingAction');
-    setTimeout(() => {
-      showOrgPanel();
-      switchOrgTab('create');
-    }, 300);
+    setTimeout(async () => {
+      await loadOrganizations();
+      notify('団体プランを作成しました！団体管理からメンバーを招待できます。', 'success');
+      renderSidebar();
+    }, 500);
   }
 }
 
@@ -3701,11 +3673,8 @@ function checkCreateOrgAction() {
 function checkUpgradeSuccess() {
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('upgrade') === 'success') {
-    // Remove the parameter from URL without reloading
     const newUrl = window.location.pathname + window.location.hash;
     window.history.replaceState({}, document.title, newUrl);
-
-    // Show success notification with slight delay for better UX
     setTimeout(() => {
       notify('ありがとうございます！プレミアムにアップグレードしました！', 'success');
     }, 500);

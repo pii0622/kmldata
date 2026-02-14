@@ -290,6 +290,7 @@ async function ensureTablesExist(env) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         created_by INTEGER NOT NULL,
+        stripe_subscription_id TEXT,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (created_by) REFERENCES users(id)
       )`),
@@ -322,6 +323,9 @@ async function ensureTablesExist(env) {
     } catch (e) { /* Column might already exist */ }
     try {
       await env.DB.prepare('ALTER TABLE kml_folders ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL').run();
+    } catch (e) { /* Column might already exist */ }
+    try {
+      await env.DB.prepare('ALTER TABLE organizations ADD COLUMN stripe_subscription_id TEXT').run();
     } catch (e) { /* Column might already exist */ }
 
     tablesInitialized = true;
@@ -881,6 +885,7 @@ export async function onRequest(context) {
     }
     if (path === '/organizations' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
+      if (!user.is_admin) return json({ error: '団体の作成はランディングページからお支払いが必要です' }, 403);
       return await handleCreateOrganization(request, env, user);
     }
     if (path.match(/^\/organizations\/(\d+)$/) && method === 'PUT') {
@@ -965,6 +970,10 @@ export async function onRequest(context) {
     if (path === '/stripe/create-checkout-session' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleCreateCheckoutSession(request, env, user);
+    }
+    if (path === '/stripe/create-org-checkout-session' && method === 'POST') {
+      if (!user) return json({ error: 'ログインが必要です' }, 401);
+      return await handleCreateOrgCheckoutSession(request, env, user);
     }
     if (path === '/stripe/webhook' && method === 'POST') {
       return await handleStripeWebhook(request, env);
@@ -1551,6 +1560,99 @@ async function handleCreateCheckoutSession(request, env, user) {
   }
 }
 
+// Create Stripe Checkout Session for organization plan
+async function handleCreateOrgCheckoutSession(request, env, user) {
+  try {
+    if (!env.STRIPE_SECRET_KEY) {
+      return json({ error: 'Stripe is not configured' }, 500);
+    }
+    if (!env.STRIPE_ORG_PRICE_ID) {
+      return json({ error: 'Organization plan is not configured' }, 500);
+    }
+
+    const { org_name, success_url, cancel_url } = await getRequestBody(request);
+
+    if (!org_name || !org_name.trim()) {
+      return json({ error: '団体名を入力してください' }, 400);
+    }
+    if (org_name.length > 100) {
+      return json({ error: '団体名は100文字以内にしてください' }, 400);
+    }
+
+    const dbUser = await env.DB.prepare(
+      'SELECT stripe_customer_id, email FROM users WHERE id = ?'
+    ).bind(user.id).first();
+
+    const appUrl = success_url || 'https://fieldnota-commons.com';
+    const cancelUrl = cancel_url || 'https://fieldnota-commons.com';
+    const userEmail = dbUser.email || '';
+    let customerId = dbUser.stripe_customer_id;
+
+    if (!customerId) {
+      const customerResponse = await fetch('https://api.stripe.com/v1/customers', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          'email': userEmail,
+          'name': user.display_name || user.username,
+          'metadata[user_id]': user.id.toString()
+        })
+      });
+
+      if (!customerResponse.ok) {
+        console.error('Stripe customer creation failed:', await customerResponse.text());
+        return json({ error: 'Stripe customer creation failed' }, 500);
+      }
+
+      const customer = await customerResponse.json();
+      customerId = customer.id;
+
+      await env.DB.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?')
+        .bind(customerId, user.id).run();
+    }
+
+    const sessionResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        'customer': customerId,
+        'customer_update[address]': 'never',
+        'customer_update[name]': 'never',
+        'mode': 'subscription',
+        'line_items[0][price]': env.STRIPE_ORG_PRICE_ID,
+        'line_items[0][quantity]': '1',
+        'success_url': `${appUrl}?session_id={CHECKOUT_SESSION_ID}`,
+        'cancel_url': cancelUrl,
+        'metadata[user_id]': user.id.toString(),
+        'metadata[user_email]': userEmail,
+        'metadata[org_name]': org_name.trim(),
+        'metadata[type]': 'organization',
+        'subscription_data[metadata][user_id]': user.id.toString(),
+        'subscription_data[metadata][org_name]': org_name.trim(),
+        'subscription_data[metadata][type]': 'organization'
+      })
+    });
+
+    if (!sessionResponse.ok) {
+      console.error('Stripe org session creation failed:', await sessionResponse.text());
+      return json({ error: 'Checkout session creation failed' }, 500);
+    }
+
+    const session = await sessionResponse.json();
+    return json({ url: session.url, session_id: session.id });
+
+  } catch (err) {
+    console.error('Create org checkout session error:', err);
+    return json({ error: 'Server error' }, 500);
+  }
+}
+
 // Handle Stripe Webhook events
 async function handleStripeWebhook(request, env) {
   try {
@@ -1582,8 +1684,33 @@ async function handleStripeWebhook(request, env) {
         const userId = session.metadata?.user_id;
         const customerId = session.customer;
         const subscriptionId = session.subscription;
+        const sessionType = session.metadata?.type;
 
-        if (userId) {
+        if (userId && sessionType === 'organization') {
+          // Organization plan: create org and set user as admin
+          const orgName = session.metadata?.org_name;
+          if (orgName) {
+            const result = await env.DB.prepare(
+              'INSERT INTO organizations (name, created_by, stripe_subscription_id) VALUES (?, ?, ?)'
+            ).bind(orgName, parseInt(userId), subscriptionId).run();
+
+            const orgId = result.meta.last_row_id;
+            await env.DB.prepare(
+              'INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, ?)'
+            ).bind(orgId, parseInt(userId), 'admin').run();
+
+            // Save customer ID on user
+            await env.DB.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?')
+              .bind(customerId, userId).run();
+
+            await logSecurityEvent(env, 'org_subscription_created', parseInt(userId), request, {
+              source: 'stripe',
+              subscription_id: subscriptionId,
+              organization_id: orgId
+            });
+          }
+        } else if (userId) {
+          // Personal premium plan
           await env.DB.prepare(`
             UPDATE users SET
               plan = 'premium',
@@ -1605,24 +1732,29 @@ async function handleStripeWebhook(request, env) {
       case 'customer.subscription.updated': {
         const subscription = event.data.object;
         const customerId = subscription.customer;
+        const isOrgSub = subscription.metadata?.type === 'organization';
 
-        // Find user by customer ID
-        const user = await env.DB.prepare(
-          'SELECT id FROM users WHERE stripe_customer_id = ?'
-        ).bind(customerId).first();
+        if (isOrgSub) {
+          // Organization subscription update - no action needed for now
+          // Org data persists regardless of payment status
+        } else {
+          // Personal premium subscription
+          const user = await env.DB.prepare(
+            'SELECT id FROM users WHERE stripe_customer_id = ?'
+          ).bind(customerId).first();
 
-        if (user) {
-          const status = subscription.status;
-          if (status === 'active' || status === 'trialing') {
-            await env.DB.prepare(`
-              UPDATE users SET plan = 'premium', subscription_ends_at = NULL WHERE id = ?
-            `).bind(user.id).run();
-          } else if (status === 'canceled' || status === 'unpaid' || status === 'past_due') {
-            // Set end date for grace period
-            const endsAt = new Date(subscription.current_period_end * 1000).toISOString();
-            await env.DB.prepare(`
-              UPDATE users SET subscription_ends_at = ? WHERE id = ?
-            `).bind(endsAt, user.id).run();
+          if (user) {
+            const status = subscription.status;
+            if (status === 'active' || status === 'trialing') {
+              await env.DB.prepare(`
+                UPDATE users SET plan = 'premium', subscription_ends_at = NULL WHERE id = ?
+              `).bind(user.id).run();
+            } else if (status === 'canceled' || status === 'unpaid' || status === 'past_due') {
+              const endsAt = new Date(subscription.current_period_end * 1000).toISOString();
+              await env.DB.prepare(`
+                UPDATE users SET subscription_ends_at = ? WHERE id = ?
+              `).bind(endsAt, user.id).run();
+            }
           }
         }
         break;
@@ -1631,25 +1763,41 @@ async function handleStripeWebhook(request, env) {
       case 'customer.subscription.deleted': {
         const subscription = event.data.object;
         const customerId = subscription.customer;
+        const isOrgSub = subscription.metadata?.type === 'organization';
 
-        const user = await env.DB.prepare(
-          'SELECT id FROM users WHERE stripe_customer_id = ?'
-        ).bind(customerId).first();
+        if (isOrgSub) {
+          // Organization subscription canceled - log it
+          const org = await env.DB.prepare(
+            'SELECT id, created_by FROM organizations WHERE stripe_subscription_id = ?'
+          ).bind(subscription.id).first();
+          if (org) {
+            await logSecurityEvent(env, 'org_subscription_canceled', org.created_by, request, {
+              source: 'stripe',
+              subscription_id: subscription.id,
+              organization_id: org.id
+            });
+          }
+        } else {
+          // Personal premium subscription canceled
+          const user = await env.DB.prepare(
+            'SELECT id FROM users WHERE stripe_customer_id = ?'
+          ).bind(customerId).first();
 
-        if (user) {
-          await env.DB.prepare(`
-            UPDATE users SET
-              plan = 'free',
-              member_source = NULL,
-              stripe_subscription_id = NULL,
-              subscription_ends_at = NULL
-            WHERE id = ?
-          `).bind(user.id).run();
+          if (user) {
+            await env.DB.prepare(`
+              UPDATE users SET
+                plan = 'free',
+                member_source = NULL,
+                stripe_subscription_id = NULL,
+                subscription_ends_at = NULL
+              WHERE id = ?
+            `).bind(user.id).run();
 
-          await logSecurityEvent(env, 'subscription_canceled', user.id, request, {
-            source: 'stripe',
-            subscription_id: subscription.id
-          });
+            await logSecurityEvent(env, 'subscription_canceled', user.id, request, {
+              source: 'stripe',
+              subscription_id: subscription.id
+            });
+          }
         }
         break;
       }
