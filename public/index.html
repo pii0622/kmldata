@@ -542,9 +542,20 @@
       </a>
     </div>
     <div style="margin-top:12px;text-align:center;">
-      <button class="btn btn-sm" onclick="deleteAccount()" style="color:#dc3545;font-size:12px;background:none;border:none;cursor:pointer;text-decoration:underline;">
+      <button class="btn btn-sm" onclick="showDeleteAccountConfirm()" id="delete-account-trigger" style="color:#dc3545;font-size:12px;background:none;border:none;cursor:pointer;text-decoration:underline;">
         アカウントを削除
       </button>
+    </div>
+    <div id="delete-account-confirm" style="display:none;margin-top:12px;border:1px solid #dc3545;border-radius:8px;padding:12px;">
+      <p style="color:#dc3545;font-size:13px;margin:0 0 8px;"><i class="fas fa-exclamation-triangle"></i> すべてのデータが完全に削除されます。この操作は取り消せません。</p>
+      <div class="form-group" style="margin-bottom:8px;">
+        <input type="password" id="delete-account-password" placeholder="パスワードを入力して確認" style="font-size:13px;">
+      </div>
+      <div id="delete-account-error" style="color:#dc3545;font-size:12px;margin-bottom:8px;display:none;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-sm btn-secondary" onclick="hideDeleteAccountConfirm()">キャンセル</button>
+        <button class="btn btn-sm" onclick="deleteAccount()" style="background:#dc3545;color:#fff;">削除する</button>
+      </div>
     </div>
   </div>
 </div>

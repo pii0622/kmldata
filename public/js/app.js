@@ -1084,6 +1084,7 @@ function showAccountSettings() {
   document.getElementById('settings-new-password').value = '';
   document.getElementById('settings-confirm-password').value = '';
   document.getElementById('settings-error').style.display = 'none';
+  hideDeleteAccountConfirm();
   openModal('modal-settings');
   // Update push notification UI
   updatePushUI();
@@ -1151,13 +1152,27 @@ async function saveAccountSettings() {
   }
 }
 
+function showDeleteAccountConfirm() {
+  document.getElementById('delete-account-trigger').style.display = 'none';
+  document.getElementById('delete-account-confirm').style.display = 'block';
+  document.getElementById('delete-account-password').value = '';
+  document.getElementById('delete-account-error').style.display = 'none';
+}
+
+function hideDeleteAccountConfirm() {
+  document.getElementById('delete-account-confirm').style.display = 'none';
+  document.getElementById('delete-account-trigger').style.display = '';
+}
+
 async function deleteAccount() {
-  if (!confirm('本当にアカウントを削除しますか？\n\nすべてのデータ（ピン・フォルダ・KMLファイル・画像）が完全に削除されます。この操作は取り消せません。')) {
+  const password = document.getElementById('delete-account-password').value;
+  const errEl = document.getElementById('delete-account-error');
+
+  if (!password) {
+    errEl.textContent = 'パスワードを入力してください';
+    errEl.style.display = 'block';
     return;
   }
-
-  const password = prompt('確認のため、パスワードを入力してください:');
-  if (!password) return;
 
   try {
     await api('/api/auth/delete-account', {
@@ -1166,12 +1181,12 @@ async function deleteAccount() {
     });
 
     notify('アカウントが削除されました');
-    // Clear auth and redirect to login
     setTimeout(() => {
       window.location.href = '/login.html';
     }, 1500);
   } catch (err) {
-    notify(err.message, 'error');
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
   }
 }
 
