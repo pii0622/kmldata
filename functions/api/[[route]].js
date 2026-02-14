@@ -1055,6 +1055,13 @@ async function handleExternalMemberSync(request, env) {
 
     // Verify shared secret
     if (!env.EXTERNAL_SYNC_SECRET || secret !== env.EXTERNAL_SYNC_SECRET) {
+      console.log('External sync auth failed:', {
+        hasEnvSecret: !!env.EXTERNAL_SYNC_SECRET,
+        envSecretLength: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.length : 0,
+        receivedSecretLength: secret ? secret.length : 0,
+        envSecretFirst3: env.EXTERNAL_SYNC_SECRET ? env.EXTERNAL_SYNC_SECRET.substring(0, 3) : 'N/A',
+        receivedFirst3: secret ? secret.substring(0, 3) : 'N/A',
+      });
       return json({ error: 'Unauthorized' }, 401);
     }
 
