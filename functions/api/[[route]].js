@@ -3088,11 +3088,10 @@ async function handleCreateFolder(request, env, user) {
     if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
 
     if (parent.organization_id) {
-      // Parent is an org folder — verify user is org member
-      const member = await env.DB.prepare(
-        'SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?'
-      ).bind(parent.organization_id, user.id).first();
-      if (!member && !user.is_admin) return json({ error: '団体メンバーではありません' }, 403);
+      // Parent is an org folder — verify user is org admin
+      if (!await isOrgAdmin(env, user.id, parent.organization_id) && !user.is_admin) {
+        return json({ error: '団体管理者権限が必要です' }, 403);
+      }
       orgId = parent.organization_id;
     } else {
       // Personal folder — verify ownership
