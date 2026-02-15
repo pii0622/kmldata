@@ -70,6 +70,13 @@ map.getContainer().addEventListener('click', function(e) {
 function openModal(id) { document.getElementById(id).classList.add('active'); }
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
+// Close modal when clicking the overlay (outside the modal content)
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')) {
+    e.target.classList.remove('active');
+  }
+});
+
 function notify(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = 'notification notification-' + type;
