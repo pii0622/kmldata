@@ -1530,6 +1530,7 @@ function showAccountSettings() {
   document.getElementById('settings-confirm-password').value = '';
   document.getElementById('settings-error').style.display = 'none';
   hideDeleteAccountConfirm();
+  document.getElementById('delete-account-section').style.display = currentUser.is_admin ? 'none' : '';
   openModal('modal-settings');
   // Update push notification UI
   updatePushUI();
