@@ -5,9 +5,10 @@ const TILE_CACHE_NAME = 'gsi-tiles-v1';
 // Cache expiration time (7 days for tiles)
 const TILE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
-// Install event
+// Install event - wait for user to reload (shows update badge)
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  // Don't skipWaiting automatically - let the app show a reload badge first
+  // skipWaiting will be triggered by a message from the page
 });
 
 // Activate event - clean up old caches
@@ -168,5 +169,9 @@ self.addEventListener('message', (event) => {
         event.ports[0].postMessage({ count: keys.length });
       });
     });
+  }
+
+  if (event.data.action === 'skipWaiting') {
+    self.skipWaiting();
   }
 });

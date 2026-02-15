@@ -124,8 +124,9 @@
   <button class="map-btn" id="btn-add-pin" onclick="startPinMode()" title="ピン追加" style="display:none;">
     <i class="fas fa-map-pin"></i>
   </button>
-  <button class="map-btn" onclick="location.reload()" title="リロード">
+  <button class="map-btn" id="btn-reload" onclick="location.reload()" title="リロード" style="position:relative;">
     <i class="fas fa-sync-alt"></i>
+    <span id="update-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:#dc3545;width:12px;height:12px;border-radius:50%;border:2px solid white;"></span>
   </button>
   <button class="map-btn" id="btn-notifications" onclick="openNotificationsPopup()" title="新着通知" style="display:none;position:relative;">
     <i class="fas fa-bell"></i>

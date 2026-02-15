@@ -3455,14 +3455,51 @@ async function loadAll() {
 
 // ==================== Service Worker ====================
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('Service Worker registered:', registration.scope);
-      })
-      .catch((err) => {
-        console.log('Service Worker registration failed:', err);
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('/sw.js')
+    .then((registration) => {
+      console.log('Service Worker registered:', registration.scope);
+
+      // Check for updates immediately, then every 5 minutes
+      registration.update();
+      setInterval(() => registration.update(), 5 * 60 * 1000);
+
+      // Listen for new SW waiting to activate
+      registration.addEventListener('updatefound', () => {
+        const newWorker = registration.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // New version available, show badge on reload button
+            showUpdateBadge();
+          }
+        });
       });
+    })
+    .catch((err) => {
+      console.log('Service Worker registration failed:', err);
+    });
+}
+
+let swUpdateAvailable = false;
+
+function showUpdateBadge() {
+  swUpdateAvailable = true;
+  const badge = document.getElementById('update-badge');
+  if (badge) badge.style.display = 'block';
+  const btn = document.getElementById('btn-reload');
+  if (btn) {
+    btn.title = 'リロード（新しいバージョンがあります）';
+    // Override click: activate waiting SW then reload
+    btn.onclick = () => {
+      navigator.serviceWorker.getRegistration().then(reg => {
+        if (reg && reg.waiting) {
+          reg.waiting.postMessage({ action: 'skipWaiting' });
+        }
+      });
+      // Reload after a short delay to let SW activate
+      setTimeout(() => location.reload(), 300);
+    };
   }
 }
 
