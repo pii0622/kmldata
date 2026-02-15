@@ -5020,15 +5020,17 @@ async function handleCreateOrgKmlFolder(request, env, user, orgId) {
   const { name, parent_id } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
+  let publicFlag = 0;
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM kml_folders WHERE id = ? AND organization_id = ?')
       .bind(parent_id, orgId).first();
     if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
+    publicFlag = parent.is_public ? 1 : 0;
   }
 
   const result = await env.DB.prepare(
-    'INSERT INTO kml_folders (name, user_id, organization_id, parent_id, is_public) VALUES (?, ?, ?, ?, 0)'
-  ).bind(name, user.id, orgId, parent_id || null).run();
+    'INSERT INTO kml_folders (name, user_id, organization_id, parent_id, is_public) VALUES (?, ?, ?, ?, ?)'
+  ).bind(name, user.id, orgId, parent_id || null, publicFlag).run();
 
-  return json({ id: result.meta.last_row_id, name, user_id: user.id, organization_id: parseInt(orgId), parent_id: parent_id || null });
+  return json({ id: result.meta.last_row_id, name, user_id: user.id, organization_id: parseInt(orgId), parent_id: parent_id || null, is_public: publicFlag });
 }

@@ -236,15 +236,18 @@
 <div class="modal-overlay" id="modal-kml-folder">
   <div class="modal">
     <h3><i class="fas fa-folder-plus"></i> KMLフォルダを作成</h3>
+    <div class="tabs" id="kml-folder-create-tabs">
+      <div class="tab active" onclick="switchKmlFolderCreateTab('personal')">マイフォルダ</div>
+    </div>
     <div class="form-group">
       <label>フォルダ名 *</label>
       <input type="text" id="kml-folder-name" placeholder="フォルダ名">
     </div>
-    <div class="form-group">
+    <div class="form-group" id="kml-folder-parent-group">
       <label>親フォルダ</label>
       <select id="kml-folder-parent"></select>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="kml-folder-public-group">
       <label class="checkbox-label">
         <input type="checkbox" id="kml-folder-public"> 全ユーザーに公開する（管理者のみ）
       </label>
@@ -697,7 +700,6 @@
     <div class="tabs">
       <div class="tab active" onclick="switchOrgDetailTab('members')">メンバー</div>
       <div class="tab" onclick="switchOrgDetailTab('invite')">招待</div>
-      <div class="tab" onclick="switchOrgDetailTab('folders')">フォルダ</div>
       <div class="tab" onclick="switchOrgDetailTab('settings')">設定</div>
     </div>
     <div id="org-detail-tab-members">
@@ -713,19 +715,6 @@
       <button class="btn btn-primary" onclick="sendOrgInvitation()" style="margin-bottom:12px;">招待メールを送信</button>
       <div class="section-title">送信済み招待</div>
       <div id="org-invitations-list" style="max-height:200px;overflow-y:auto;">
-        <p style="color:#999;">読み込み中...</p>
-      </div>
-    </div>
-    <div id="org-detail-tab-folders" style="display:none;">
-      <div style="margin-bottom:8px;display:flex;gap:4px;">
-        <button class="btn btn-sm btn-primary" onclick="showCreateOrgFolderModal('pin')">
-          <i class="fas fa-folder-plus"></i> ピンフォルダ
-        </button>
-        <button class="btn btn-sm btn-primary" onclick="showCreateOrgFolderModal('kml')">
-          <i class="fas fa-folder-plus"></i> KMLフォルダ
-        </button>
-      </div>
-      <div id="org-folders-list" style="max-height:300px;overflow-y:auto;">
         <p style="color:#999;">読み込み中...</p>
       </div>
     </div>
@@ -756,28 +745,16 @@
         <button class="btn btn-primary" onclick="updateOrganization()">保存</button>
         <button class="btn btn-danger" onclick="deleteOrganization()" style="margin-left:auto;">団体を削除</button>
       </div>
+      <div style="border-top:1px solid #eee;padding-top:12px;margin-top:12px;">
+        <button class="btn btn-danger" id="org-leave-btn" onclick="leaveOrganization()">団体を脱退</button>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-org-detail')">閉じる</button>
-      <button class="btn btn-danger" id="org-leave-btn" onclick="leaveOrganization()" style="margin-left:auto;">団体を脱退</button>
     </div>
   </div>
 </div>
 
-<!-- Organization folder creation modal -->
-<div class="modal-overlay" id="modal-org-folder">
-  <div class="modal">
-    <h3><i class="fas fa-folder-plus"></i> 団体フォルダを作成</h3>
-    <div class="form-group">
-      <label>フォルダ名 *</label>
-      <input type="text" id="org-folder-name" placeholder="フォルダ名">
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('modal-org-folder')">キャンセル</button>
-      <button class="btn btn-primary" id="org-folder-create-btn" onclick="createOrgFolder()">作成</button>
-    </div>
-  </div>
-</div>
 
 <!-- Lightbox -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
