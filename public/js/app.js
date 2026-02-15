@@ -2804,13 +2804,86 @@ function initInstallPrompt() {
     e.preventDefault();
     deferredInstallPrompt = e;
     console.log('Install prompt captured');
+    // Show banner if user is logged in
+    if (currentUser) showInstallBanner();
   });
 
   // Detect when app is installed
   window.addEventListener('appinstalled', () => {
     deferredInstallPrompt = null;
     console.log('App installed');
+    hideInstallBanner();
   });
+}
+
+function shouldShowInstallBanner() {
+  // Already installed
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                       window.navigator.standalone === true;
+  if (isStandalone) return false;
+
+  // User dismissed recently (7 days)
+  const dismissed = localStorage.getItem('install-banner-dismissed');
+  if (dismissed) {
+    const dismissedAt = parseInt(dismissed);
+    if (Date.now() - dismissedAt < 7 * 24 * 60 * 60 * 1000) return false;
+  }
+
+  // Either beforeinstallprompt available or iOS (show guide)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  return deferredInstallPrompt || isIOS;
+}
+
+function showInstallBanner() {
+  if (!shouldShowInstallBanner()) return;
+  // Remove existing banner if any
+  hideInstallBanner();
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const banner = document.createElement('div');
+  banner.id = 'install-banner';
+  banner.className = 'install-banner';
+
+  if (isIOS) {
+    banner.innerHTML = `
+      <div class="install-banner-content">
+        <div class="install-banner-icon"><i class="fas fa-mobile-alt"></i></div>
+        <div class="install-banner-text">
+          <strong>ホーム画面に追加</strong>
+          <span><i class="fas fa-share-square"></i> 共有ボタン → 「ホーム画面に追加」をタップ</span>
+        </div>
+        <button class="install-banner-close" onclick="dismissInstallBanner()"><i class="fas fa-times"></i></button>
+      </div>`;
+  } else {
+    banner.innerHTML = `
+      <div class="install-banner-content">
+        <div class="install-banner-icon"><i class="fas fa-download"></i></div>
+        <div class="install-banner-text">
+          <strong>アプリをインストール</strong>
+          <span>ホーム画面からすぐにアクセスできます</span>
+        </div>
+        <button class="btn btn-sm btn-green" onclick="installApp()" style="flex-shrink:0;">インストール</button>
+        <button class="install-banner-close" onclick="dismissInstallBanner()"><i class="fas fa-times"></i></button>
+      </div>`;
+  }
+
+  document.body.appendChild(banner);
+  // Animate in
+  requestAnimationFrame(() => banner.classList.add('show'));
+}
+
+function hideInstallBanner() {
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.remove();
+}
+
+function dismissInstallBanner() {
+  localStorage.setItem('install-banner-dismissed', Date.now().toString());
+  const banner = document.getElementById('install-banner');
+  if (banner) {
+    banner.classList.remove('show');
+    setTimeout(() => banner.remove(), 300);
+  }
 }
 
 function updateInstallUI() {
@@ -2862,6 +2935,7 @@ async function installApp() {
   if (outcome === 'accepted') {
     notify('アプリをインストールしました！');
     deferredInstallPrompt = null;
+    hideInstallBanner();
     updateInstallUI();
   }
 }
@@ -4170,6 +4244,11 @@ async function init() {
   // Check for org invite
   await checkOrgInvite();
   await checkPendingInvite();
+
+  // Show install banner after login (delayed so it doesn't compete with other UI)
+  if (currentUser) {
+    setTimeout(() => showInstallBanner(), 2000);
+  }
 }
 
 // Check if user wants to create an organization (redirect to landing page)
