@@ -3080,46 +3080,34 @@ async function handleCreateFolder(request, env, user) {
   const { name, parent_id, is_public, pin_icon, pin_color } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
-  let orgId = null;
-  let parentPublic = null;
-
   if (parent_id) {
-    // Check if parent is an org folder — if so, inherit organization_id
     const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ?').bind(parent_id).first();
     if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
 
     if (parent.organization_id) {
-      // Parent is an org folder — verify user is org admin
-      if (!await isOrgAdmin(env, user.id, parent.organization_id) && !user.is_admin) {
-        return json({ error: '団体管理者権限が必要です' }, 403);
-      }
-      orgId = parent.organization_id;
-      parentPublic = parent.is_public;
-    } else {
-      // Personal folder — verify ownership
-      if (parent.user_id !== user.id && !user.is_admin) {
-        return json({ error: '親フォルダが見つかりません' }, 404);
-      }
+      // Org folders must be created from the org admin panel
+      return json({ error: '団体フォルダは管理画面から追加してください' }, 400);
+    }
+    // Personal folder — verify ownership
+    if (parent.user_id !== user.id && !user.is_admin) {
+      return json({ error: '親フォルダが見つかりません' }, 404);
     }
   }
 
-  if (!orgId) {
-    // Check free tier limit only for personal folders
-    const limitCheck = await checkFreeTierLimit(env, user, 'pinFolder');
-    if (!limitCheck.allowed) {
-      return json({ error: limitCheck.message }, 403);
-    }
+  // Check free tier limit for personal folders
+  const limitCheck = await checkFreeTierLimit(env, user, 'pinFolder');
+  if (!limitCheck.allowed) {
+    return json({ error: limitCheck.message }, 403);
   }
 
-  // Org subfolder: inherit parent's is_public; otherwise admin-only control
-  const publicFlag = orgId && parentPublic !== null ? (parentPublic ? 1 : 0) : (user.is_admin && is_public ? 1 : 0);
+  const publicFlag = user.is_admin && is_public ? 1 : 0;
   const iconVal = pin_icon || 'fa-map-pin';
   const colorVal = pin_color || '#1a73e8';
   const result = await env.DB.prepare(
-    'INSERT INTO folders (name, parent_id, user_id, organization_id, is_public, pin_icon, pin_color) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(name, parent_id || null, user.id, orgId, publicFlag, iconVal, colorVal).run();
+    'INSERT INTO folders (name, parent_id, user_id, is_public, pin_icon, pin_color) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(name, parent_id || null, user.id, publicFlag, iconVal, colorVal).run();
 
-  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, organization_id: orgId, is_public: publicFlag, pin_icon: iconVal, pin_color: colorVal });
+  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, is_public: publicFlag, pin_icon: iconVal, pin_color: colorVal });
 }
 
 async function handleRenameFolder(request, env, user, id) {
