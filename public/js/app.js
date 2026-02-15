@@ -1597,8 +1597,20 @@ async function saveAccountSettings() {
   }
 }
 
-function showDeleteAccountConfirm() {
+async function showDeleteAccountConfirm() {
   document.getElementById('delete-account-trigger').style.display = 'none';
+  document.getElementById('delete-account-confirm').style.display = 'none';
+  document.getElementById('delete-account-wp-notice').style.display = 'none';
+
+  // Check if WordPress member
+  try {
+    const data = await api('/api/subscription');
+    if (data.member_source === 'wordpress') {
+      document.getElementById('delete-account-wp-notice').style.display = 'block';
+      return;
+    }
+  } catch (e) { /* proceed with normal flow */ }
+
   document.getElementById('delete-account-confirm').style.display = 'block';
   document.getElementById('delete-account-consent').checked = false;
   document.getElementById('delete-account-error').style.display = 'none';
@@ -1606,6 +1618,7 @@ function showDeleteAccountConfirm() {
 
 function hideDeleteAccountConfirm() {
   document.getElementById('delete-account-confirm').style.display = 'none';
+  document.getElementById('delete-account-wp-notice').style.display = 'none';
   document.getElementById('delete-account-trigger').style.display = '';
 }
 
