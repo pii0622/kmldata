@@ -4,7 +4,7 @@
   "description": "見つけたナニカを、notaに記録する。共有する。（日本版）",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
+  "background_color": "#2E7D32",
   "theme_color": "#4CAF50",
   "orientation": "portrait-primary",
   "icons": [

@@ -663,7 +663,7 @@ function _renderSidebarNow() {
   html += '<div class="section-title">KMLフォルダ</div>';
   if (currentUser) {
     html += `<div style="margin-bottom:8px;display:flex;gap:4px;">
-      <button class="btn btn-sm btn-primary" onclick="showKmlFolderModal()">
+      <button class="btn btn-sm btn-green" onclick="showKmlFolderModal()">
         <i class="fas fa-folder-plus"></i> フォルダ作成
       </button>
       <button class="btn btn-sm btn-secondary" onclick="showReorderKmlFoldersModal()" title="並び替え">
@@ -677,7 +677,7 @@ function _renderSidebarNow() {
   if (currentUser) {
     html += '<div class="section-title">ピンフォルダ</div>';
     html += `<div style="margin-bottom:8px;display:flex;gap:4px;">
-      <button class="btn btn-sm btn-primary" onclick="showFolderModal()">
+      <button class="btn btn-sm btn-green" onclick="showFolderModal()">
         <i class="fas fa-folder-plus"></i> フォルダ作成
       </button>
       <button class="btn btn-sm btn-secondary" onclick="showReorderFoldersModal()" title="並び替え">
@@ -724,6 +724,34 @@ function _renderSidebarNow() {
 }
 
 // ==================== KML Folder Management ====================
+
+// Classify a folder into a category
+function classifyFolder(f) {
+  if (f.organization_id) return 'org';
+  if (f.is_public) return 'public';
+  if (f.is_shared) return 'shared';
+  return 'personal';
+}
+
+function renderFolderGroupToggle(groupId, icon, label, foldersHtml) {
+  return `<div class="folder-group-header" onclick="toggleFolderGroup('${groupId}')">
+    <i class="fas fa-chevron-right toggle-icon"></i>
+    <i class="fas ${icon}"></i> ${escHtml(label)}
+  </div>
+  <div class="folder-group-content" id="folder-group-${groupId}">
+    ${foldersHtml}
+  </div>`;
+}
+
+function toggleFolderGroup(groupId) {
+  const header = event.currentTarget;
+  const content = document.getElementById('folder-group-' + groupId);
+  if (header && content) {
+    header.classList.toggle('expanded');
+    content.classList.toggle('open');
+  }
+}
+
 function renderKmlFolderList() {
   if (kmlFolders.length === 0 && !currentUser) {
     return '<p style="font-size:13px;color:#999;">KMLデータがありません</p>';
@@ -735,7 +763,15 @@ function renderKmlFolderList() {
   let html = '';
   const topFolders = kmlFolders.filter(f => !f.parent_id);
 
-  // Organization folders first (grouped by org)
+  // 1. Public folders
+  const publicFolders = topFolders.filter(f => !f.organization_id && f.is_public);
+  if (publicFolders.length > 0) {
+    let inner = '';
+    for (const folder of publicFolders) inner += renderKmlFolderNode(folder, 0);
+    html += renderFolderGroupToggle('kml-public', 'fa-globe', '公開フォルダ', inner);
+  }
+
+  // 2. Organization folders (grouped by org)
   const orgFolders = topFolders.filter(f => f.organization_id);
   const orgMap = {};
   for (const f of orgFolders) {
@@ -746,19 +782,26 @@ function renderKmlFolderList() {
   }
   for (const orgId of Object.keys(orgMap)) {
     const g = orgMap[orgId];
-    html += `<div class="folder-group-header"><i class="fas fa-building"></i> ${escHtml(g.name)}</div>`;
-    for (const folder of g.folders) {
-      html += renderKmlFolderNode(folder, 0);
-    }
+    let inner = '';
+    for (const folder of g.folders) inner += renderKmlFolderNode(folder, 0);
+    html += renderFolderGroupToggle('kml-org-' + orgId, 'fa-building', g.name, inner);
   }
 
-  // Personal folders
-  const personalFolders = topFolders.filter(f => !f.organization_id);
-  if (personalFolders.length > 0 && orgFolders.length > 0) {
-    html += '<div class="folder-group-header"><i class="fas fa-user"></i> 個人フォルダ</div>';
+  // 3. Shared folders (not public, not org, but shared)
+  const sharedFolders = topFolders.filter(f => !f.organization_id && !f.is_public && f.is_shared);
+  if (sharedFolders.length > 0) {
+    let inner = '';
+    for (const folder of sharedFolders) inner += renderKmlFolderNode(folder, 0);
+    html += renderFolderGroupToggle('kml-shared', 'fa-share-alt', '共有フォルダ', inner);
   }
-  for (const folder of personalFolders) {
-    html += renderKmlFolderNode(folder, 0);
+
+  // 4. Personal folders (own, not public, not shared, not org)
+  const personalFolders = topFolders.filter(f => !f.organization_id && !f.is_public && !f.is_shared && f.is_owner);
+  if (personalFolders.length > 0 || currentUser) {
+    let inner = '';
+    for (const folder of personalFolders) inner += renderKmlFolderNode(folder, 0);
+    if (personalFolders.length === 0) inner = '<p style="font-size:12px;color:#999;padding:4px;">フォルダがありません</p>';
+    html += renderFolderGroupToggle('kml-personal', 'fa-user', '個人フォルダ', inner);
   }
 
   return html;
@@ -957,7 +1000,7 @@ function showKmlFolderModal() {
 
 function populateKmlFolderSelect(selectId, selectedId) {
   const sel = document.getElementById(selectId);
-  sel.innerHTML = '<option value="">-- なし --</option>';
+  sel.innerHTML = '<option value="">-- 個人フォルダ --</option>';
   function addOptions(parentId, depth) {
     const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
     for (const f of children) {
@@ -1853,7 +1896,15 @@ function renderPinFolderList() {
   let html = '';
   const topFolders = folders.filter(f => !f.parent_id);
 
-  // Organization folders first (grouped by org)
+  // 1. Public folders
+  const publicFolders = topFolders.filter(f => !f.organization_id && f.is_public);
+  if (publicFolders.length > 0) {
+    let inner = '';
+    for (const folder of publicFolders) inner += renderFolderNode(folder, folderPins, 0);
+    html += renderFolderGroupToggle('pin-public', 'fa-globe', '公開フォルダ', inner);
+  }
+
+  // 2. Organization folders (grouped by org)
   const orgFolders = topFolders.filter(f => f.organization_id);
   const orgMap = {};
   for (const f of orgFolders) {
@@ -1864,34 +1915,39 @@ function renderPinFolderList() {
   }
   for (const orgId of Object.keys(orgMap)) {
     const g = orgMap[orgId];
-    html += `<div class="folder-group-header"><i class="fas fa-building"></i> ${escHtml(g.name)}</div>`;
-    for (const folder of g.folders) {
-      html += renderFolderNode(folder, folderPins, 0);
+    let inner = '';
+    for (const folder of g.folders) inner += renderFolderNode(folder, folderPins, 0);
+    html += renderFolderGroupToggle('pin-org-' + orgId, 'fa-building', g.name, inner);
+  }
+
+  // 3. Shared folders
+  const sharedFolders = topFolders.filter(f => !f.organization_id && !f.is_public && f.is_shared);
+  if (sharedFolders.length > 0) {
+    let inner = '';
+    for (const folder of sharedFolders) inner += renderFolderNode(folder, folderPins, 0);
+    html += renderFolderGroupToggle('pin-shared', 'fa-share-alt', '共有フォルダ', inner);
+  }
+
+  // 4. Personal folders
+  const personalFolders = topFolders.filter(f => !f.organization_id && !f.is_public && !f.is_shared && f.is_owner);
+  if (personalFolders.length > 0 || noFolderPins.length > 0 || currentUser) {
+    let inner = '';
+    // "すべて" for pins without folder
+    if (noFolderPins.length > 0) {
+      inner += `<div class="pin-folder-section">
+        <div class="folder-name-row">すべて <span class="folder-count">(${noFolderPins.length})</span></div>
+        <div class="pin-folder-header" onclick="togglePinFolder('all')">
+          <i class="fas fa-chevron-right toggle-icon"></i>
+          <i class="fas fa-folder folder-icon"></i>
+        </div>
+        <div class="pin-folder-content" id="pin-folder-all">
+          ${noFolderPins.map(p => renderPinItem(p)).join('')}
+        </div>
+      </div>`;
     }
-  }
-
-  // Personal folders
-  const personalFolders = topFolders.filter(f => !f.organization_id);
-  if (personalFolders.length > 0 && orgFolders.length > 0) {
-    html += '<div class="folder-group-header"><i class="fas fa-user"></i> 個人フォルダ</div>';
-  }
-
-  // "すべて" folder for pins without folder
-  if (noFolderPins.length > 0) {
-    html += `<div class="pin-folder-section">
-      <div class="folder-name-row">すべて <span class="folder-count">(${noFolderPins.length})</span></div>
-      <div class="pin-folder-header" onclick="togglePinFolder('all')">
-        <i class="fas fa-chevron-right toggle-icon"></i>
-        <i class="fas fa-folder folder-icon"></i>
-      </div>
-      <div class="pin-folder-content" id="pin-folder-all">
-        ${noFolderPins.map(p => renderPinItem(p)).join('')}
-      </div>
-    </div>`;
-  }
-
-  for (const folder of personalFolders) {
-    html += renderFolderNode(folder, folderPins, 0);
+    for (const folder of personalFolders) inner += renderFolderNode(folder, folderPins, 0);
+    if (!inner) inner = '<p style="font-size:12px;color:#999;padding:4px;">フォルダがありません</p>';
+    html += renderFolderGroupToggle('pin-personal', 'fa-user', '個人フォルダ', inner);
   }
 
   if (html === '') {
@@ -2388,7 +2444,7 @@ async function moveKmlFile() {
 
 function populateFolderSelect(selectId, selectedId, includeNone) {
   const sel = document.getElementById(selectId);
-  sel.innerHTML = '<option value="">-- なし --</option>';
+  sel.innerHTML = '<option value="">-- 個人フォルダ --</option>';
 
   // First add owned folders
   function addOptions(parentId, depth, filterFn) {
