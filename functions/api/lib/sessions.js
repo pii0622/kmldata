@@ -32,6 +32,8 @@ export function parseDeviceName(userAgent) {
   return `${browser} on ${os}`;
 }
 
+const SESSION_INACTIVITY_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 export async function createSession(env, userId, request) {
   const sessionToken = generateSessionToken();
   const tokenHash = await hashSessionToken(sessionToken);
@@ -39,7 +41,7 @@ export async function createSession(env, userId, request) {
   const ipHash = await hashIP(ip);
   const userAgent = request.headers.get('User-Agent') || 'unknown';
   const deviceName = parseDeviceName(userAgent);
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + SESSION_INACTIVITY_MS).toISOString();
 
   await env.DB.prepare(
     `INSERT INTO sessions (user_id, session_token, ip_address, user_agent, device_name, expires_at)
@@ -60,9 +62,11 @@ export async function validateSession(env, sessionToken) {
   ).bind(tokenHash).first();
 
   if (session) {
+    // Sliding window: extend expiry on each activity (3 days from now)
+    const newExpiresAt = new Date(Date.now() + SESSION_INACTIVITY_MS).toISOString();
     env.DB.prepare(
-      `UPDATE sessions SET last_active_at = datetime('now') WHERE id = ?`
-    ).bind(session.id).run().catch(() => {});
+      `UPDATE sessions SET last_active_at = datetime('now'), expires_at = ? WHERE id = ?`
+    ).bind(newExpiresAt, session.id).run().catch(() => {});
   }
   return session;
 }

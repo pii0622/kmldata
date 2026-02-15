@@ -229,6 +229,53 @@ Fieldnota commons
   return await sendEmail(env, email, subject, htmlBody, textBody);
 }
 
+// Send password reset email
+export async function sendPasswordResetEmail(env, email, displayName, resetToken) {
+  const appUrl = 'https://fieldnota-commons.com';
+  const subject = 'パスワード再設定 - Fieldnota commons';
+
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h1 style="color: #4CAF50;">パスワード再設定</h1>
+  <p>${displayName || ''} 様</p>
+  <p>パスワード再設定のリクエストを受け付けました。</p>
+  <p>以下のリンクからパスワードを再設定してください：</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="${appUrl}?reset_token=${encodeURIComponent(resetToken)}"
+       style="background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+      パスワードを再設定する
+    </a>
+  </p>
+  <p style="color: #666; font-size: 14px;">
+    ※ このリンクは1時間有効です。<br>
+    ※ このメールに心当たりがない場合は、無視してください。
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+  <p style="color: #999; font-size: 12px;">Fieldnota commons</p>
+</body>
+</html>
+  `;
+
+  const textBody = `
+${displayName || ''} 様
+
+パスワード再設定のリクエストを受け付けました。
+
+以下のリンクからパスワードを再設定してください：
+${appUrl}?reset_token=${encodeURIComponent(resetToken)}
+
+※ このリンクは1時間有効です。
+※ このメールに心当たりがない場合は、無視してください。
+
+Fieldnota commons
+  `;
+
+  return await sendEmail(env, email, subject, htmlBody, textBody);
+}
+
 // Send rejection notification email
 export async function sendRejectionEmail(env, email, displayName, username) {
   const subject = 'アカウント申請について - Fieldnota commons';
