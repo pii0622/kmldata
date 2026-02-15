@@ -1436,28 +1436,38 @@ async function handleExternalMemberSync(request, env) {
 
     } else if (action === 'delete') {
       // Find user by multiple identifiers
-      let user = null;
+      let targetUser = null;
 
       if (stripe_customer_id) {
-        user = await env.DB.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
+        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
       }
 
-      if (!user && user_id) {
-        user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
+      if (!targetUser && user_id) {
+        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE id = ?').bind(user_id).first();
       }
 
-      if (!user && email) {
-        user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+      if (!targetUser && email) {
+        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE email = ?').bind(email).first();
       }
 
-      if (!user) {
+      if (!targetUser) {
         return json({ success: true, action: 'not_found' });
       }
 
-      // Delete user and all related data (cascades via foreign keys)
-      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();
+      // Cancel Stripe subscription if active
+      if (targetUser.stripe_subscription_id && env.STRIPE_SECRET_KEY) {
+        try {
+          await fetch(
+            `https://api.stripe.com/v1/subscriptions/${targetUser.stripe_subscription_id}`,
+            { method: 'DELETE', headers: { 'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}` } }
+          );
+        } catch (e) { console.error('Stripe cancel on WP delete error:', e); }
+      }
 
-      return json({ success: true, action: 'deleted', user_id: user.id });
+      // Soft-delete: clean up all user data and anonymize
+      await performAccountDeletion(env, targetUser.id, null);
+
+      return json({ success: true, action: 'deleted', user_id: targetUser.id });
 
     } else {
       return json({ error: 'Invalid action. Use "create" or "delete"' }, 400);
@@ -2333,91 +2343,116 @@ async function handleDeleteAccount(request, env, user) {
       return json({ error: 'データ削除への同意が必要です' }, 400);
     }
 
-    // Verify user exists
+    // Verify user exists and check membership source
     const dbUser = await env.DB.prepare(
-      'SELECT id FROM users WHERE id = ?'
+      'SELECT id, member_source, stripe_subscription_id FROM users WHERE id = ?'
     ).bind(user.id).first();
 
     if (!dbUser) {
       return json({ error: 'ユーザーが見つかりません' }, 404);
     }
 
-    // Delete user's R2 images (pin_images) - only personal pins, not org folder pins
-    try {
-      const userPins = await env.DB.prepare(
-        'SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))'
-      ).bind(user.id).all();
-      for (const pin of userPins.results) {
-        const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
-        for (const img of images.results) {
-          try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
-        }
-      }
-    } catch (e) { console.error('R2 pin image cleanup error:', e); }
+    // WordPress members cannot delete account directly
+    if (dbUser.member_source === 'wordpress') {
+      return json({ error: 'ワードプレス会員のアカウントは、ワードプレスの会員登録を解約すると自動的に削除されます。WordPress側で解約手続きを行ってください。' }, 400);
+    }
 
-    // Delete user's R2 files (kml_files) - only personal, not org folder files
-    try {
-      const userKmlFiles = await env.DB.prepare(
-        'SELECT r2_key FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))'
-      ).bind(user.id).all();
-      for (const f of userKmlFiles.results) {
-        try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
-      }
-    } catch (e) { console.error('R2 kml file cleanup error:', e); }
+    // Cancel Stripe subscription if active
+    if (dbUser.stripe_subscription_id && env.STRIPE_SECRET_KEY) {
+      try {
+        await fetch(
+          `https://api.stripe.com/v1/subscriptions/${dbUser.stripe_subscription_id}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+            }
+          }
+        );
+      } catch (e) { console.error('Stripe subscription cancel on delete error:', e); }
+    }
 
-    // Delete DB data owned by user (only personal data, not org folder content)
-    // Batch 1: Pin-related data (personal only)
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(user.id),
-      env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(user.id),
-      env.DB.prepare('DELETE FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))').bind(user.id),
-    ]);
-
-    // Batch 2: Folder-related data (personal only, not org folders)
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
-      env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
-      env.DB.prepare('DELETE FROM folders WHERE user_id = ? AND organization_id IS NULL').bind(user.id),
-    ]);
-
-    // Batch 3: KML-related data (personal only, not org folders)
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(user.id),
-      env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ? AND organization_id IS NULL').bind(user.id),
-    ]);
-
-    // Batch 4: User metadata + organization memberships
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM comment_read_status WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM passkey_challenges WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM verification_codes WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM organization_members WHERE user_id = ?').bind(user.id),
-      env.DB.prepare('DELETE FROM organization_invitations WHERE invited_by = ?').bind(user.id),
-    ]);
-
-    // Soft-delete: anonymize user row (keep for counting)
-    // password_hash uses placeholder (NOT NULL constraint)
-    await env.DB.prepare(
-      `UPDATE users SET
-        username = ?, display_name = ?, email = NULL,
-        password_hash = '', password_salt = NULL,
-        status = 'deleted', stripe_customer_id = NULL,
-        stripe_subscription_id = NULL, external_id = NULL
-      WHERE id = ?`
-    ).bind(`deleted_${user.id}`, `退会済みユーザー`, user.id).run();
-
-    await logSecurityEvent(env, 'account_deleted', user.id, request, {});
+    await performAccountDeletion(env, user.id, request);
 
     return json({ ok: true });
   } catch (err) {
     console.error('Delete account error:', err);
     return json({ error: 'Server error' }, 500);
   }
+}
+
+// Shared account deletion logic (used by handleDeleteAccount and WordPress member-sync delete)
+async function performAccountDeletion(env, userId, request) {
+  // Delete user's R2 images (pin_images) - only personal pins, not org folder pins
+  try {
+    const userPins = await env.DB.prepare(
+      'SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))'
+    ).bind(userId).all();
+    for (const pin of userPins.results) {
+      const images = await env.DB.prepare('SELECT r2_key FROM pin_images WHERE pin_id = ?').bind(pin.id).all();
+      for (const img of images.results) {
+        try { await env.R2.delete(img.r2_key); } catch (e) { /* ignore */ }
+      }
+    }
+  } catch (e) { console.error('R2 pin image cleanup error:', e); }
+
+  // Delete user's R2 files (kml_files) - only personal, not org folder files
+  try {
+    const userKmlFiles = await env.DB.prepare(
+      'SELECT r2_key FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))'
+    ).bind(userId).all();
+    for (const f of userKmlFiles.results) {
+      try { await env.R2.delete(f.r2_key); } catch (e) { /* ignore */ }
+    }
+  } catch (e) { console.error('R2 kml file cleanup error:', e); }
+
+  // Delete DB data owned by user (only personal data, not org folder content)
+  // Batch 1: Pin-related data (personal only)
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM pin_images WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(userId),
+    env.DB.prepare('DELETE FROM pin_comments WHERE pin_id IN (SELECT id FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL)))').bind(userId),
+    env.DB.prepare('DELETE FROM pins WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE organization_id IS NULL))').bind(userId),
+  ]);
+
+  // Batch 2: Folder-related data (personal only, not org folders)
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM folder_shares WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(userId),
+    env.DB.prepare('DELETE FROM folder_visibility WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ? AND organization_id IS NULL)').bind(userId),
+    env.DB.prepare('DELETE FROM folders WHERE user_id = ? AND organization_id IS NULL').bind(userId),
+  ]);
+
+  // Batch 3: KML-related data (personal only, not org folders)
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM kml_files WHERE user_id = ? AND (folder_id IS NULL OR folder_id IN (SELECT id FROM kml_folders WHERE organization_id IS NULL))').bind(userId),
+    env.DB.prepare('DELETE FROM kml_folder_shares WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(userId),
+    env.DB.prepare('DELETE FROM kml_folder_visibility WHERE kml_folder_id IN (SELECT id FROM kml_folders WHERE user_id = ? AND organization_id IS NULL)').bind(userId),
+    env.DB.prepare('DELETE FROM kml_folders WHERE user_id = ? AND organization_id IS NULL').bind(userId),
+  ]);
+
+  // Batch 4: User metadata + organization memberships
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM comment_read_status WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM passkey_challenges WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM verification_codes WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM organization_members WHERE user_id = ?').bind(userId),
+    env.DB.prepare('DELETE FROM organization_invitations WHERE invited_by = ?').bind(userId),
+  ]);
+
+  // Soft-delete: anonymize user row (keep for counting)
+  await env.DB.prepare(
+    `UPDATE users SET
+      username = ?, display_name = ?, email = NULL,
+      password_hash = '', password_salt = NULL,
+      status = 'deleted', stripe_customer_id = NULL,
+      stripe_subscription_id = NULL, external_id = NULL,
+      member_source = NULL, plan = 'free'
+    WHERE id = ?`
+  ).bind(`deleted_${userId}`, `退会済みユーザー`, userId).run();
+
+  await logSecurityEvent(env, 'account_deleted', userId, request, {});
 }
 
 // ==================== Session Management Handlers ====================
