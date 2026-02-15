@@ -2124,24 +2124,76 @@ function renderPinItem(pin) {
   </div>`;
 }
 
+let folderCreateOrgId = null;
+
 function showFolderModal() {
   document.getElementById('folder-name').value = '';
+  folderCreateOrgId = null;
+
+  // Build tabs: "マイフォルダ" + one tab per org the user belongs to
+  const tabsEl = document.getElementById('folder-create-tabs');
+  let tabsHtml = '<div class="tab active" onclick="switchFolderCreateTab(\'personal\')">マイフォルダ</div>';
+  for (const org of userOrganizations) {
+    tabsHtml += `<div class="tab" onclick="switchFolderCreateTab('org', ${org.id})">${escHtml(org.name)}</div>`;
+  }
+  tabsEl.innerHTML = tabsHtml;
+  // Hide tabs row if no orgs
+  tabsEl.style.display = userOrganizations.length > 0 ? '' : 'none';
+
   populateFolderSelect('folder-parent', null, true);
   openModal('modal-folder');
+}
+
+function switchFolderCreateTab(type, orgId) {
+  folderCreateOrgId = type === 'org' ? orgId : null;
+
+  // Update active tab
+  document.querySelectorAll('#folder-create-tabs .tab').forEach(t => t.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+
+  const parentGroup = document.getElementById('folder-parent-group');
+  const sel = document.getElementById('folder-parent');
+
+  if (type === 'personal') {
+    parentGroup.style.display = '';
+    populateFolderSelect('folder-parent', null, true);
+  } else {
+    // Show only org folders as parent options
+    parentGroup.style.display = '';
+    sel.innerHTML = `<option value="">-- ${escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体')}のルート --</option>`;
+    function addOrgFolderOptions(parentId, depth) {
+      const children = folders.filter(f => (f.parent_id || null) === parentId && f.organization_id === orgId);
+      for (const f of children) {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+        sel.appendChild(opt);
+        addOrgFolderOptions(f.id, depth + 1);
+      }
+    }
+    addOrgFolderOptions(null, 0);
+  }
 }
 
 async function createFolder() {
   const name = document.getElementById('folder-name').value.trim();
   if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
 
+  const parentId = document.getElementById('folder-parent').value || null;
+
   try {
-    await api('/api/folders', {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        parent_id: document.getElementById('folder-parent').value || null
-      })
-    });
+    if (folderCreateOrgId) {
+      // Create as organization folder
+      await api(`/api/organizations/${folderCreateOrgId}/folders`, {
+        method: 'POST',
+        body: JSON.stringify({ name, parent_id: parentId })
+      });
+    } else {
+      await api('/api/folders', {
+        method: 'POST',
+        body: JSON.stringify({ name, parent_id: parentId })
+      });
+    }
     closeModal('modal-folder');
     notify('フォルダを作成しました');
     await loadFolders();
