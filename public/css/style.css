@@ -129,6 +129,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino San
 }
 .modal-overlay.active { display: flex; }
 #modal-register-success { z-index: 6000; } /* Above login screen */
+#modal-forgot-password { z-index: 6000; }
+#modal-reset-password { z-index: 6000; }
 .modal {
   background: white; border-radius: 8px; padding: 24px;
   max-width: 450px; width: 90%; max-height: 85vh; overflow-y: auto;
