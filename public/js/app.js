@@ -990,19 +990,65 @@ function displayKmlFile(file) {
   kmlLayers[file.id] = layer;
 }
 
+let kmlFolderCreateOrgId = null;
+
 function showKmlFolderModal() {
   document.getElementById('kml-folder-name').value = '';
   document.getElementById('kml-folder-public').checked = false;
-  document.getElementById('kml-folder-public').parentElement.style.display = currentUser?.is_admin ? '' : 'none';
+  kmlFolderCreateOrgId = null;
+
+  // Build tabs: "マイフォルダ" + one tab per org the user is admin of
+  const tabsEl = document.getElementById('kml-folder-create-tabs');
+  let tabsHtml = '<div class="tab active" onclick="switchKmlFolderCreateTab(\'personal\')">マイフォルダ</div>';
+  const adminOrgs = userOrganizations.filter(o => o.role === 'admin');
+  for (const org of adminOrgs) {
+    tabsHtml += `<div class="tab" onclick="switchKmlFolderCreateTab('org', ${org.id})">${escHtml(org.name)}</div>`;
+  }
+  tabsEl.innerHTML = tabsHtml;
+  tabsEl.style.display = adminOrgs.length > 0 ? '' : 'none';
+
+  document.getElementById('kml-folder-public-group').style.display = currentUser?.is_admin ? '' : 'none';
   populateKmlFolderSelect('kml-folder-parent', null);
   openModal('modal-kml-folder');
+}
+
+function switchKmlFolderCreateTab(type, orgId) {
+  kmlFolderCreateOrgId = type === 'org' ? orgId : null;
+
+  document.querySelectorAll('#kml-folder-create-tabs .tab').forEach(t => t.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+
+  const parentGroup = document.getElementById('kml-folder-parent-group');
+  const publicGroup = document.getElementById('kml-folder-public-group');
+  const sel = document.getElementById('kml-folder-parent');
+
+  if (type === 'personal') {
+    parentGroup.style.display = '';
+    publicGroup.style.display = currentUser?.is_admin ? '' : 'none';
+    populateKmlFolderSelect('kml-folder-parent', null);
+  } else {
+    parentGroup.style.display = '';
+    publicGroup.style.display = 'none';
+    sel.innerHTML = `<option value="">-- ${escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体')}のルート --</option>`;
+    function addOrgKmlFolderOptions(parentId, depth) {
+      const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && f.organization_id === orgId);
+      for (const f of children) {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+        sel.appendChild(opt);
+        addOrgKmlFolderOptions(f.id, depth + 1);
+      }
+    }
+    addOrgKmlFolderOptions(null, 0);
+  }
 }
 
 function populateKmlFolderSelect(selectId, selectedId) {
   const sel = document.getElementById(selectId);
   sel.innerHTML = '<option value="">-- 個人フォルダ --</option>';
   function addOptions(parentId, depth) {
-    const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && f.is_owner);
+    const children = kmlFolders.filter(f => (f.parent_id || null) === parentId && !f.organization_id && f.is_owner);
     for (const f of children) {
       const opt = document.createElement('option');
       opt.value = f.id;
@@ -1020,14 +1066,24 @@ async function createKmlFolder() {
   if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
 
   try {
-    await api('/api/kml-folders', {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        parent_id: document.getElementById('kml-folder-parent').value || null,
-        is_public: document.getElementById('kml-folder-public').checked
-      })
-    });
+    if (kmlFolderCreateOrgId) {
+      await api(`/api/organizations/${kmlFolderCreateOrgId}/kml-folders`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          parent_id: document.getElementById('kml-folder-parent').value || null
+        })
+      });
+    } else {
+      await api('/api/kml-folders', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          parent_id: document.getElementById('kml-folder-parent').value || null,
+          is_public: document.getElementById('kml-folder-public').checked
+        })
+      });
+    }
     closeModal('modal-kml-folder');
     notify('KMLフォルダを作成しました');
     await loadKmlFolders();
@@ -2130,15 +2186,16 @@ function showFolderModal() {
   document.getElementById('folder-name').value = '';
   folderCreateOrgId = null;
 
-  // Build tabs: "マイフォルダ" + one tab per org the user belongs to
+  // Build tabs: "マイフォルダ" + one tab per org the user is admin of
   const tabsEl = document.getElementById('folder-create-tabs');
   let tabsHtml = '<div class="tab active" onclick="switchFolderCreateTab(\'personal\')">マイフォルダ</div>';
-  for (const org of userOrganizations) {
+  const adminOrgs = userOrganizations.filter(o => o.role === 'admin');
+  for (const org of adminOrgs) {
     tabsHtml += `<div class="tab" onclick="switchFolderCreateTab('org', ${org.id})">${escHtml(org.name)}</div>`;
   }
   tabsEl.innerHTML = tabsHtml;
-  // Hide tabs row if no orgs
-  tabsEl.style.display = userOrganizations.length > 0 ? '' : 'none';
+  // Hide tabs row if no admin orgs
+  tabsEl.style.display = adminOrgs.length > 0 ? '' : 'none';
 
   populateFolderSelect('folder-parent', null, true);
   openModal('modal-folder');
@@ -2152,32 +2209,26 @@ function switchFolderCreateTab(type, orgId) {
   event.currentTarget.classList.add('active');
 
   const parentGroup = document.getElementById('folder-parent-group');
-  const nameGroup = document.getElementById('folder-name').closest('.form-group');
-  const actions = document.querySelector('#modal-folder .modal-actions');
-  const msgEl = document.getElementById('folder-org-message');
+  const sel = document.getElementById('folder-parent');
 
   if (type === 'personal') {
     parentGroup.style.display = '';
-    nameGroup.style.display = '';
-    actions.style.display = '';
-    if (msgEl) msgEl.style.display = 'none';
     populateFolderSelect('folder-parent', null, true);
   } else {
-    // Org tab — show message, hide form
-    const orgName = escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体');
-    parentGroup.style.display = 'none';
-    nameGroup.style.display = 'none';
-    actions.style.display = 'none';
-    if (msgEl) {
-      msgEl.textContent = `${orgName}フォルダは管理画面から追加してください`;
-      msgEl.style.display = '';
-    } else {
-      const msg = document.createElement('p');
-      msg.id = 'folder-org-message';
-      msg.style.cssText = 'text-align:center;color:#666;padding:24px 0;';
-      msg.textContent = `${orgName}フォルダは管理画面から追加してください`;
-      parentGroup.parentNode.insertBefore(msg, actions);
+    // Show only org folders as parent options
+    parentGroup.style.display = '';
+    sel.innerHTML = `<option value="">-- ${escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体')}のルート --</option>`;
+    function addOrgFolderOptions(parentId, depth) {
+      const children = folders.filter(f => (f.parent_id || null) === parentId && f.organization_id === orgId);
+      for (const f of children) {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
+        sel.appendChild(opt);
+        addOrgFolderOptions(f.id, depth + 1);
+      }
     }
+    addOrgFolderOptions(null, 0);
   }
 }
 
@@ -2189,13 +2240,16 @@ async function createFolder() {
 
   try {
     if (folderCreateOrgId) {
-      notify('団体フォルダは管理画面から追加してください', 'error');
-      return;
+      await api(`/api/organizations/${folderCreateOrgId}/folders`, {
+        method: 'POST',
+        body: JSON.stringify({ name, parent_id: parentId })
+      });
+    } else {
+      await api('/api/folders', {
+        method: 'POST',
+        body: JSON.stringify({ name, parent_id: parentId })
+      });
     }
-    await api('/api/folders', {
-      method: 'POST',
-      body: JSON.stringify({ name, parent_id: parentId })
-    });
     closeModal('modal-folder');
     notify('フォルダを作成しました');
     await loadFolders();
@@ -3975,23 +4029,14 @@ async function showOrgDetail(orgId) {
   document.getElementById('org-map-zoom').value = org.map_zoom ?? '';
 
   // Show/hide admin-only tabs
-  const settingsTab = document.querySelector('#modal-org-detail .tab:nth-child(4)');
   const inviteTab = document.querySelector('#modal-org-detail .tab:nth-child(2)');
-  const foldersTab = document.querySelector('#modal-org-detail .tab:nth-child(3)');
+  const settingsTab = document.querySelector('#modal-org-detail .tab:nth-child(3)');
   if (org.role !== 'admin') {
-    settingsTab.style.display = 'none';
     inviteTab.style.display = 'none';
-    foldersTab.style.display = 'none';
+    settingsTab.style.display = 'none';
   } else {
-    settingsTab.style.display = '';
     inviteTab.style.display = '';
-    foldersTab.style.display = '';
-  }
-
-  // Show leave button for all members (server-side check prevents last admin from leaving)
-  const leaveBtn = document.getElementById('org-leave-btn');
-  if (leaveBtn) {
-    leaveBtn.style.display = '';
+    settingsTab.style.display = '';
   }
 
   closeModal('modal-org');
@@ -4001,7 +4046,7 @@ async function showOrgDetail(orgId) {
 }
 
 function switchOrgDetailTab(tab) {
-  const tabs = ['members', 'invite', 'folders', 'settings'];
+  const tabs = ['members', 'invite', 'settings'];
   document.querySelectorAll('#modal-org-detail .tab').forEach(t => t.classList.remove('active'));
   const idx = tabs.indexOf(tab);
   if (idx >= 0) {
@@ -4012,7 +4057,6 @@ function switchOrgDetailTab(tab) {
     if (el) el.style.display = t === tab ? '' : 'none';
   });
   if (tab === 'invite') loadOrgInvitations(currentOrgId);
-  if (tab === 'folders') loadOrgFolders(currentOrgId);
 }
 
 async function loadOrgMembers(orgId) {
@@ -4140,61 +4184,6 @@ async function cancelOrgInvitation(invitationId) {
     await api(`/api/organizations/invitations/${invitationId}`, { method: 'DELETE' });
     notify('招待を取り消しました');
     await loadOrgInvitations(currentOrgId);
-  } catch (err) { notify(err.message, 'error'); }
-}
-
-async function loadOrgFolders(orgId) {
-  const listEl = document.getElementById('org-folders-list');
-  listEl.innerHTML = '<p style="color:#999;">読み込み中...</p>';
-
-  const orgPinFolders = folders.filter(f => f.organization_id === parseInt(orgId));
-  const orgKmlFolders_ = kmlFolders.filter(f => f.organization_id === parseInt(orgId));
-
-  let html = '';
-  if (orgPinFolders.length === 0 && orgKmlFolders_.length === 0) {
-    html = '<p style="color:#999;">フォルダはありません</p>';
-  } else {
-    if (orgPinFolders.length > 0) {
-      html += '<div class="section-title" style="font-size:12px;">ピンフォルダ</div>';
-      for (const f of orgPinFolders) {
-        html += `<div style="padding:4px 8px;font-size:13px;"><i class="fas fa-folder" style="color:#f39c12;margin-right:4px;"></i> ${escHtml(f.name)}</div>`;
-      }
-    }
-    if (orgKmlFolders_.length > 0) {
-      html += '<div class="section-title" style="font-size:12px;">KMLフォルダ</div>';
-      for (const f of orgKmlFolders_) {
-        html += `<div style="padding:4px 8px;font-size:13px;"><i class="fas fa-folder" style="color:#3498db;margin-right:4px;"></i> ${escHtml(f.name)}</div>`;
-      }
-    }
-  }
-  listEl.innerHTML = html;
-}
-
-let orgFolderType = null;
-
-function showCreateOrgFolderModal(type) {
-  orgFolderType = type;
-  document.getElementById('org-folder-name').value = '';
-  openModal('modal-org-folder');
-}
-
-async function createOrgFolder() {
-  const name = document.getElementById('org-folder-name').value.trim();
-  if (!name) { notify('フォルダ名を入力してください', 'error'); return; }
-  try {
-    const endpoint = orgFolderType === 'kml'
-      ? `/api/organizations/${currentOrgId}/kml-folders`
-      : `/api/organizations/${currentOrgId}/folders`;
-    await api(endpoint, {
-      method: 'POST',
-      body: JSON.stringify({ name })
-    });
-    closeModal('modal-org-folder');
-    notify('フォルダを作成しました');
-    // Reload folders from backend
-    await Promise.all([loadKmlFolders(), loadFolders()]);
-    renderSidebar();
-    loadOrgFolders(currentOrgId);
   } catch (err) { notify(err.message, 'error'); }
 }
 
