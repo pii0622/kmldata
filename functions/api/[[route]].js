@@ -3081,6 +3081,7 @@ async function handleCreateFolder(request, env, user) {
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
   let orgId = null;
+  let parentPublic = null;
 
   if (parent_id) {
     // Check if parent is an org folder — if so, inherit organization_id
@@ -3093,6 +3094,7 @@ async function handleCreateFolder(request, env, user) {
         return json({ error: '団体管理者権限が必要です' }, 403);
       }
       orgId = parent.organization_id;
+      parentPublic = parent.is_public;
     } else {
       // Personal folder — verify ownership
       if (parent.user_id !== user.id && !user.is_admin) {
@@ -3109,7 +3111,8 @@ async function handleCreateFolder(request, env, user) {
     }
   }
 
-  const publicFlag = user.is_admin && is_public ? 1 : 0;
+  // Org subfolder: inherit parent's is_public; otherwise admin-only control
+  const publicFlag = orgId && parentPublic !== null ? (parentPublic ? 1 : 0) : (user.is_admin && is_public ? 1 : 0);
   const iconVal = pin_icon || 'fa-map-pin';
   const colorVal = pin_color || '#1a73e8';
   const result = await env.DB.prepare(
@@ -5003,17 +5006,19 @@ async function handleCreateOrgFolder(request, env, user, orgId) {
   const { name, parent_id } = await getRequestBody(request);
   if (!name) return json({ error: 'フォルダ名を入力してください' }, 400);
 
+  let publicFlag = 0;
   if (parent_id) {
     const parent = await env.DB.prepare('SELECT * FROM folders WHERE id = ? AND organization_id = ?')
       .bind(parent_id, orgId).first();
     if (!parent) return json({ error: '親フォルダが見つかりません' }, 404);
+    publicFlag = parent.is_public ? 1 : 0;
   }
 
   const result = await env.DB.prepare(
-    'INSERT INTO folders (name, parent_id, user_id, organization_id, is_public) VALUES (?, ?, ?, ?, 0)'
-  ).bind(name, parent_id || null, user.id, orgId).run();
+    'INSERT INTO folders (name, parent_id, user_id, organization_id, is_public) VALUES (?, ?, ?, ?, ?)'
+  ).bind(name, parent_id || null, user.id, orgId, publicFlag).run();
 
-  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, organization_id: parseInt(orgId) });
+  return json({ id: result.meta.last_row_id, name, parent_id: parent_id || null, user_id: user.id, organization_id: parseInt(orgId), is_public: publicFlag });
 }
 
 async function handleCreateOrgKmlFolder(request, env, user, orgId) {
