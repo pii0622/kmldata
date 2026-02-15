@@ -4028,15 +4028,15 @@ async function showOrgDetail(orgId) {
   document.getElementById('org-map-lng').value = org.map_center_lng ?? '';
   document.getElementById('org-map-zoom').value = org.map_zoom ?? '';
 
-  // Show/hide admin-only tabs
+  // Show/hide admin-only tabs and controls
   const inviteTab = document.querySelector('#modal-org-detail .tab:nth-child(2)');
-  const settingsTab = document.querySelector('#modal-org-detail .tab:nth-child(3)');
+  const adminSettings = document.getElementById('org-admin-settings');
   if (org.role !== 'admin') {
     inviteTab.style.display = 'none';
-    settingsTab.style.display = 'none';
+    adminSettings.style.display = 'none';
   } else {
     inviteTab.style.display = '';
-    settingsTab.style.display = '';
+    adminSettings.style.display = '';
   }
 
   closeModal('modal-org');
