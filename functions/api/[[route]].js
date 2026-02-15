@@ -1439,35 +1439,37 @@ async function handleExternalMemberSync(request, env) {
       let targetUser = null;
 
       if (stripe_customer_id) {
-        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
+        targetUser = await env.DB.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').bind(stripe_customer_id).first();
       }
 
       if (!targetUser && user_id) {
-        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE id = ?').bind(user_id).first();
+        targetUser = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(user_id).first();
       }
 
       if (!targetUser && email) {
-        targetUser = await env.DB.prepare('SELECT id, stripe_subscription_id FROM users WHERE email = ?').bind(email).first();
+        targetUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
       }
 
       if (!targetUser) {
         return json({ success: true, action: 'not_found' });
       }
 
-      // Cancel Stripe subscription if active
-      if (targetUser.stripe_subscription_id && env.STRIPE_SECRET_KEY) {
-        try {
-          await fetch(
-            `https://api.stripe.com/v1/subscriptions/${targetUser.stripe_subscription_id}`,
-            { method: 'DELETE', headers: { 'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}` } }
-          );
-        } catch (e) { console.error('Stripe cancel on WP delete error:', e); }
+      // Downgrade to free plan (keep account and data)
+      await env.DB.prepare(
+        'UPDATE users SET plan = ?, member_source = NULL WHERE id = ?'
+      ).bind('free', targetUser.id).run();
+
+      // Remove from auto-joined organizations
+      if (org_name) {
+        const org = await env.DB.prepare('SELECT id FROM organizations WHERE name = ?').bind(org_name).first();
+        if (org) {
+          await env.DB.prepare(
+            'DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?'
+          ).bind(org.id, targetUser.id).run();
+        }
       }
 
-      // Soft-delete: clean up all user data and anonymize
-      await performAccountDeletion(env, targetUser.id, null);
-
-      return json({ success: true, action: 'deleted', user_id: targetUser.id });
+      return json({ success: true, action: 'downgraded', user_id: targetUser.id });
 
     } else {
       return json({ error: 'Invalid action. Use "create" or "delete"' }, 400);
@@ -2354,7 +2356,7 @@ async function handleDeleteAccount(request, env, user) {
 
     // WordPress members cannot delete account directly
     if (dbUser.member_source === 'wordpress') {
-      return json({ error: 'ワードプレス会員のアカウントは、ワードプレスの会員登録を解約すると自動的に削除されます。WordPress側で解約手続きを行ってください。' }, 400);
+      return json({ error: 'ワードプレス会員は、WordPress側で解約手続きを行ってください。解約後は無料プランに切り替わります。' }, 400);
     }
 
     // Cancel Stripe subscription if active
