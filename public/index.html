@@ -64,6 +64,51 @@
       <p class="login-toggle">
         <a href="#" id="login-toggle-link" onclick="toggleLoginMode(event)">アカウントを作成</a>
       </p>
+      <p class="login-toggle" id="login-forgot-password">
+        <a href="#" onclick="showForgotPassword(event)">パスワードを忘れた方</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Forgot Password Modal -->
+<div class="modal-overlay" id="modal-forgot-password">
+  <div class="modal" style="max-width:400px;">
+    <h3><i class="fas fa-key"></i> パスワード再設定</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:16px;">登録済みのメールアドレスを入力してください。パスワード再設定用のリンクをお送りします。</p>
+    <div class="form-group">
+      <label>メールアドレス</label>
+      <input type="email" id="forgot-password-email" placeholder="your@email.com">
+    </div>
+    <div id="forgot-password-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div id="forgot-password-success" style="color:#28a745;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-forgot-password')">閉じる</button>
+      <button class="btn btn-primary" id="forgot-password-submit" onclick="submitForgotPassword()">送信</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal-overlay" id="modal-reset-password">
+  <div class="modal" style="max-width:400px;">
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:48px;color:#4CAF50;margin-bottom:12px;"><i class="fas fa-lock"></i></div>
+      <h3>新しいパスワードを設定</h3>
+    </div>
+    <div class="form-group">
+      <label>新しいパスワード</label>
+      <input type="password" id="reset-password-new" placeholder="12文字以上">
+    </div>
+    <div class="form-group">
+      <label>新しいパスワード（確認）</label>
+      <input type="password" id="reset-password-confirm" placeholder="もう一度入力">
+    </div>
+    <div id="reset-password-error" style="color:#dc3545;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div id="reset-password-success" style="color:#28a745;font-size:13px;margin-bottom:8px;display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-reset-password')">閉じる</button>
+      <button class="btn btn-primary" id="reset-password-submit" onclick="submitResetPassword()">パスワードを再設定</button>
     </div>
   </div>
 </div>

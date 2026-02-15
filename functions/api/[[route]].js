@@ -26,7 +26,7 @@ import {
   parseAuthenticatorData, coseKeyToCryptoKey, verifyWebAuthnSignature,
   derToRaw, getRelyingPartyId,
   // email
-  sendEmail, sendExternalWelcomeEmail, sendOrgInvitationEmail, sendOrgAddedNotificationEmail
+  sendEmail, sendExternalWelcomeEmail, sendOrgInvitationEmail, sendOrgAddedNotificationEmail, sendPasswordResetEmail
 } from './lib/index.js';
 
 // Content Security Policy for HTML responses
@@ -265,6 +265,16 @@ async function ensureTablesExist(env) {
         code TEXT NOT NULL,
         purpose TEXT NOT NULL,
         expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`),
+      // Password reset tokens
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        expires_at TEXT NOT NULL,
+        used INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`)
@@ -577,6 +587,23 @@ export async function onRequest(context) {
     if (path === '/auth/delete-account' && method === 'POST') {
       if (!user) return json({ error: 'ログインが必要です' }, 401);
       return await handleDeleteAccount(request, env, user);
+    }
+    // Password reset routes (no auth required)
+    if (path === '/auth/request-password-reset' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordChange');
+      if (!rateCheck.allowed) {
+        return json({ error: '試行回数が多すぎます。しばらくしてから再試行してください。' }, 429);
+      }
+      return await handleRequestPasswordReset(request, env);
+    }
+    if (path === '/auth/reset-password' && method === 'POST') {
+      const ip = getClientIP(request);
+      const rateCheck = await checkRateLimit(env, ip, 'passwordChange');
+      if (!rateCheck.allowed) {
+        return json({ error: '試行回数が多すぎます。しばらくしてから再試行してください。' }, 429);
+      }
+      return await handleResetPassword(request, env);
     }
 
     // Session management routes
@@ -1057,7 +1084,7 @@ async function handleTokenRefresh(env, user, request) {
   return json(
     { ok: true },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -1149,7 +1176,7 @@ async function handleRegister(request, env) {
     return json(
       { id: userId, username, display_name: actualDisplayName, is_admin: false, org_joined: org?.name },
       200,
-      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
     );
   }
 
@@ -1214,7 +1241,7 @@ async function handleLogin(request, env) {
   return json(
     { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -1225,6 +1252,78 @@ async function handleLogout(env, user, request) {
     await logSecurityEvent(env, 'logout', user.id, request, {});
   }
   return json({ ok: true }, 200, { 'Set-Cookie': setCookieHeader('auth', '', { maxAge: 0 }) });
+}
+
+// Password reset - request reset link
+async function handleRequestPasswordReset(request, env) {
+  const { email } = await getRequestBody(request);
+  if (!email || !isValidEmail(email)) {
+    return json({ error: '有効なメールアドレスを入力してください' }, 400);
+  }
+
+  const user = await env.DB.prepare('SELECT id, display_name, username, status FROM users WHERE email = ?')
+    .bind(email.trim()).first();
+
+  // Always return success to prevent email enumeration
+  if (!user || user.status === 'pending' || user.status === 'rejected') {
+    return json({ ok: true, message: 'メールアドレスが登録されている場合、再設定リンクを送信しました。' });
+  }
+
+  // Generate secure token
+  const resetToken = generateSessionToken();
+  const tokenHash = await hashSessionToken(resetToken);
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+
+  // Invalidate any existing reset tokens for this user
+  await env.DB.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0')
+    .bind(user.id).run();
+
+  // Store hashed token
+  await env.DB.prepare(
+    'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)'
+  ).bind(user.id, tokenHash, expiresAt).run();
+
+  // Send email
+  await sendPasswordResetEmail(env, email.trim(), user.display_name || user.username, resetToken);
+  await logSecurityEvent(env, 'password_reset_requested', user.id, request, {});
+
+  return json({ ok: true, message: 'メールアドレスが登録されている場合、再設定リンクを送信しました。' });
+}
+
+// Password reset - set new password with token
+async function handleResetPassword(request, env) {
+  const { token, new_password } = await getRequestBody(request);
+  if (!token || !new_password) {
+    return json({ error: 'トークンと新しいパスワードを入力してください' }, 400);
+  }
+  if (new_password.length < 12) {
+    return json({ error: 'パスワードは12文字以上にしてください' }, 400);
+  }
+
+  const tokenHash = await hashSessionToken(token);
+  const resetRecord = await env.DB.prepare(
+    "SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used = 0 AND datetime(expires_at) > datetime('now')"
+  ).bind(tokenHash).first();
+
+  if (!resetRecord) {
+    return json({ error: 'リンクが無効または有効期限切れです。もう一度パスワード再設定をリクエストしてください。' }, 400);
+  }
+
+  // Mark token as used
+  await env.DB.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?')
+    .bind(resetRecord.id).run();
+
+  // Update password
+  const { hash, salt } = await hashPassword(new_password);
+  await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+    .bind(hash, salt, resetRecord.user_id).run();
+
+  // Revoke all existing sessions
+  await revokeAllUserSessions(env, resetRecord.user_id);
+
+  await logSecurityEvent(env, 'password_reset_completed', resetRecord.user_id, request, {});
+
+  return json({ ok: true, message: 'パスワードを再設定しました。新しいパスワードでログインしてください。' });
 }
 
 // External Member Sync API Handler (for WordPress/Stripe integration)
@@ -1480,7 +1579,7 @@ async function handleSetupPassword(request, env) {
         user: { id: user.id, username: username, display_name: actualDisplayName, is_admin: !!user.is_admin }
       },
       200,
-      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
     );
   } catch (err) {
     console.error('Account setup error:', err);
@@ -2188,7 +2287,7 @@ async function handleUpdateProfile(request, env, user) {
   return json(
     { ok: true, display_name: display_name },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -4498,7 +4597,7 @@ async function handlePasskeyLoginVerify(request, env) {
       is_admin: !!passkey.is_admin
     },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 

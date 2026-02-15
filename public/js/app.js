@@ -92,7 +92,7 @@ async function api(url, opts = {}, isRetry = false) {
   }
   // Auto-refresh token on 401 (expired JWT)
   // Skip refresh for login/register/refresh endpoints to avoid loops
-  const skipRefreshPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/setup-password'];
+  const skipRefreshPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/setup-password', '/auth/request-password-reset', '/auth/reset-password'];
   const shouldSkipRefresh = skipRefreshPaths.some(p => url.includes(p));
   if (res.status === 401 && !isRetry && !shouldSkipRefresh) {
     const refreshed = await tryRefreshToken();
@@ -241,6 +241,7 @@ function toggleLoginMode(e) {
   document.getElementById('login-toggle-link').textContent = loginMode === 'login' ? 'アカウントを作成' : 'ログインする';
   document.getElementById('login-username').placeholder = loginMode === 'register' ? 'Taro Yamada' : 'ユーザー名';
   document.querySelector('#login-form .form-group:first-child label').textContent = loginMode === 'register' ? 'User Name (Full Name)' : 'ユーザー名';
+  document.getElementById('login-forgot-password').style.display = loginMode === 'login' ? '' : 'none';
   document.getElementById('login-error').classList.remove('show');
 }
 
@@ -488,6 +489,97 @@ async function submitPasswordSetup() {
   }
 }
 
+// Password reset flow
+function showForgotPassword(e) {
+  if (e) e.preventDefault();
+  document.getElementById('forgot-password-email').value = '';
+  document.getElementById('forgot-password-error').style.display = 'none';
+  document.getElementById('forgot-password-success').style.display = 'none';
+  document.getElementById('forgot-password-submit').disabled = false;
+  openModal('modal-forgot-password');
+}
+
+async function submitForgotPassword() {
+  const email = document.getElementById('forgot-password-email').value.trim();
+  const errEl = document.getElementById('forgot-password-error');
+  const successEl = document.getElementById('forgot-password-success');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  if (!email) {
+    errEl.textContent = 'メールアドレスを入力してください';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    document.getElementById('forgot-password-submit').disabled = true;
+    const result = await api('/api/auth/request-password-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+    successEl.textContent = result.message || '再設定リンクを送信しました。メールをご確認ください。';
+    successEl.style.display = 'block';
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    document.getElementById('forgot-password-submit').disabled = false;
+  }
+}
+
+let pendingResetToken = null;
+
+function checkPasswordReset() {
+  const params = new URLSearchParams(window.location.search);
+  const resetToken = params.get('reset_token');
+  if (resetToken) {
+    pendingResetToken = resetToken;
+    document.getElementById('reset-password-new').value = '';
+    document.getElementById('reset-password-confirm').value = '';
+    document.getElementById('reset-password-error').style.display = 'none';
+    document.getElementById('reset-password-success').style.display = 'none';
+    document.getElementById('reset-password-submit').disabled = false;
+    openModal('modal-reset-password');
+  }
+}
+
+async function submitResetPassword() {
+  const newPassword = document.getElementById('reset-password-new').value;
+  const confirmPassword = document.getElementById('reset-password-confirm').value;
+  const errEl = document.getElementById('reset-password-error');
+  const successEl = document.getElementById('reset-password-success');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  if (!newPassword || newPassword.length < 12) {
+    errEl.textContent = 'パスワードは12文字以上にしてください';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    errEl.textContent = 'パスワードが一致しません';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    document.getElementById('reset-password-submit').disabled = true;
+    const result = await api('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token: pendingResetToken, new_password: newPassword })
+    });
+    successEl.textContent = result.message || 'パスワードを再設定しました。ログインしてください。';
+    successEl.style.display = 'block';
+    // Clear URL params
+    window.history.replaceState({}, document.title, window.location.pathname);
+    pendingResetToken = null;
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    document.getElementById('reset-password-submit').disabled = false;
+  }
+}
+
 async function loadUsers() {
   if (!currentUser) { allUsers = []; return; }
   try {
@@ -641,11 +733,34 @@ function renderKmlFolderList() {
   }
 
   let html = '';
-  // Render only top-level folders (parent_id = null)
   const topFolders = kmlFolders.filter(f => !f.parent_id);
-  for (const folder of topFolders) {
+
+  // Organization folders first (grouped by org)
+  const orgFolders = topFolders.filter(f => f.organization_id);
+  const orgMap = {};
+  for (const f of orgFolders) {
+    if (!orgMap[f.organization_id]) {
+      orgMap[f.organization_id] = { name: f.organization_name || '団体', folders: [] };
+    }
+    orgMap[f.organization_id].folders.push(f);
+  }
+  for (const orgId of Object.keys(orgMap)) {
+    const g = orgMap[orgId];
+    html += `<div class="folder-group-header"><i class="fas fa-building"></i> ${escHtml(g.name)}</div>`;
+    for (const folder of g.folders) {
+      html += renderKmlFolderNode(folder, 0);
+    }
+  }
+
+  // Personal folders
+  const personalFolders = topFolders.filter(f => !f.organization_id);
+  if (personalFolders.length > 0 && orgFolders.length > 0) {
+    html += '<div class="folder-group-header"><i class="fas fa-user"></i> 個人フォルダ</div>';
+  }
+  for (const folder of personalFolders) {
     html += renderKmlFolderNode(folder, 0);
   }
+
   return html;
 }
 
@@ -1736,6 +1851,30 @@ function renderPinFolderList() {
   }
 
   let html = '';
+  const topFolders = folders.filter(f => !f.parent_id);
+
+  // Organization folders first (grouped by org)
+  const orgFolders = topFolders.filter(f => f.organization_id);
+  const orgMap = {};
+  for (const f of orgFolders) {
+    if (!orgMap[f.organization_id]) {
+      orgMap[f.organization_id] = { name: f.organization_name || '団体', folders: [] };
+    }
+    orgMap[f.organization_id].folders.push(f);
+  }
+  for (const orgId of Object.keys(orgMap)) {
+    const g = orgMap[orgId];
+    html += `<div class="folder-group-header"><i class="fas fa-building"></i> ${escHtml(g.name)}</div>`;
+    for (const folder of g.folders) {
+      html += renderFolderNode(folder, folderPins, 0);
+    }
+  }
+
+  // Personal folders
+  const personalFolders = topFolders.filter(f => !f.organization_id);
+  if (personalFolders.length > 0 && orgFolders.length > 0) {
+    html += '<div class="folder-group-header"><i class="fas fa-user"></i> 個人フォルダ</div>';
+  }
 
   // "すべて" folder for pins without folder
   if (noFolderPins.length > 0) {
@@ -1751,9 +1890,7 @@ function renderPinFolderList() {
     </div>`;
   }
 
-  // Render folders hierarchically - only top-level folders
-  const topFolders = folders.filter(f => !f.parent_id);
-  for (const folder of topFolders) {
+  for (const folder of personalFolders) {
     html += renderFolderNode(folder, folderPins, 0);
   }
 
@@ -3958,6 +4095,7 @@ async function init() {
   initInstallPrompt();
   initPasskeyUI();
   checkPasswordSetup();
+  checkPasswordReset();
   await checkAuth();
   await loadAll();
   applyOrgMapSettings();

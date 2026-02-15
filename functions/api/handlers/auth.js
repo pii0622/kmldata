@@ -31,7 +31,7 @@ export async function handleTokenRefresh(env, user, request) {
   return json(
     { ok: true },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -126,7 +126,7 @@ export async function handleLogin(request, env) {
   return json(
     { id: user.id, username: user.username, display_name: user.display_name, is_admin: !!user.is_admin },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -166,7 +166,7 @@ export async function handleUpdateProfile(request, env, user) {
   return json(
     { ok: true, display_name: display_name.trim() },
     200,
-    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+    { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
   );
 }
 
@@ -349,7 +349,7 @@ export async function handleSetupPassword(request, env) {
         user: { id: user.id, username: username.trim(), display_name: actualDisplayName, is_admin: !!user.is_admin }
       },
       200,
-      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 604800, httpOnly: true, secure: true, sameSite: 'Strict' }) }
+      { 'Set-Cookie': setCookieHeader('auth', token, { maxAge: 259200, httpOnly: true, secure: true, sameSite: 'Strict' }) }
     );
   } catch (err) {
     console.error('Account setup error:', err);
