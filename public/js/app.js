@@ -2152,26 +2152,32 @@ function switchFolderCreateTab(type, orgId) {
   event.currentTarget.classList.add('active');
 
   const parentGroup = document.getElementById('folder-parent-group');
-  const sel = document.getElementById('folder-parent');
+  const nameGroup = document.getElementById('folder-name').closest('.form-group');
+  const actions = document.querySelector('#modal-folder .modal-actions');
+  const msgEl = document.getElementById('folder-org-message');
 
   if (type === 'personal') {
     parentGroup.style.display = '';
+    nameGroup.style.display = '';
+    actions.style.display = '';
+    if (msgEl) msgEl.style.display = 'none';
     populateFolderSelect('folder-parent', null, true);
   } else {
-    // Show only org folders as parent options
-    parentGroup.style.display = '';
-    sel.innerHTML = `<option value="">-- ${escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体')}のルート --</option>`;
-    function addOrgFolderOptions(parentId, depth) {
-      const children = folders.filter(f => (f.parent_id || null) === parentId && f.organization_id === orgId);
-      for (const f of children) {
-        const opt = document.createElement('option');
-        opt.value = f.id;
-        opt.textContent = '\u00A0\u00A0'.repeat(depth) + f.name;
-        sel.appendChild(opt);
-        addOrgFolderOptions(f.id, depth + 1);
-      }
+    // Org tab — show message, hide form
+    const orgName = escHtml(userOrganizations.find(o => o.id === orgId)?.name || '団体');
+    parentGroup.style.display = 'none';
+    nameGroup.style.display = 'none';
+    actions.style.display = 'none';
+    if (msgEl) {
+      msgEl.textContent = `${orgName}フォルダは管理画面から追加してください`;
+      msgEl.style.display = '';
+    } else {
+      const msg = document.createElement('p');
+      msg.id = 'folder-org-message';
+      msg.style.cssText = 'text-align:center;color:#666;padding:24px 0;';
+      msg.textContent = `${orgName}フォルダは管理画面から追加してください`;
+      parentGroup.parentNode.insertBefore(msg, actions);
     }
-    addOrgFolderOptions(null, 0);
   }
 }
 
@@ -2183,17 +2189,13 @@ async function createFolder() {
 
   try {
     if (folderCreateOrgId) {
-      // Create as organization folder
-      await api(`/api/organizations/${folderCreateOrgId}/folders`, {
-        method: 'POST',
-        body: JSON.stringify({ name, parent_id: parentId })
-      });
-    } else {
-      await api('/api/folders', {
-        method: 'POST',
-        body: JSON.stringify({ name, parent_id: parentId })
-      });
+      notify('団体フォルダは管理画面から追加してください', 'error');
+      return;
     }
+    await api('/api/folders', {
+      method: 'POST',
+      body: JSON.stringify({ name, parent_id: parentId })
+    });
     closeModal('modal-folder');
     notify('フォルダを作成しました');
     await loadFolders();
@@ -2498,9 +2500,9 @@ function populateFolderSelect(selectId, selectedId, includeNone) {
   const sel = document.getElementById(selectId);
   sel.innerHTML = '<option value="">-- 個人フォルダ --</option>';
 
-  // First add owned folders
+  // First add owned folders (exclude org folders)
   function addOptions(parentId, depth, filterFn) {
-    const children = folders.filter(f => (f.parent_id || null) === parentId && filterFn(f));
+    const children = folders.filter(f => (f.parent_id || null) === parentId && !f.organization_id && filterFn(f));
     for (const f of children) {
       const opt = document.createElement('option');
       opt.value = f.id;
